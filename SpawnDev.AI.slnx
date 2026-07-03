@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="SpawnDev.AI.Blazor/SpawnDev.AI.Blazor.csproj" />
+  <Project Path="SpawnDev.AI.Server/SpawnDev.AI.Server.csproj" />
+  <Project Path="SpawnDev.AI/SpawnDev.AI.csproj" />
+</Solution>

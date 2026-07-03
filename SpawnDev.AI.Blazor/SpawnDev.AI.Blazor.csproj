@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<Version>1.0.0-preview.1</Version>
+		<Title>SpawnDev.AI.Blazor</Title>
+		<Authors>LostBeard</Authors>
+		<Description>Blazor components for the SpawnDev AI stack: streaming chat UI (render-isolated streaming bubble, throttled updates, honest truncation markers, perf telemetry), model picker with hub streaming - built for on-device WebGPU LLMs served by SpawnDev.AI.Server.</Description>
+		<PackageProjectUrl>https://github.com/LostBeard/SpawnDev.AI</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>AI;LLM;Blazor;BlazorWebAssembly;Chat;Components;WebGPU;LocalLLM</PackageTags>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<EmbedAllSources>true</EmbedAllSources>
+		<DebugType>Embedded</DebugType>
+		<LangVersion>latest</LangVersion>
+		<IsPackable>true</IsPackable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.2" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SpawnDev.AI\SpawnDev.AI.csproj" />
+	</ItemGroup>
+
+</Project>

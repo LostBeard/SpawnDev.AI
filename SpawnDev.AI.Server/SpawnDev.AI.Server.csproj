@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<Version>1.0.0-preview.1</Version>
+		<Title>SpawnDev.AI.Server</Title>
+		<Authors>LostBeard</Authors>
+		<Description>Ollama/OpenAI-compatible model server on the SpawnDev.ILGPU.ML inference engine (GGUF, KV-cache decode, WebGPU dispatch-plan capture/replay). One handler core, two transports: HTTP on desktop (drop-in for Ollama clients on :11434), MessagePort in the browser (shared/dedicated worker) - the same request/response shapes either way.</Description>
+		<PackageProjectUrl>https://github.com/LostBeard/SpawnDev.AI</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>AI;LLM;Ollama;OllamaCompatible;OpenAI;Blazor;WebGPU;GGUF;LocalLLM;SharedWorker</PackageTags>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<EmbedAllSources>true</EmbedAllSources>
+		<DebugType>Embedded</DebugType>
+		<LangVersion>latest</LangVersion>
+		<IsPackable>true</IsPackable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SpawnDev.AI\SpawnDev.AI.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="4.0.0-preview.6-local.1" />
+		<PackageReference Include="SpawnDev.BlazorJS.WebWorkers" Version="3.2.4-local.3" />
+	</ItemGroup>
+
+</Project>

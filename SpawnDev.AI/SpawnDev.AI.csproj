@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<Version>1.0.0-preview.1</Version>
+		<Title>SpawnDev.AI</Title>
+		<Authors>LostBeard</Authors>
+		<Description>Core contracts for the SpawnDev AI stack: chat sessions, Ollama/OpenAI-compatible API shapes, and tool-calling contracts. Shared by SpawnDev.AI.Server (desktop HTTP + browser-worker model server) and SpawnDev.AI.Blazor (chat UI components).</Description>
+		<PackageProjectUrl>https://github.com/LostBeard/SpawnDev.AI</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>AI;LLM;Ollama;Blazor;BlazorWebAssembly;WebGPU;GGUF;ToolCalling</PackageTags>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<EmbedAllSources>true</EmbedAllSources>
+		<DebugType>Embedded</DebugType>
+		<LangVersion>latest</LangVersion>
+		<IsPackable>true</IsPackable>
+	</PropertyGroup>
+
+</Project>
