@@ -29,28 +29,10 @@ public sealed class AiChatEngine : IAiChatService
     public ModelRegistry Registry => _registry;
 
     public Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(CancellationToken ct = default)
-    {
-        var list = _registry.Store.List().Select(ToInfoShallow).ToList();
-        return Task.FromResult<IReadOnlyList<AiModelInfo>>(list);
-    }
+        => _registry.Provider.ListAsync(ct);
 
-    public async Task<AiModelInfo?> ShowModelAsync(string name, CancellationToken ct = default)
-    {
-        var m = _registry.Store.Resolve(name);
-        if (m == null) return null;
-        string arch = "gguf"; long ctxLen = 0;
-        try
-        {
-            await using var hs = File.OpenRead(m.GgufPath);
-            var gm = await GGUFParser.ParseHeaderAsync(hs, ct).ConfigureAwait(false);
-            if (!string.IsNullOrEmpty(gm.Architecture)) arch = gm.Architecture;
-            ctxLen = gm.ContextLength;
-        }
-        catch { /* header unreadable - fall back to shallow metadata */ }
-        var caps = new List<string> { "completion", "tools" };
-        if (m.MmprojPath != null) caps.Add("vision");
-        return new AiModelInfo(m.Name, m.GgufSize, arch, QuantOf(m.Name), ctxLen, caps);
-    }
+    public Task<AiModelInfo?> ShowModelAsync(string name, CancellationToken ct = default)
+        => _registry.Provider.ShowAsync(name, ct);
 
     public async Task<int> CountTokensAsync(string model, IReadOnlyList<AiChatMessage> messages, CancellationToken ct = default)
     {
@@ -170,17 +152,7 @@ public sealed class AiChatEngine : IAiChatService
     private static List<(string, string)> ToTuples(IReadOnlyList<AiChatMessage> messages)
         => messages.Select(m => (m.Role, m.Content)).ToList();
 
-    private string FirstOrDefaultModel(string model)
-        => !string.IsNullOrWhiteSpace(model) ? model : _registry.Store.List().FirstOrDefault()?.Name ?? model;
-
-    private static AiModelInfo ToInfoShallow(OllamaModel m)
-        => new(m.Name, m.GgufSize, "gguf", QuantOf(m.Name), 0, new[] { "completion", "tools" });
-
-    private static string QuantOf(string name)
-    {
-        var qm = System.Text.RegularExpressions.Regex.Match(name, @"[Qq]\d(?:_[A-Za-z0-9]+)*");
-        return qm.Success ? qm.Value.ToUpperInvariant() : "";
-    }
+    private string FirstOrDefaultModel(string model) => model; // resolution happens in the provider
 
     /// <summary>Remove &lt;tool_call&gt;…&lt;/tool_call&gt; blocks, leaving the natural-language preamble.</summary>
     public static string StripToolCalls(string text)

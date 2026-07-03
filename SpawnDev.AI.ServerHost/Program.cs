@@ -19,7 +19,7 @@ Console.WriteLine($"[SpawnDev.AI] accelerator: {accelerator.Name} ({accelerator.
 
 var store = new OllamaModelStore();
 Console.WriteLine($"[SpawnDev.AI] Ollama cache: {OllamaModelStore.DefaultRoot()} (exists: {store.CacheExists}, models: {store.List().Count})");
-await using var registry = new ModelRegistry(store, accelerator);
+await using var registry = new ModelRegistry(new OllamaCacheModelProvider(store), accelerator);
 var engine = new AiChatEngine(registry)
 {
     PerfLog = line => Console.WriteLine($"[perf] {line}"),

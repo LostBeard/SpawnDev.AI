@@ -12,36 +12,42 @@ namespace SpawnDev.AI.Server;
 /// </summary>
 public sealed class LoadedModel : IDisposable
 {
-    public required OllamaModel Meta { get; init; }
+    public required AiModelInfo Info { get; init; }
     public required GGUFModel Gguf { get; init; }
     public required InferenceSession Session { get; init; }
     public required GgufGenerator Generator { get; init; }
     public required SentencePieceTokenizer Tokenizer { get; init; }
     public required ChatTemplates.ChatFormat Format { get; init; }
+    /// <summary>An owned backing resource disposed with the model (a hub model stream in the browser).</summary>
+    public IDisposable? OwnedStream { get; init; }
 
-    public void Dispose() { Generator.Dispose(); Session.Dispose(); }
+    public void Dispose() { Generator.Dispose(); Session.Dispose(); OwnedStream?.Dispose(); }
 }
 
 /// <summary>
-/// Loads models from the Ollama cache on demand and serializes generation. <see cref="InferenceSession"/>
-/// is single-decode-at-a-time (one mutable KV cursor, no locks), so all generation goes through a single
-/// gate — which is also what real Ollama does on one GPU. v1 keeps ONE model resident and swaps when a
-/// request asks for a different one (these models are GBs; one-at-a-time bounds GPU memory).
+/// Loads models on demand from an <see cref="IAiModelProvider"/> and serializes generation.
+/// <see cref="InferenceSession"/> is single-decode-at-a-time (one mutable KV cursor, no locks), so
+/// all generation goes through a single gate - which is also what real Ollama does on one GPU. v1
+/// keeps ONE model resident and swaps when a request asks for a different one (these models are
+/// GBs; one-at-a-time bounds GPU/VRAM memory).
 /// </summary>
 public sealed class ModelRegistry : IAsyncDisposable
 {
-    private readonly OllamaModelStore _store;
+    private readonly IAiModelProvider _provider;
     private readonly Accelerator _accelerator;
     private readonly int _maxSeqLen;
     private readonly SemaphoreSlim _gate = new(1, 1); // serialize decode (and model swaps)
     private LoadedModel? _resident;
 
-    public ModelRegistry(OllamaModelStore store, Accelerator accelerator, int maxSeqLen = 8192)
+    public ModelRegistry(IAiModelProvider provider, Accelerator accelerator, int maxSeqLen = 8192)
     {
-        _store = store;
+        _provider = provider;
         _accelerator = accelerator;
         _maxSeqLen = maxSeqLen;
     }
+
+    /// <summary>The model provider backing this registry (listing / metadata endpoints).</summary>
+    public IAiModelProvider Provider => _provider;
 
     /// <summary>
     /// Enable WebGPU decode capture/replay on loaded generators (the 1.5 -&gt; 34 tok/s browser lever:
@@ -49,9 +55,6 @@ public sealed class ModelRegistry : IAsyncDisposable
     /// single-round-trip replay). No-op on non-WebGPU accelerators, so it defaults ON.
     /// </summary>
     public bool EnableWebGPUDecodeCapture { get; set; } = true;
-
-    /// <summary>The model store backing this registry (for listing / metadata endpoints).</summary>
-    public OllamaModelStore Store => _store;
 
     /// <summary>
     /// A serialized lease on a loaded model. Hold it for the duration of ONE generation, then dispose to
@@ -68,21 +71,22 @@ public sealed class ModelRegistry : IAsyncDisposable
 
     /// <summary>
     /// Acquire the generation gate and ensure <paramref name="modelName"/> is the resident model (loading
-    /// or swapping as needed). Throws <see cref="FileNotFoundException"/> if the model isn't in the cache.
+    /// or swapping as needed). Throws <see cref="FileNotFoundException"/> if the provider can't serve it.
     /// </summary>
     public async Task<Lease> AcquireAsync(string modelName, CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var meta = _store.Resolve(modelName)
-                ?? throw new FileNotFoundException($"Model '{modelName}' is not in the Ollama cache.");
+            var canonical = await _provider.ResolveAsync(modelName, ct).ConfigureAwait(false)
+                ?? throw new FileNotFoundException($"Model '{modelName}' is not available from this provider.");
 
-            if (_resident == null || !string.Equals(_resident.Meta.Name, meta.Name, StringComparison.OrdinalIgnoreCase))
+            if (_resident == null || !string.Equals(_resident.Info.Name, canonical, StringComparison.OrdinalIgnoreCase))
             {
                 _resident?.Dispose();
                 _resident = null;
-                _resident = await LoadAsync(meta, ct).ConfigureAwait(false);
+                _resident = await _provider.LoadAsync(canonical, _accelerator, _maxSeqLen,
+                    EnableWebGPUDecodeCapture, ct).ConfigureAwait(false);
             }
             return new Lease(_resident, _gate);
         }
@@ -91,30 +95,6 @@ public sealed class ModelRegistry : IAsyncDisposable
             _gate.Release(); // never strand the gate on a load failure
             throw;
         }
-    }
-
-    private async Task<LoadedModel> LoadAsync(OllamaModel meta, CancellationToken ct)
-    {
-        await using var hs = File.OpenRead(meta.GgufPath);
-        var gguf = await GGUFParser.ParseHeaderAsync(hs, ct).ConfigureAwait(false);
-        var tok = SentencePieceTokenizer.FromGGUF(gguf)
-            ?? throw new InvalidOperationException($"'{meta.Name}' has no SentencePiece tokenizer metadata.");
-        var session = await InferenceSession.CreateFromGGUFFileAsync(_accelerator, meta.GgufPath, ct: ct)
-            .ConfigureAwait(false);
-        int ctxCap = gguf.ContextLength > 0 ? Math.Min((int)gguf.ContextLength, _maxSeqLen) : _maxSeqLen;
-        var gen = new GgufGenerator(session, _accelerator, gguf, maxSeqLen: ctxCap)
-        {
-            EnableWebGPUDecodeCapture = EnableWebGPUDecodeCapture,
-        };
-        return new LoadedModel
-        {
-            Meta = meta,
-            Gguf = gguf,
-            Session = session,
-            Generator = gen,
-            Tokenizer = tok,
-            Format = ChatTemplates.DetectChatFormat(gguf),
-        };
     }
 
     public async ValueTask DisposeAsync()
