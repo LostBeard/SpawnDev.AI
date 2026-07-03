@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="SpawnDev.AI.Blazor/SpawnDev.AI.Blazor.csproj" />
+  <Project Path="SpawnDev.AI.Demo/SpawnDev.AI.Demo.csproj" />
   <Project Path="SpawnDev.AI.Server/SpawnDev.AI.Server.csproj" />
   <Project Path="SpawnDev.AI.ServerHost/SpawnDev.AI.ServerHost.csproj" />
   <Project Path="SpawnDev.AI/SpawnDev.AI.csproj" />

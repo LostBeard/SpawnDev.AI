@@ -1,0 +1,48 @@
+using Microsoft.AspNetCore.Components.Web;
+using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using SpawnDev.AI.Demo;
+using SpawnDev.AsyncFileSystem;
+using SpawnDev.AsyncFileSystem.BrowserWASM;
+using SpawnDev.AI.Server;
+using SpawnDev.BlazorJS;
+using SpawnDev.BlazorJS.WebWorkers;
+using SpawnDev.WebTorrent;
+
+var builder = WebAssemblyHostBuilder.CreateDefault(args);
+builder.RootComponents.Add<App>("#app");
+builder.RootComponents.Add<HeadOutlet>("head::after");
+
+builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+
+// SpawnDev stack - the SAME registrations run in Window, Worker, and SharedWorker scopes; only the
+// worker instance ends up owning the GPU + model registry.
+builder.Services.AddBlazorJSRuntime();
+builder.Services.AddWebWorkerService();
+
+// WebTorrent for P2P model delivery, persisted to OPFS so reloads reuse downloaded pieces (bytes
+// stay JS-side end-to-end - the loader streams pieces straight to the GPU).
+builder.Services.AddSingleton<IAsyncFS, AsyncFSFileSystemDirectoryHandle>();
+builder.Services.AddSingleton<WebTorrentClient>(sp =>
+{
+    var client = new WebTorrentClient(new WebTorrentClientOptions { AsyncFileSystem = sp.GetRequiredService<IAsyncFS>() });
+    _ = client.RestoreFromStorageAsync();
+    return client;
+});
+
+// The in-browser AI server (lives in the shared worker) + the window-side client.
+builder.Services.AddSpawnDevAI(options =>
+{
+    options.MaxSeqLen = 4096;
+    options.Models.Add(new HubModelOption(
+        "qwen2.5:0.5b-instruct-q8_0",
+        "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        "qwen2.5-0.5b-instruct-q8_0.gguf",
+        ApproxSizeBytes: 531_067_136));
+    options.Models.Add(new HubModelOption(
+        "smollm2:360m-instruct-q8_0",
+        "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF",
+        "smollm2-360m-instruct-q8_0.gguf",
+        ApproxSizeBytes: 386_404_352));
+});
+
+await builder.Build().BlazorJSRunAsync();
