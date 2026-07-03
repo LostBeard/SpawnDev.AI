@@ -43,6 +43,13 @@ builder.Services.AddSpawnDevAI(options =>
         "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF",
         "smollm2-360m-instruct-q8_0.gguf",
         ApproxSizeBytes: 386_404_352));
+    // The quality step-up: 1.5B Q4 still decodes interactively on WebGPU and actually knows things
+    // the 0.5B hallucinates (~1.1GB one-time download, browser-cached).
+    options.Models.Add(new HubModelOption(
+        "qwen2.5:1.5b-instruct-q4_k_m",
+        "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+        "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        ApproxSizeBytes: 1_117_320_000));
 });
 
 await builder.Build().BlazorJSRunAsync();
