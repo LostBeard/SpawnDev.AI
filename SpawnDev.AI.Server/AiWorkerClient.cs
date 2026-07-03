@@ -99,6 +99,7 @@ public sealed class AiWorkerClient
                 temperature = options.Temperature,
                 top_p = options.TopP,
                 top_k = options.Strategy == "top_k" ? options.TopK : (int?)null,
+                repeat_penalty = options.RepetitionPenalty != 1.0f ? options.RepetitionPenalty : (float?)null,
                 seed = options.Seed,
             },
         }, J);

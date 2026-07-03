@@ -101,9 +101,14 @@
         var scrollClock = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var convo = _messages.Select(m => new AiChatMessage(m.Role, m.Text)).ToList();
+            // System prompt: a bare conversation makes tiny models (0.5B) randomly REFUSE benign
+            // questions ("I can't assist with that" on baseball rules - Captain hit it). The
+            // canonical helpful-assistant system line suppresses that. RepetitionPenalty 1.15 is the
+            // measured small-model compromise (1.3 broke grammar, 1.1 loop-spiraled).
+            var convo = new List<AiChatMessage> { new("system", "You are a helpful assistant.") };
+            convo.AddRange(_messages.Select(m => new AiChatMessage(m.Role, m.Text)));
             var doneReason = await Ai.ChatStreamAsync(_model, convo,
-                new AiGenerationOptions { MaxOutputTokens = 256, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f },
+                new AiGenerationOptions { MaxOutputTokens = 256, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = 1.15f },
                 onDelta: delta =>
                 {
                     _streaming += delta;

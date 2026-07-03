@@ -413,6 +413,7 @@ public sealed class AiApiRouter
         {
             o.MaxOutputTokens = GetInt(opt, "num_predict") ?? 512;
             ApplySampling(o, GetFloat(opt, "temperature"), GetFloat(opt, "top_p"), GetInt(opt, "top_k"), GetInt(opt, "seed"));
+            if (GetFloat(opt, "repeat_penalty") is float rp && rp > 0) o.RepetitionPenalty = rp;
         }
         return o;
     }

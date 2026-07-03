@@ -26,6 +26,10 @@ public sealed class AiGenerationOptions
     public float Temperature { get; set; } = 1.0f;
     public float TopP { get; set; } = 1.0f;
     public int TopK { get; set; } = 40;
+    /// <summary>Repetition penalty (multiplicative; 1.0 = off). Small models want ~1.1-1.15: below
+    /// that they loop verbatim; far above it, common grammatical tokens get punished into broken
+    /// sentences (both measured on qwen2.5-0.5b).</summary>
+    public float RepetitionPenalty { get; set; } = 1.0f;
     /// <summary>Seed for deterministic sampling, or null.</summary>
     public int? Seed { get; set; }
     /// <summary>Extra stop strings (protocol "stop" / "stop_sequences").</summary>

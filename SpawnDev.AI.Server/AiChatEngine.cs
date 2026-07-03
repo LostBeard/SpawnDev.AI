@@ -140,6 +140,7 @@ public sealed class AiChatEngine : IAiChatService
         TopP = o.TopP,
         TopK = o.TopK,
         Seed = o.Seed,
+        RepetitionPenalty = o.RepetitionPenalty,
     };
 
     private static AiStopKind ToStopKind(StopReason r) => r switch
