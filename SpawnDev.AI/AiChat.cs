@@ -61,4 +61,9 @@ public sealed record AiChatResult(
 {
     /// <summary><see cref="Text"/> with the tool-call markup removed (the natural-language preamble).</summary>
     public string TextWithoutToolCalls { get; init; } = Text;
+
+    /// <summary>Binary artifacts produced by SERVER-side tool executions during this generation
+    /// (generated images etc.). UIs render these inline; the text references them as
+    /// "ai-artifact://{id}". Null when no server tool ran.</summary>
+    public IReadOnlyList<AiToolArtifact>? Artifacts { get; init; }
 }

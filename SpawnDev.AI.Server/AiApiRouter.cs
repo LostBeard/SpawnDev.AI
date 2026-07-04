@@ -18,6 +18,12 @@ public sealed class AiApiRouter
 
     public AiApiRouter(AiChatEngine engine) => _engine = engine;
 
+    /// <summary>Optional image engine - enables /v1/images/generations (OpenAI-compatible).</summary>
+    public AiImageEngine? Images { get; set; }
+
+    /// <summary>Optional tool registry - enables /ai/artifacts/{id} (base64 fetch of tool outputs).</summary>
+    public AiToolRegistry? Tools { get; set; }
+
     /// <summary>Server version string reported by /api/version.</summary>
     public string Version { get; set; } = "0.1.0-spawndev";
 
@@ -44,8 +50,40 @@ public sealed class AiApiRouter
             case ("POST", "/api/generate"): await ApiGenerate(Body(body), t); return true;
             case ("POST", "/v1/messages"): await V1Messages(Body(body), t); return true;
             case ("POST", "/v1/messages/count_tokens"): await V1CountTokens(Body(body), t); return true;
+            case ("POST", "/v1/images/generations") when Images != null: await V1ImagesGenerations(Body(body), t); return true;
+            case ("GET", _) when Tools != null && path.StartsWith("/ai/artifacts/", StringComparison.Ordinal):
+                await GetArtifact(path["/ai/artifacts/".Length..], t); return true;
             default: return false;
         }
+    }
+
+    // ── OpenAI: POST /v1/images/generations (DALL-E-compatible; b64_json response) ──
+    private async Task V1ImagesGenerations(JsonElement req, IAiServerTransport t)
+    {
+        string prompt = GetString(req, "prompt") ?? "";
+        if (string.IsNullOrWhiteSpace(prompt)) { await OpenAiError(t, "'prompt' is required", 400); return; }
+        string? model = GetString(req, "model");
+        int n = Math.Clamp(GetInt(req, "n") ?? 1, 1, 4);
+        int? seed = GetInt(req, "seed");
+
+        var data = new List<object>();
+        for (int i = 0; i < n; i++)
+        {
+            AiGeneratedImage img;
+            try { img = await Images!.GenerateAsync(prompt, model, seed is int s ? s + i : null, ct: t.Aborted); }
+            catch (FileNotFoundException ex) { await OpenAiError(t, ex.Message, 404); return; }
+            var png = PngEncoder.EncodeRgba(img.Rgba, img.Width, img.Height);
+            data.Add(new { b64_json = Convert.ToBase64String(png), revised_prompt = prompt, seed = img.Seed });
+        }
+        await t.WriteJsonAsync(200, new { created = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), data });
+    }
+
+    // ── GET /ai/artifacts/{id}: base64 fetch of a stored tool artifact (generated image). ──
+    private async Task GetArtifact(string id, IAiServerTransport t)
+    {
+        var a = Tools!.GetArtifact(id);
+        if (a == null) { await t.WriteJsonAsync(404, new { error = $"artifact '{id}' not found (evicted or never existed)" }); return; }
+        await t.WriteJsonAsync(200, new { id = a.Id, mime = a.MimeType, label = a.Label, b64 = Convert.ToBase64String(a.Data) });
     }
 
     private static JsonElement Body(JsonElement? body)

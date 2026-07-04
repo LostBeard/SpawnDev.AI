@@ -48,13 +48,75 @@ public sealed class AiChatEngine : IAiChatService
     public Task<AiChatResult> ChatStreamAsync(AiChatRequest request, Func<string, Task> onDelta, CancellationToken ct = default)
         => GenerateAsync(request, onDelta, ct);
 
+    /// <summary>Server-side tools (generate_image etc.). When set AND the client sent no tools of
+    /// its own, tool definitions are injected and the model's calls are EXECUTED here - the agentic
+    /// loop: call → execute → tool_response → continue (bounded rounds). Client tools always win.</summary>
+    public AiToolRegistry? Tools { get; set; }
+
+    /// <summary>Max server-tool execution rounds per generation (loop guard).</summary>
+    public int MaxToolRounds { get; set; } = 3;
+
     private async Task<AiChatResult> GenerateAsync(AiChatRequest request, Func<string, Task>? onDelta, CancellationToken ct)
+    {
+        // Server-tool injection (client tools take precedence).
+        var serverTools = request.ToolsJson == null ? Tools?.List() : null;
+        IReadOnlyList<string>? toolsJson = request.ToolsJson;
+        if (serverTools is { Count: > 0 })
+            toolsJson = serverTools.Select(t =>
+            {
+                using var schema = System.Text.Json.JsonDocument.Parse(t.ParametersJsonSchema);
+                return System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    type = "function",
+                    function = new { name = t.Name, description = t.Description, parameters = schema.RootElement.Clone() },
+                });
+            }).ToList();
+
+        var messages = request.Messages.ToList();
+        List<AiToolArtifact>? artifacts = null;
+        AiChatResult result;
+        int round = 0;
+        while (true)
+        {
+            result = await GenerateOnePassAsync(request, messages, toolsJson, onDelta, ct).ConfigureAwait(false);
+            if (serverTools is not { Count: > 0 } || result.ToolCalls.Count == 0 || ++round > MaxToolRounds)
+                break;
+            // Execute the model's calls server-side and continue the conversation with the results.
+            messages.Add(new AiChatMessage("assistant", result.Text));
+            foreach (var call in result.ToolCalls)
+            {
+                var tool = Tools!.Get(call.Name);
+                var exec = tool != null
+                    ? await tool.ExecuteAsync(call.ArgumentsJson, ct).ConfigureAwait(false)
+                    : new AiToolExecutionResult($"Unknown tool '{call.Name}'.") { IsError = true };
+                if (exec.Artifacts is { Count: > 0 })
+                    (artifacts ??= new()).AddRange(exec.Artifacts);
+                // qwen/ChatML convention (same as the protocol routers): tool results re-enter as a
+                // user turn wrapped in <tool_response>.
+                messages.Add(new AiChatMessage("user", $"<tool_response>\n{exec.TextForModel}\n</tool_response>"));
+            }
+        }
+        if (artifacts == null) return result;
+        // Deterministic artifact references: append markdown refs the ENGINE controls (models told
+        // "don't repeat the id" won't reliably echo it). Every surface - typed clients, worker, and
+        // plain HTTP protocol clients - can resolve ai-artifact://{id} via /ai/artifacts/{id}.
+        var refs = string.Join("\n", artifacts.Select(a => $"![{a.Label ?? "generated image"}](ai-artifact://{a.Id})"));
+        return result with
+        {
+            Text = result.Text.TrimEnd() + "\n\n" + refs,
+            TextWithoutToolCalls = result.TextWithoutToolCalls.TrimEnd() + "\n\n" + refs,
+            Artifacts = artifacts,
+        };
+    }
+
+    private async Task<AiChatResult> GenerateOnePassAsync(AiChatRequest request, IReadOnlyList<AiChatMessage> messages,
+        IReadOnlyList<string>? toolsJson, Func<string, Task>? onDelta, CancellationToken ct)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         using var lease = await _registry.AcquireAsync(request.Model, ct).ConfigureAwait(false);
         var lm = lease.Model;
-        var (promptIds, stopIds) = ChatTemplates.BuildChatPrompt(lm.Gguf, lm.Tokenizer, ToTuples(request.Messages),
-            toolsJson: request.ToolsJson);
+        var (promptIds, stopIds) = ChatTemplates.BuildChatPrompt(lm.Gguf, lm.Tokenizer, ToTuples(messages),
+            toolsJson: toolsJson);
         long buildMs = sw.ElapsedMilliseconds;
 
         var cfg = ToConfig(request.Options);
@@ -67,7 +129,7 @@ public sealed class AiChatEngine : IAiChatService
             // Tool requests stream text but must never leak tool-call markup as visible text; the
             // holdback logic (extracted from the proven Anthropic streaming path) buffers the longest
             // possible partial "<tool_call>" suffix and stops text at the first full tag.
-            streamer = request.ToolsJson != null ? new ToolAwareStreamer(onDelta) : null;
+            streamer = toolsJson != null ? new ToolAwareStreamer(onDelta) : null;
             wrapped = async d =>
             {
                 if (firstMs < 0) firstMs = sw.ElapsedMilliseconds;
@@ -79,7 +141,7 @@ public sealed class AiChatEngine : IAiChatService
         var res = await lm.Generator.GenerateAsync(promptIds, cfg, request.Options.Stops, stopIds, wrapped, ct)
             .ConfigureAwait(false);
 
-        var calls = request.ToolsJson != null
+        var calls = toolsJson != null
             ? ChatTemplates.ParseToolCalls(res.Text).Select(tc => new AiToolCall(tc.Name, tc.ArgumentsJson)).ToList()
             : new List<AiToolCall>();
         if (streamer != null && calls.Count == 0)

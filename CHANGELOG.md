@@ -36,3 +36,25 @@ Notable changes per release. Preview - APIs will change.
 - **AddSpawnDevAI(options)**: one DI call registers server + client in all scopes.
 - Desktop regression gate re-run after the provider refactor: /api/generate on CUDA still answers
   correctly through OllamaCacheModelProvider.
+
+## 1.0.0-preview.3 - Image generation + server-side tools (the agentic loop)
+
+- **SpawnDev.AI**: `IAiTool` / `AiToolExecutionResult` / `AiToolArtifact` / `AiToolRegistry` - the
+  server-side tool contracts (JSON-in/JSON-out; binary artifacts travel out of band via the bounded
+  artifact store). `AiChatResult.Artifacts` carries tool-produced binaries to typed clients.
+- **SpawnDev.AI.Server**:
+  - `AiImageEngine`: image-model residency slot beside the LLM (per-kind residency), hub-streamed
+    weights, serialized generation. Verified-first model list (sd-turbo, E2E-gated).
+  - `GenerateImageTool`: the built-in image tool; PNG via the new dependency-free `PngEncoder`
+    (works on desktop AND Blazor WASM).
+  - **Agentic loop in `AiChatEngine`**: when the client sends no tools and server tools are
+    registered, definitions are injected, the model's calls are EXECUTED server-side, results
+    re-enter the conversation (bounded rounds), and artifact references are appended
+    deterministically as `ai-artifact://{id}` markdown.
+  - `AiApiRouter`: OpenAI-compatible `POST /v1/images/generations` (b64_json) +
+    `GET /ai/artifacts/{id}`.
+- VERIFIED LIVE (RTX 4070): /v1/images/generations produced a photorealistic fox (seed 7); the
+  full agentic chain - "draw me a sailboat at sunset" through qwen2.5-coder-7B calling
+  generate_image, SD-Turbo painting it, qwen describing it - produced a painterly sailboat,
+  fetched by artifact id.
+- Engine: SpawnDev.ILGPU.ML 4.0.0-preview.6-local.3.
