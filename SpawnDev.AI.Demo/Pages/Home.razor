@@ -2,142 +2,145 @@
 @using SpawnDev.AI
 @using SpawnDev.AI.Server
 @using SpawnDev.BlazorJS
+@using SpawnDev.BlazorJS.JSObjects
 @inject AiWorkerClient Ai
 @inject BlazorJSRuntime JS
 
-<PageTitle>SpawnDev.AI - in-browser Ollama</PageTitle>
+<PageTitle>SpawnDev.AI — on-device AI chat</PageTitle>
 
-<div style="max-width:820px;margin:0 auto;padding:1rem;font-family:system-ui,sans-serif;">
-    <h1 style="font-size:1.4rem;">SpawnDev.AI <span style="font-size:.8rem;background:#334;color:#fff;border-radius:4px;padding:2px 8px;">Ollama in a shared worker</span></h1>
-    <p style="color:#666;font-size:.9rem;">
-        The model server runs in a <b>shared web worker</b> on WebGPU - every tab talks to the same
-        resident model over the Ollama protocol. Weights stream P2P from the SpawnDev hub and cache
-        in your browser.
-    </p>
+<div class="sdai">
+    <header class="sdai-hdr">
+        <div class="brand">
+            <span class="logo">🖖</span>
+            <div>
+                <h1>SpawnDev.AI</h1>
+                <p>LLM chat + image generation, 100% on your GPU. Nothing leaves your device.</p>
+            </div>
+        </div>
+        @if (_ready)
+        {
+            <div class="pickers">
+                <label>Chat model
+                    <select @bind="_model" disabled="@_busy">
+                        @foreach (var m in _models) { <option value="@m">@m</option> }
+                    </select>
+                </label>
+                <label>Image model
+                    <select @bind="_imageModel" disabled="@_busy">
+                        @foreach (var (name, _) in _imageModels) { <option value="@name">@name</option> }
+                    </select>
+                </label>
+            </div>
+        }
+    </header>
 
     @if (!_ready)
     {
-        <button @onclick="StartAsync" disabled="@_starting" style="padding:.5rem 1.2rem;">
-            @(_starting ? "Starting worker + GPU…" : "Start the AI server")
-        </button>
-        <pre style="color:#888;font-size:.8rem;">@_status</pre>
+        <div class="hero">
+            <h2>Your browser is the AI server</h2>
+            <p>
+                One click starts a shared-worker model server on WebGPU. Weights stream peer-to-peer
+                and cache in your browser — every tab shares the same resident model. Ask for a
+                picture and the chat model will paint one with the on-device diffusion model.
+            </p>
+            <button class="primary big" @onclick="StartAsync" disabled="@_starting">
+                @(_starting ? "Starting worker + WebGPU…" : "Start the AI server")
+            </button>
+            @if (!string.IsNullOrEmpty(_status)) { <p class="status">@_status</p> }
+            <p class="hint">Requires a WebGPU browser (Chrome/Edge). First model use downloads once, then it's cached.</p>
+        </div>
     }
     else
     {
-        <p style="font-size:.8rem;color:#484;">@_status</p>
-        <div style="display:flex;gap:.5rem;align-items:center;">
-            <select @bind="_model" disabled="@_busy">
-                @foreach (var m in _models) { <option value="@m">@m</option> }
-            </select>
-            <span style="font-size:.8rem;color:#888;">first request loads the model (downloads once, then browser-cached)</span>
-        </div>
-
-        <div style="border:1px solid #ccc;border-radius:6px;min-height:200px;max-height:420px;overflow-y:auto;padding: .8rem;margin:1rem 0;" @ref="_scrollRef">
-            @foreach (var (role, text) in _messages)
+        <div class="transcript" @ref="_scrollRef">
+            @if (_messages.Count == 0 && !_busy)
             {
-                <div style="margin-bottom:.8rem;">
-                    <b>@(role == "user" ? "You" : "Assistant")</b>
-                    <div style="white-space:pre-wrap;">@text</div>
+                <div class="empty">
+                    <p>Try: <button class="chip" @onclick="@(() => SendPreset("Explain how you run entirely inside my browser."))">how do you work?</button>
+                       <button class="chip" @onclick="@(() => SendPreset("Draw me a picture of a lighthouse in a storm."))">draw a lighthouse 🎨</button>
+                       <button class="chip" @onclick="@(() => SendPreset("/model"))">/model</button></p>
+                </div>
+            }
+            @foreach (var msg in _messages)
+            {
+                <div class="msg @msg.Role">
+                    <div class="who">@(msg.Role == "user" ? "You" : msg.Role == "system" ? "System" : "Assistant")</div>
+                    <div class="text">@RenderRich(msg.Text)</div>
+                    @foreach (var img in msg.Images)
+                    {
+                        <figure class="genimg">
+                            <img src="@img.Url" alt="@img.Label" />
+                            <figcaption>
+                                <span>@img.Label</span>
+                                <a class="dl" href="@img.Url" download="@($"{Sanitize(img.Label)}.png")">⬇ Download</a>
+                            </figcaption>
+                        </figure>
+                    }
+                    @if (msg.Ms > 0)
+                    {
+                        <div class="meta">@($"{msg.Ms / 1000.0:F1}s") @(msg.TokPerSec > 0 ? $"· {msg.TokPerSec:F1} tok/s" : "") @(msg.Truncated ? "· length limit" : "")</div>
+                    }
                 </div>
             }
             @if (_busy)
             {
-                <div><b>Assistant</b><div style="white-space:pre-wrap;">@_streaming<span>▋</span></div></div>
+                <div class="msg assistant">
+                    <div class="who">Assistant</div>
+                    <div class="text">@RenderRich(_streaming)<span class="caret">▋</span></div>
+                    @if (!string.IsNullOrEmpty(_busyNote)) { <div class="meta">@_busyNote</div> }
+                </div>
             }
         </div>
 
-        <div style="display:flex;gap:.5rem;">
-            <input style="flex:1;padding:.4rem;" @bind="_input" @bind:event="oninput"
-                   @onkeydown="@(e => e.Key == "Enter" ? SendAsync() : Task.CompletedTask)"
-                   placeholder="Send a message…" disabled="@_busy" />
-            <button @onclick="SendAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))">Send</button>
+        <div class="composer">
+            <textarea @bind="_input" @bind:event="oninput" @onkeydown="OnKeyDown" rows="1"
+                      placeholder="Message — or /model, /image-model, or ask for a picture…" disabled="@_busy"></textarea>
+            <button class="primary" @onclick="SendAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))">Send</button>
         </div>
+        <footer class="sdai-ftr">@_status</footer>
     }
 </div>
 
-@code {
-    bool _ready, _starting, _busy;
-    string _status = "";
-    string _model = "qwen2.5:0.5b-instruct-q8_0";
-    readonly List<string> _models = new();
-    readonly List<(string Role, string Text)> _messages = new();
-    string _input = "", _streaming = "";
-    ElementReference _scrollRef;
-
-    async Task StartAsync()
-    {
-        _starting = true;
-        _status = "Attaching shared worker, requesting WebGPU…";
-        StateHasChanged();
-        try
-        {
-            _status = await Ai.InitAsync();
-            var tags = await Ai.RequestJsonAsync("GET", "/api/tags");
-            using var doc = System.Text.Json.JsonDocument.Parse(tags);
-            _models.Clear();
-            foreach (var m in doc.RootElement.GetProperty("models").EnumerateArray())
-                _models.Add(m.GetProperty("name").GetString()!);
-            if (_models.Count > 0 && !_models.Contains(_model)) _model = _models[0];
-            _ready = true;
-        }
-        catch (Exception ex) { _status = $"Failed: {ex.Message}"; }
-        finally { _starting = false; StateHasChanged(); }
-    }
-
-    async Task SendAsync()
-    {
-        if (_busy || string.IsNullOrWhiteSpace(_input)) return;
-        var question = _input.Trim();
-        _input = "";
-        _messages.Add(("user", question));
-        _busy = true;
-        _streaming = "";
-        StateHasChanged();
-
-        // Perf lessons from the ML /ai-chat campaign baked in: renders throttled to ~10Hz (a render
-        // per token throttled decode to word-per-second), scroll at 2Hz (forced layout), and the
-        // decode itself runs in the WORKER - the UI thread only receives deltas.
-        var renderClock = System.Diagnostics.Stopwatch.StartNew();
-        var scrollClock = System.Diagnostics.Stopwatch.StartNew();
-        try
-        {
-            // System prompt: a bare conversation makes tiny models (0.5B) randomly REFUSE benign
-            // questions ("I can't assist with that" on baseball rules - Captain hit it). The
-            // canonical helpful-assistant system line suppresses that. RepetitionPenalty 1.15 is the
-            // measured small-model compromise (1.3 broke grammar, 1.1 loop-spiraled).
-            var convo = new List<AiChatMessage> { new("system", "You are a helpful assistant.") };
-            convo.AddRange(_messages.Select(m => new AiChatMessage(m.Role, m.Text)));
-            var doneReason = await Ai.ChatStreamAsync(_model, convo,
-                new AiGenerationOptions { MaxOutputTokens = 256, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = 1.15f },
-                onDelta: delta =>
-                {
-                    _streaming += delta;
-                    if (renderClock.ElapsedMilliseconds >= 100)
-                    {
-                        renderClock.Restart();
-                        bool doScroll = scrollClock.ElapsedMilliseconds >= 500;
-                        if (doScroll) scrollClock.Restart();
-                        InvokeAsync(async () => { StateHasChanged(); if (doScroll) await ScrollToBottom(); });
-                    }
-                });
-            var answer = _streaming;
-            if (doneReason == "length") answer += " […length limit reached]";
-            _messages.Add(("assistant", answer));
-        }
-        catch (Exception ex) { _messages.Add(("assistant", $"[error: {ex.Message}]")); }
-        finally
-        {
-            _streaming = "";
-            _busy = false;
-            StateHasChanged();
-            await ScrollToBottom();
-        }
-    }
-
-    Task ScrollToBottom()
-    {
-        try { using var el = new SpawnDev.BlazorJS.JSObjects.HTMLElement(_scrollRef); el.ScrollTop = el.ScrollHeight; }
-        catch { /* transcript not mounted yet */ }
-        return Task.CompletedTask;
-    }
-}
+<style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #0b0e14; }
+    .sdai { max-width: 880px; margin: 0 auto; padding: 0 1rem 1rem; font-family: 'Segoe UI', system-ui, sans-serif; color: #d6dbe4; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+    .sdai-hdr { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .9rem 0; border-bottom: 1px solid #1d2430; flex-wrap: wrap; }
+    .brand { display: flex; gap: .7rem; align-items: center; }
+    .logo { font-size: 1.9rem; }
+    .brand h1 { margin: 0; font-size: 1.15rem; letter-spacing: .4px; }
+    .brand p { margin: 0; font-size: .74rem; color: #7c8798; }
+    .pickers { display: flex; gap: .9rem; }
+    .pickers label { font-size: .68rem; color: #7c8798; display: flex; flex-direction: column; gap: .15rem; }
+    select { background: #131926; color: #d6dbe4; border: 1px solid #273043; border-radius: 6px; padding: .3rem .45rem; font-size: .8rem; }
+    .hero { margin: auto; text-align: center; max-width: 520px; }
+    .hero h2 { font-size: 1.5rem; margin-bottom: .4rem; }
+    .hero p { color: #97a1b2; line-height: 1.55; }
+    .status { color: #56c98d; font-size: .82rem; white-space: pre-wrap; }
+    .hint { font-size: .72rem; color: #5d6879; }
+    button.primary { background: linear-gradient(135deg, #2563eb, #7c3aed); color: #fff; border: none; border-radius: 8px; padding: .55rem 1.15rem; font-size: .9rem; cursor: pointer; }
+    button.primary:disabled { opacity: .5; cursor: default; }
+    button.primary.big { padding: .8rem 1.8rem; font-size: 1.05rem; }
+    .transcript { flex: 1; overflow-y: auto; padding: 1rem 0; display: flex; flex-direction: column; gap: .9rem; }
+    .empty { margin: auto; color: #5d6879; }
+    .chip { background: #131926; border: 1px solid #273043; color: #9fb0c8; border-radius: 999px; padding: .3rem .8rem; margin: 0 .2rem; cursor: pointer; font-size: .78rem; }
+    .msg { max-width: 88%; }
+    .msg.user { align-self: flex-end; }
+    .msg .who { font-size: .68rem; color: #7c8798; margin-bottom: .18rem; }
+    .msg.user .who { text-align: right; }
+    .msg .text { background: #131926; border: 1px solid #1d2430; border-radius: 12px; padding: .6rem .8rem; white-space: pre-wrap; line-height: 1.5; font-size: .92rem; overflow-wrap: anywhere; }
+    .msg.user .text { background: #1b2f55; border-color: #27406e; }
+    .msg.system .text { background: #241a33; border-color: #3a2d52; font-size: .82rem; }
+    .msg .text :is(code) { background: #0b0e14; border-radius: 4px; padding: .05rem .3rem; font-size: .85em; }
+    .msg .text pre { background: #0b0e14; border: 1px solid #1d2430; border-radius: 8px; padding: .6rem; overflow-x: auto; }
+    .meta { font-size: .66rem; color: #5d6879; margin: .25rem .2rem 0; }
+    .genimg { margin: .5rem 0 0; }
+    .genimg img { max-width: 100%; border-radius: 12px; border: 1px solid #273043; display: block; }
+    .genimg figcaption { display: flex; justify-content: space-between; font-size: .7rem; color: #7c8798; margin-top: .25rem; }
+    .genimg .dl { color: #6ea8ff; text-decoration: none; }
+    .caret { animation: blink 1s step-start infinite; }
+    @@keyframes blink { 50% { opacity: 0; } }
+    .composer { display: flex; gap: .5rem; padding-top: .6rem; border-top: 1px solid #1d2430; }
+    .composer textarea { flex: 1; resize: none; background: #131926; border: 1px solid #273043; color: #d6dbe4; border-radius: 10px; padding: .55rem .7rem; font-size: .92rem; font-family: inherit; }
+    .sdai-ftr { font-size: .68rem; color: #4d5866; padding-top: .4rem; min-height: 1em; }
+</style>

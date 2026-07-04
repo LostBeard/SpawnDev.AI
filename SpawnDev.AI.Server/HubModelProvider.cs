@@ -60,7 +60,10 @@ public sealed class HubModelProvider : IAiModelProvider
         var opt = Find(name)
             ?? throw new FileNotFoundException($"Model '{name}' is not in the hub model list.");
         var hub = new HubModelStream(_webTorrent, _http) { PrepareTimeout = PrepareTimeout };
-        var model = await hub.OpenAsync(opt.Repo, opt.File, deselect: false, ct).ConfigureAwait(false);
+        // deselect:true - fetch ONLY the pieces the weight-stream reads. deselect:false let the torrent
+        // background-download EVERY file in the repo (all quants, 10-15GB - Captain caught it live
+        // 2026-07-04) while the stream read its one file with priority.
+        var model = await hub.OpenAsync(opt.Repo, opt.File, deselect: true, ct).ConfigureAwait(false);
         try
         {
             var stream = model.Stream;

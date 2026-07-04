@@ -53,6 +53,13 @@ public sealed class AiApiRouter
             case ("POST", "/v1/images/generations") when Images != null: await V1ImagesGenerations(Body(body), t); return true;
             case ("GET", _) when Tools != null && path.StartsWith("/ai/artifacts/", StringComparison.Ordinal):
                 await GetArtifact(path["/ai/artifacts/".Length..], t); return true;
+            case ("GET", "/ai/image-models") when Images != null:
+                await t.WriteJsonAsync(200, new
+                {
+                    @default = Images.DefaultModel,
+                    models = Images.Models.Select(m => new { name = m.Name, note = m.Note }),
+                });
+                return true;
             default: return false;
         }
     }

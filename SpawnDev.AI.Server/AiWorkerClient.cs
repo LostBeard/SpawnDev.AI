@@ -84,6 +84,27 @@ public sealed class AiWorkerClient
     /// request, streams <c>message.content</c> deltas to <paramref name="onDelta"/>, returns the
     /// final done_reason ("stop" | "length").
     /// </summary>
+    /// <summary>Fetch a tool artifact (generated image) by id: (mimeType, bytes, label).</summary>
+    public async Task<(string Mime, byte[] Data, string? Label)> GetArtifactAsync(string id)
+    {
+        var json = await RequestJsonAsync("GET", $"/ai/artifacts/{id}");
+        using var doc = JsonDocument.Parse(json);
+        return (doc.RootElement.GetProperty("mime").GetString() ?? "application/octet-stream",
+                Convert.FromBase64String(doc.RootElement.GetProperty("b64").GetString() ?? ""),
+                doc.RootElement.TryGetProperty("label", out var l) ? l.GetString() : null);
+    }
+
+    /// <summary>List the worker's image models: (defaultName, [(name, note)]).</summary>
+    public async Task<(string Default, List<(string Name, string Note)> Models)> ListImageModelsAsync()
+    {
+        var json = await RequestJsonAsync("GET", "/ai/image-models");
+        using var doc = JsonDocument.Parse(json);
+        var list = doc.RootElement.GetProperty("models").EnumerateArray()
+            .Select(m => (m.GetProperty("name").GetString() ?? "", m.TryGetProperty("note", out var nn) ? nn.GetString() ?? "" : ""))
+            .ToList();
+        return (doc.RootElement.GetProperty("default").GetString() ?? "", list);
+    }
+
     public async Task<string> ChatStreamAsync(string model, IReadOnlyList<AiChatMessage> messages,
         AiGenerationOptions? options = null, Action<string>? onDelta = null)
     {

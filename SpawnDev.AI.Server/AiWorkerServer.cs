@@ -47,6 +47,8 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     private Accelerator? _accelerator;
     private ModelRegistry? _registry;
     private AiApiRouter? _router;
+    private AiImageEngine? _images;
+    private AiToolRegistry? _tools;
 
     public AiWorkerServer(WebTorrentClient webTorrent, HttpClient http, AiWorkerServerOptions options)
     {
@@ -106,13 +108,22 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             var provider = new HubModelProvider(_webTorrent, _http, _options.Models);
             _registry = new ModelRegistry(provider, _accelerator, _options.MaxSeqLen);
             var engine = new AiChatEngine(_registry) { MaxOutputTokens = _options.MaxOutputTokens };
-            _router = new AiApiRouter(engine);
+            // Image generation + the agentic tool loop IN THE BROWSER: SD-Turbo streams from the
+            // hub onto the same WebGPU device (E2E-gated path); generate_image registers once and
+            // serves the internal loop, /v1/images/generations, and /ai/artifacts over the worker
+            // frames - the public page's chat can paint.
+            _images = new AiImageEngine(_webTorrent, _http, _accelerator);
+            _tools = new AiToolRegistry();
+            _tools.Register(new GenerateImageTool(_images, _tools));
+            engine.Tools = _tools;
+            _router = new AiApiRouter(engine) { Images = _images, Tools = _tools };
         }
         finally { _initGate.Release(); }
     }
 
     public async ValueTask DisposeAsync()
     {
+        _images?.Dispose();
         if (_registry != null) await _registry.DisposeAsync().ConfigureAwait(false);
         _accelerator?.Dispose();
     }
