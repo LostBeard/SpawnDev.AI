@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace SpawnDev.AI.Server;
 
@@ -51,6 +52,7 @@ public sealed class AiApiRouter
             case ("POST", "/v1/messages"): await V1Messages(Body(body), t); return true;
             case ("POST", "/v1/messages/count_tokens"): await V1CountTokens(Body(body), t); return true;
             case ("POST", "/v1/images/generations") when Images != null: await V1ImagesGenerations(Body(body), t); return true;
+            case ("POST", "/mcp") when Tools != null: await Mcp(Body(body), t); return true;
             case ("GET", _) when Tools != null && path.StartsWith("/ai/artifacts/", StringComparison.Ordinal):
                 await GetArtifact(path["/ai/artifacts/".Length..], t); return true;
             case ("GET", "/ai/image-models") when Images != null:
@@ -92,6 +94,106 @@ public sealed class AiApiRouter
         if (a == null) { await t.WriteJsonAsync(404, new { error = $"artifact '{id}' not found (evicted or never existed)" }); return; }
         await t.WriteJsonAsync(200, new { id = a.Id, mime = a.MimeType, label = a.Label, b64 = Convert.ToBase64String(a.Data) });
     }
+
+    // ── MCP (Model Context Protocol) surface: JSON-RPC 2.0 over POST /mcp. Exposes the AiToolRegistry so
+    // Claude CLI / any MCP agent can list + call the server's tools (generate_image, ...). Request-response
+    // only - initialize / tools/list / tools/call / ping (server-initiated streaming isn't needed for tools),
+    // so a single JSON response is returned (valid under Streamable HTTP). Same registry the internal agentic
+    // loop and the /v1 tool surfaces read - one registration, three surfaces. ──
+    private const string McpProtocolVersion = "2024-11-05";
+
+    private async Task Mcp(JsonElement req, IAiServerTransport t)
+    {
+        string? method = req.TryGetProperty("method", out var mEl) && mEl.ValueKind == JsonValueKind.String ? mEl.GetString() : null;
+        // A JSON-RPC message with no "id" is a NOTIFICATION (e.g. notifications/initialized) - acknowledge with
+        // 202 and no JSON-RPC response body, ever.
+        bool isNotification = !req.TryGetProperty("id", out var idEl);
+        if (isNotification) { await t.WriteTextAsync(202, ""); return; }
+        object? id = JsonRpcId(idEl);
+
+        if (string.IsNullOrEmpty(method)) { await McpError(t, id, -32600, "Invalid Request: missing 'method'"); return; }
+        req.TryGetProperty("params", out var prm);
+
+        switch (method)
+        {
+            case "initialize":
+                // Echo the client's requested protocol version when present (signals we speak it); else our default.
+                string proto = prm.ValueKind == JsonValueKind.Object
+                    && prm.TryGetProperty("protocolVersion", out var vEl) && vEl.ValueKind == JsonValueKind.String
+                    ? vEl.GetString()! : McpProtocolVersion;
+                await McpResult(t, id, new
+                {
+                    protocolVersion = proto,
+                    capabilities = new { tools = new { } },
+                    serverInfo = new { name = "SpawnDev.AI", version = Version },
+                });
+                return;
+
+            case "ping":
+                await McpResult(t, id, new { });
+                return;
+
+            case "tools/list":
+                var list = (Tools?.List() ?? (IReadOnlyList<IAiTool>)Array.Empty<IAiTool>()).Select(x => new
+                {
+                    name = x.Name,
+                    description = x.Description,
+                    inputSchema = ParseSchema(x.ParametersJsonSchema),
+                }).ToArray();
+                await McpResult(t, id, new { tools = list });
+                return;
+
+            case "tools/call":
+                if (prm.ValueKind != JsonValueKind.Object || !prm.TryGetProperty("name", out var nameEl) || nameEl.ValueKind != JsonValueKind.String)
+                { await McpError(t, id, -32602, "Invalid params: 'name' is required"); return; }
+                var tool = Tools?.Get(nameEl.GetString()!);
+                if (tool == null) { await McpError(t, id, -32602, $"Unknown tool '{nameEl.GetString()}'"); return; }
+
+                // MCP passes arguments as a JSON object; the tool contract takes the arguments JSON as a string.
+                string argsJson = prm.TryGetProperty("arguments", out var argsEl) && argsEl.ValueKind == JsonValueKind.Object
+                    ? argsEl.GetRawText() : "{}";
+                AiToolExecutionResult exec;
+                try { exec = await tool.ExecuteAsync(argsJson, t.Aborted).ConfigureAwait(false); }
+                catch (Exception ex) { exec = new AiToolExecutionResult($"Tool '{tool.Name}' threw: {ex.Message}") { IsError = true }; }
+
+                // Content = the text the caller reads, plus any image artifacts inline (base64). A tool error is
+                // reported via isError=true with the message as text (per MCP, tool errors are in-band, not JSON-RPC
+                // errors - those are reserved for protocol failures).
+                var content = new List<object> { new { type = "text", text = exec.TextForModel } };
+                if (exec.Artifacts != null)
+                    foreach (var a in exec.Artifacts)
+                        if (a.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                            content.Add(new { type = "image", data = Convert.ToBase64String(a.Data), mimeType = a.MimeType });
+                await McpResult(t, id, new { content, isError = exec.IsError });
+                return;
+
+            default:
+                await McpError(t, id, -32601, $"Method not found: {method}");
+                return;
+        }
+    }
+
+    private Task McpResult(IAiServerTransport t, object? id, object result) =>
+        t.WriteJsonAsync(200, new { jsonrpc = "2.0", id, result });
+
+    private Task McpError(IAiServerTransport t, object? id, int code, string message) =>
+        t.WriteJsonAsync(200, new { jsonrpc = "2.0", id, error = new { code, message } });
+
+    // A tool's ParametersJsonSchema is a JSON string; MCP tools/list needs it as a JSON object. Fall back to a
+    // permissive empty-object schema if a tool ships malformed schema text (never break the whole list).
+    private static JsonNode ParseSchema(string schemaJson)
+    {
+        try { return JsonNode.Parse(schemaJson) ?? new JsonObject { ["type"] = "object" }; }
+        catch { return new JsonObject { ["type"] = "object" }; }
+    }
+
+    // JSON-RPC id echoes back with its original type (string | number | null).
+    private static object? JsonRpcId(JsonElement e) => e.ValueKind switch
+    {
+        JsonValueKind.String => e.GetString(),
+        JsonValueKind.Number => e.TryGetInt64(out var l) ? l : e.GetDouble(),
+        _ => null,
+    };
 
     private static JsonElement Body(JsonElement? body)
     {

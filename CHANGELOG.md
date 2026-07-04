@@ -71,3 +71,15 @@ Notable changes per release. Preview - APIs will change.
   button - OPFS is invisible to Chrome DevTools ("Clear site data" doesn't touch it), so the app is
   its own storage manager. Plus a `?worker=dedicated` diagnostic switch (`PreferSharedWorker`) that
   forces a dedicated worker.
+
+## 1.0.0-preview.6 - MCP tools surface
+
+- **MCP (Model Context Protocol) surface** - `POST /mcp` on `AiApiRouter` (JSON-RPC 2.0, gated on a tool
+  registry): `initialize` (echoes the client's protocol version), `tools/list` (each tool's `name` /
+  `description` / `inputSchema` from its JSON schema), `tools/call` (executes the tool; returns `content`
+  as text plus any image artifacts inline as base64 `image` content; tool errors in-band via `isError`),
+  `ping`, and JSON-RPC notifications (202, no body). This is the third of the three surfaces the tool
+  registry was designed for (internal agentic loop + OpenAI/Ollama/Anthropic protocols + MCP) - one
+  `IAiTool` registration now also serves any MCP client (Claude CLI, agents). Verified end-to-end against
+  the desktop HTTP host: initialize / tools/list / ping / notification / error paths, plus a real
+  `generate_image` call returning a 512x512 PNG as inline MCP image content.

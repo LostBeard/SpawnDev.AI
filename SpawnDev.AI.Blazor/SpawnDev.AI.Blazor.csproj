@@ -4,7 +4,7 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>1.0.0-preview.5</Version>
+		<Version>1.0.0-preview.6</Version>
 		<Title>SpawnDev.AI.Blazor</Title>
 		<Authors>LostBeard</Authors>
 		<Description>Blazor components for the SpawnDev AI stack: streaming chat UI (render-isolated streaming bubble, throttled updates, honest truncation markers, perf telemetry), model picker with hub streaming - built for on-device WebGPU LLMs served by SpawnDev.AI.Server.</Description>
