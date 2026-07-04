@@ -27,10 +27,16 @@ public partial class Home
     string _input = "", _streaming = "";
     ElementReference _scrollRef;
 
+    [Inject] NavigationManager Nav { get; set; } = default!;
+
     async Task StartAsync()
     {
         _starting = true;
-        _status = "Attaching shared worker, requesting WebGPU…";
+        // ?worker=dedicated forces a dedicated worker (diagnostic: the piece-download loop
+        // reproduced only under SharedWorker, 2026-07-04).
+        if (Nav.Uri.Contains("worker=dedicated", StringComparison.OrdinalIgnoreCase))
+            Ai.PreferSharedWorker = false;
+        _status = Ai.PreferSharedWorker ? "Attaching shared worker, requesting WebGPU…" : "Attaching DEDICATED worker, requesting WebGPU…";
         StateHasChanged();
         try
         {
@@ -46,6 +52,7 @@ public partial class Home
             try { var (def, list) = await Ai.ListImageModelsAsync(); _imageModels = list; _imageModel = def; }
             catch { _imageModels = new() { ("sd-turbo", "") }; }
             _ready = true;
+            await RefreshStorageAsync();
         }
         catch (Exception ex) { _status = $"Failed: {ex.Message}"; }
         finally { _starting = false; StateHasChanged(); }
@@ -115,6 +122,7 @@ public partial class Home
             msg.Text = await ResolveArtifactsAsync(_streaming, msg.Images);
             _messages.Add(msg);
             _status = $"last response: {msg.Ms / 1000.0:F1}s · {msg.TokPerSec:F1} tok/s · model {_model}";
+            await RefreshStorageAsync();
         }
         catch (Exception ex) { _messages.Add(new Msg { Role = "system", Text = $"Error: {ex.Message}" }); }
         finally
@@ -188,5 +196,41 @@ public partial class Home
         try { using var el = new HTMLElement(_scrollRef); el.ScrollTop = el.ScrollHeight; }
         catch { }
         return Task.CompletedTask;
+    }
+
+    // ── Storage management: OPFS is INVISIBLE to Chrome DevTools ("Clear site data" doesn't touch
+    // it, there is no viewer) - the app must be its own storage manager. Typed BlazorJS surface.
+    string _storageLine = "";
+
+    async Task RefreshStorageAsync()
+    {
+        try
+        {
+            using var storage = JS.Get<StorageManager>("navigator.storage");
+            var est = await storage.Estimate();
+            _storageLine = $"browser storage: {est.Usage / 1048576.0 / 1024.0:F2} GB used of {est.Quota / 1048576.0 / 1024.0:F0} GB quota (model cache lives here)";
+        }
+        catch { _storageLine = ""; }
+    }
+
+    async Task ClearStorageAsync()
+    {
+        try
+        {
+            using var storage = JS.Get<StorageManager>("navigator.storage");
+            using var root = await storage.GetDirectory();
+            var entries = await root.ValuesList();
+            var names = entries.Select(e => e.Name).ToList();
+            foreach (var e in entries) e.Dispose();
+            foreach (var n in names)
+                await root.RemoveEntry(n, recursive: true);
+            _messages.Add(new Msg { Role = "system", Text = $"Cleared {names.Count} OPFS entries. Cached models will re-download on next use (a page reload is recommended)." });
+            await RefreshStorageAsync();
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new Msg { Role = "system", Text = $"Storage clear failed: {ex.Message} (some entries may be locked by the active worker - reload and retry)" });
+        }
+        StateHasChanged();
     }
 }

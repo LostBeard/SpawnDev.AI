@@ -97,7 +97,13 @@
                       placeholder="Message — or /model, /image-model, or ask for a picture…" disabled="@_busy"></textarea>
             <button class="primary" @onclick="SendAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))">Send</button>
         </div>
-        <footer class="sdai-ftr">@_status</footer>
+        <footer class="sdai-ftr">
+            <span>@_status</span>
+            @if (!string.IsNullOrEmpty(_storageLine))
+            {
+                <span class="storage">@_storageLine <button class="linkbtn" @onclick="ClearStorageAsync" disabled="@_busy">clear</button></span>
+            }
+        </footer>
     }
 </div>
 
@@ -142,5 +148,6 @@
     @@keyframes blink { 50% { opacity: 0; } }
     .composer { display: flex; gap: .5rem; padding-top: .6rem; border-top: 1px solid #1d2430; }
     .composer textarea { flex: 1; resize: none; background: #131926; border: 1px solid #273043; color: #d6dbe4; border-radius: 10px; padding: .55rem .7rem; font-size: .92rem; font-family: inherit; }
-    .sdai-ftr { font-size: .68rem; color: #4d5866; padding-top: .4rem; min-height: 1em; }
+    .sdai-ftr { font-size: .68rem; color: #4d5866; padding-top: .4rem; min-height: 1em; display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+    .linkbtn { background: none; border: none; color: #6ea8ff; cursor: pointer; font-size: inherit; padding: 0; text-decoration: underline; }
 </style>

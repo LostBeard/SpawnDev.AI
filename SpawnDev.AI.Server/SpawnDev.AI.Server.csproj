@@ -4,7 +4,7 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>1.0.0-preview.4</Version>
+		<Version>1.0.0-preview.5</Version>
 		<Title>SpawnDev.AI.Server</Title>
 		<Authors>LostBeard</Authors>
 		<Description>Ollama/OpenAI-compatible model server on the SpawnDev.ILGPU.ML inference engine (GGUF, KV-cache decode, WebGPU dispatch-plan capture/replay). One handler core, two transports: HTTP on desktop (drop-in for Ollama clients on :11434), MessagePort in the browser (shared/dedicated worker) - the same request/response shapes either way.</Description>
@@ -24,7 +24,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.ILGPU.ML" Version="4.0.0-preview.6" />
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="4.0.0-preview.7" />
 		<PackageReference Include="SpawnDev.BlazorJS.WebWorkers" Version="3.2.4" />
 	</ItemGroup>
 

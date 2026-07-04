@@ -58,3 +58,16 @@ Notable changes per release. Preview - APIs will change.
   generate_image, SD-Turbo painting it, qwen describing it - produced a painterly sailboat,
   fetched by artifact id.
 - Engine: SpawnDev.ILGPU.ML 4.0.0-preview.6-local.3.
+
+## 1.0.0-preview.5 - Storage-quota runaway fix + browser storage management
+
+- **Storage-quota browser-download runaway FIXED** (engine dep bump → SpawnDev.ILGPU.ML
+  4.0.0-preview.7, which pulls SpawnDev.WebTorrent 3.2.12 + SpawnDev.BlazorJS 3.5.15). A browser
+  model download whose OPFS piece store hit the quota used to re-request the same piece forever (169
+  identical range GETs; origin ballooning) because a failing OPFS write leaked its swap file per
+  attempt and the torrent re-requested the unflagged piece. Now the write aborts-on-throw (no swap
+  leak) and the torrent classifies the failure and pauses with an `OnError` instead of hot-looping.
+- **Browser storage management UI** (Seven): the chat footer shows OPFS usage/quota with a "clear"
+  button - OPFS is invisible to Chrome DevTools ("Clear site data" doesn't touch it), so the app is
+  its own storage manager. Plus a `?worker=dedicated` diagnostic switch (`PreferSharedWorker`) that
+  forces a dedicated worker.

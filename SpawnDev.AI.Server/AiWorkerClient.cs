@@ -27,6 +27,11 @@ public sealed class AiWorkerClient
     /// <summary>Worker status line from the last <see cref="InitAsync"/>.</summary>
     public string Status { get; private set; } = "";
 
+    /// <summary>False forces a DEDICATED worker even when SharedWorker is supported. Diagnostic +
+    /// mitigation switch: the model-piece download loop reproduced ONLY under SharedWorker
+    /// (2026-07-04, same client/OPFS store works on the main thread and desktop).</summary>
+    public bool PreferSharedWorker { get; set; } = true;
+
     /// <summary>Attach the worker (shared preferred, dedicated fallback) and warm the server.</summary>
     public async Task<string> InitAsync()
     {
@@ -35,7 +40,7 @@ public sealed class AiWorkerClient
         {
             if (_worker == null)
             {
-                if (_workers.SharedWebWorkerSupported)
+                if (PreferSharedWorker && _workers.SharedWebWorkerSupported)
                 {
                     var shared = await _workers.GetSharedWebWorker(SharedWorkerName);
                     _worker = shared;
