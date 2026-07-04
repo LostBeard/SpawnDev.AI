@@ -4,7 +4,7 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>1.0.0-preview.2</Version>
+		<Version>1.0.0-preview.3</Version>
 		<Title>SpawnDev.AI</Title>
 		<Authors>LostBeard</Authors>
 		<Description>Core contracts for the SpawnDev AI stack: chat sessions, Ollama/OpenAI-compatible API shapes, and tool-calling contracts. Shared by SpawnDev.AI.Server (desktop HTTP + browser-worker model server) and SpawnDev.AI.Blazor (chat UI components).</Description>
