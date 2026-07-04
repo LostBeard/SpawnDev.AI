@@ -5,6 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- ILGPU resolves methods (Math.Clamp etc.) via reflection at runtime - trimming removes them
+         and the WORKER dies with MissingMethodException in RemappedIntrinsics (hit on the first
+         Pages deploy, 2026-07-04). Same standing rule as the ML demo: never trim, never AOT. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <RunAOTCompilation>false</RunAOTCompilation>
   </PropertyGroup>
 
   <ItemGroup>
