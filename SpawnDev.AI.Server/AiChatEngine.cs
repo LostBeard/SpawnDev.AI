@@ -101,6 +101,12 @@ public sealed class AiChatEngine : IAiChatService
         // "don't repeat the id" won't reliably echo it). Every surface - typed clients, worker, and
         // plain HTTP protocol clients - can resolve ai-artifact://{id} via /ai/artifacts/{id}.
         var refs = string.Join("\n", artifacts.Select(a => $"![{a.Label ?? "generated image"}](ai-artifact://{a.Id})"));
+        // STREAMING clients read only the delta stream, never this return value - so the refs must be
+        // streamed too, or an image the model generated never reaches the browser. onDelta here is the
+        // RAW protocol callback (not the tool-markup streamer), so refs pass through verbatim. Emitted
+        // after the final round's prose = same order as the non-streamed Text below.
+        if (onDelta != null)
+            await onDelta("\n\n" + refs).ConfigureAwait(false);
         return result with
         {
             Text = result.Text.TrimEnd() + "\n\n" + refs,
@@ -158,10 +164,17 @@ public sealed class AiChatEngine : IAiChatService
         };
     }
 
-    // ── Streaming tool-markup holdback (verbatim logic from the proven /v1/messages SSE path) ──
+    // ── Streaming tool-markup holdback ──
+    // A small model emits its tool call in several shapes: the instructed <tool_call>…</tool_call>, a
+    // markdown ```json fence, or a bare {"name":…} object (qwen2.5-0.5b does ALL THREE). ParseToolCalls
+    // catches every shape at the END of the round - but a naive stream flashes the raw JSON on screen
+    // before that (TJ, 2026-07-05: the browser chat showed the generate_image JSON as text). This holds
+    // text back at the first sign of ANY tool-call opener. If the round turns out NOT to be a tool call
+    // (calls.Count == 0) the engine calls FlushTailAsync and the held text (e.g. a real code block) is
+    // released intact; if it IS a tool call the engine skips the flush and the markup stays suppressed.
     private sealed class ToolAwareStreamer
     {
-        private const string TC = "<tool_call>";
+        private static readonly string[] Openers = { "<tool_call>", "```" };
         private readonly Func<string, Task> _onDelta;
         private readonly StringBuilder _sb = new();
         private int _emitted;
@@ -173,15 +186,34 @@ public sealed class AiChatEngine : IAiChatService
             _sb.Append(delta);
             if (_stopText) return;
             var s = _sb.ToString();
-            int tc = s.IndexOf(TC, Math.Max(0, _emitted - TC.Length), StringComparison.Ordinal);
-            if (tc >= 0) { await FlushAsync(tc).ConfigureAwait(false); _stopText = true; return; }
-            int hold = 0, maxH = Math.Min(TC.Length - 1, s.Length - _emitted);
-            for (int h = maxH; h > 0; h--)
-                if (s.AsSpan(s.Length - h).SequenceEqual(TC.AsSpan(0, h))) { hold = h; break; }
+
+            // Earliest position at/after the emitted boundary where a tool call could begin.
+            int stop = -1;
+            foreach (var op in Openers)
+            {
+                int idx = s.IndexOf(op, Math.Max(0, _emitted - op.Length), StringComparison.Ordinal);
+                if (idx >= 0 && (stop < 0 || idx < stop)) stop = idx;
+            }
+            // A response whose first non-whitespace char is '{' is a bare-JSON tool call from the top.
+            int fnw = FirstNonWhitespace(s);
+            if (fnw >= 0 && s[fnw] == '{' && (stop < 0 || fnw < stop)) stop = fnw;
+
+            if (stop >= 0) { await FlushAsync(stop).ConfigureAwait(false); _stopText = true; return; }
+
+            // Hold back the longest trailing run that could be the start of an opener (never emit half a fence).
+            int hold = 0;
+            foreach (var op in Openers)
+            {
+                int maxH = Math.Min(op.Length - 1, s.Length - _emitted);
+                for (int h = maxH; h > hold; h--)
+                    if (s.AsSpan(s.Length - h).SequenceEqual(op.AsSpan(0, h))) { hold = h; break; }
+            }
             await FlushAsync(s.Length - hold).ConfigureAwait(false);
         }
 
-        public Task FlushTailAsync() => _stopText ? Task.CompletedTask : FlushAsync(_sb.Length);
+        // Called only when the round produced NO tool call: whatever was held back is real content, so
+        // release ALL of it (even if we had paused on a '{' or ``` that turned out to be legitimate).
+        public Task FlushTailAsync() => FlushAsync(_sb.Length);
 
         private async Task FlushAsync(int upTo)
         {
@@ -190,6 +222,12 @@ public sealed class AiChatEngine : IAiChatService
                 await _onDelta(_sb.ToString(_emitted, upTo - _emitted)).ConfigureAwait(false);
                 _emitted = upTo;
             }
+        }
+
+        private static int FirstNonWhitespace(string s)
+        {
+            for (int i = 0; i < s.Length; i++) if (!char.IsWhiteSpace(s[i])) return i;
+            return -1;
         }
     }
 

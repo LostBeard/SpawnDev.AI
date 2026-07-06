@@ -96,6 +96,7 @@
             <textarea @bind="_input" @bind:event="oninput" @onkeydown="OnKeyDown" rows="1"
                       placeholder="Message — or /model, /image-model, or ask for a picture…" disabled="@_busy"></textarea>
             <button class="primary" @onclick="SendAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))">Send</button>
+            <button class="primary" @onclick="TestDirectImageAsync" disabled="@_busy" title="IMGTEST: direct SD-Turbo, bypass LLM">🔬</button>
         </div>
         <footer class="sdai-ftr">
             <span>@_status</span>

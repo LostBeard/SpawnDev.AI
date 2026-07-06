@@ -92,13 +92,27 @@ public partial class Home
         int deltas = 0;
         try
         {
+            // The model has a generate_image tool (injected server-side by the worker). A small model
+            // WILL NOT reliably call a tool it is never told it has - the bare "helpful assistant"
+            // prompt made qwen2.5-0.5b REFUSE image requests ~60% of the time ("I can't generate images
+            // from text"), because nothing told it it could. Naming the tool + scoping it to explicit
+            // image intent takes image requests from ~40% -> ~100% called, while the "(and only if)…
+            // never call generate_image" clause keeps it from drawing on factual/creative prompts.
             var convo = new List<AiChatMessage> { new("system",
-                "You are a helpful assistant running entirely on the user's own GPU in their browser.") };
+                "You are a helpful assistant running entirely on the user's own GPU in their browser. "
+                + "You can both chat and create images. If (and only if) the user explicitly asks you to "
+                + "draw, paint, generate, or show a picture, photo, or image, call generate_image with a "
+                + "vivid caption. For every other message - questions, facts, math, explanations, stories, "
+                + "poems - respond with plain text and never call generate_image.") };
             foreach (var m in _messages.Where(m => m.Role is "user" or "assistant"))
                 convo.Add(new AiChatMessage(m.Role, m.Text));
 
             var doneReason = await Ai.ChatStreamAsync(_model, convo,
-                new AiGenerationOptions { MaxOutputTokens = 384, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = 1.15f },
+                // Temp 0.3 (was 0.7): the 0.5b's tool-routing is a sampling decision - 0.7 let a
+                // "refuse" (on image requests) or a spurious "draw" (on factual ones) win off the tail.
+                // 0.3 collapses toward the argmax (the correct route) without going fully greedy, keeping
+                // some variety in ordinary chat. Image requests: ~100% called; false-draws: ~0.
+                new AiGenerationOptions { MaxOutputTokens = 384, Strategy = "top_p", Temperature = 0.3f, TopP = 0.9f, RepetitionPenalty = 1.15f },
                 onDelta: delta =>
                 {
                     _streaming += delta; deltas++;
@@ -131,6 +145,32 @@ public partial class Home
             StateHasChanged();
             await ScrollToBottom();
         }
+    }
+
+    // TEMP TEST HOOK (2026-07-05): drive SD-Turbo LOAD+GEN directly via /v1/images/generations, bypassing
+    // the LLM (whose tool-call is intermittent on WebGPU). Logs timing to the PAGE console (capturable by
+    // the Playwright gate, unlike the worker's WL SUMMARY). REMOVE once load-perf is fixed.
+    async Task TestDirectImageAsync()
+    {
+        if (_busy) return;
+        _busy = true; _busyNote = "IMGTEST: direct SD-Turbo (bypassing LLM)…"; StateHasChanged(); await ScrollToBottom();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var reqBody = System.Text.Json.JsonSerializer.Serialize(new { prompt = "a lighthouse in a storm", seed = 42 });
+            var resp = await Ai.RequestJsonAsync("POST", "/v1/images/generations", reqBody);
+            sw.Stop();
+            Console.WriteLine($"IMGTEST: direct SD-Turbo load+gen = {sw.Elapsed.TotalSeconds:F1}s");
+            using var doc = System.Text.Json.JsonDocument.Parse(resp);
+            var b64 = doc.RootElement.GetProperty("data")[0].GetProperty("b64_json").GetString();
+            var bytes = Convert.FromBase64String(b64!);
+            using var blob = new Blob(new[] { bytes }, new BlobOptions { Type = "image/png" });
+            var msg = new Msg { Role = "system", Text = $"IMGTEST {sw.Elapsed.TotalSeconds:F1}s" };
+            msg.Images.Add(new ChatImage { Url = URL.CreateObjectURL(blob), Label = "imgtest" });
+            _messages.Add(msg);
+        }
+        catch (Exception ex) { Console.WriteLine($"IMGTEST FAILED: {ex.GetType().Name}: {ex.Message}"); _messages.Add(new Msg { Role = "system", Text = $"IMGTEST error: {ex.Message}" }); }
+        finally { _busy = false; _busyNote = ""; StateHasChanged(); await ScrollToBottom(); }
     }
 
     void HandleSlash(string text)

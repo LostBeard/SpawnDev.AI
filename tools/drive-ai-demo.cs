@@ -20,22 +20,22 @@ await page.GotoAsync(url, new() { WaitUntil = WaitUntilState.NetworkIdle, Timeou
 Console.WriteLine("[gate] clicking 'Start the AI server'");
 await page.ClickAsync("button:has-text(\"Start the AI server\")", new() { Timeout = 30000 });
 
-// Worker attach + WebGPU init: the model dropdown appears when ready.
-await page.WaitForSelectorAsync("select", new() { Timeout = 180000 });
-var status = await page.InnerTextAsync("p[style*='color:#484']");
-Console.WriteLine($"[gate] READY: {status}");
+// Worker attach + WebGPU init: the composer (textarea) appears when ready.
+await page.WaitForSelectorAsync("textarea", new() { Timeout = 180000 });
+Console.WriteLine("[gate] READY: worker + WebGPU up, composer present");
 
 Console.WriteLine("[gate] sending question");
-await page.FillAsync("input[placeholder='Send a message…']", "What is the capital of France? Answer in one short sentence.");
+// Composer is a <textarea> (placeholder "Message — or /model…"); Enter (no shift) submits via OnKeyDown.
+await page.FillAsync("textarea", "What is the capital of France? Answer in one short sentence.");
 var t0 = DateTime.UtcNow;
-await page.ClickAsync("button:has-text(\"Send\")");
+await page.PressAsync("textarea", "Enter");
 
 // First request: hub download (~11s on the LAN) + GPU load + capture warmup, then streaming.
 // Generation is finished when the composer re-enables (_busy = false re-renders the input enabled).
-await page.WaitForSelectorAsync("input[placeholder='Send a message…']:not([disabled])", new() { Timeout = 300000 });
+await page.WaitForSelectorAsync("textarea:not([disabled])", new() { Timeout = 300000 });
 var total = (DateTime.UtcNow - t0).TotalSeconds;
 
-var transcript = await page.InnerTextAsync("div[style*='overflow-y']");
+var transcript = await page.InnerTextAsync(".transcript");
 Console.WriteLine($"[gate] TRANSCRIPT ({total:F1}s):\n{transcript}");
 
 bool pass = transcript.Contains("Paris", StringComparison.OrdinalIgnoreCase);

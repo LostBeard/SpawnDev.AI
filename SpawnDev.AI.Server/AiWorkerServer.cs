@@ -100,6 +100,10 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
         try
         {
             if (_router != null) return;
+            // DIAGNOSTIC (2026-07-05): attribute the WebGPU model-load time (stream/zero-copy vs .NET-chunked
+            // CopyFromCPU) so the ILGPU CopyFromCPU-on-WebGPU cost is MEASURED, not assumed. Emits a
+            // per-model [WL SUMMARY] to the browser console. Revert once the ILGPU transport fix lands.
+            SpawnDev.ILGPU.ML.InferenceSession.TraceWeightLoad = true;
             var builder = MLContext.Create();
             await builder.AllAcceleratorsAsync().ConfigureAwait(false);
             var context = builder.ToContext();
