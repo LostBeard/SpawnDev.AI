@@ -173,6 +173,35 @@ public partial class Home
         finally { _busy = false; _busyNote = ""; StateHasChanged(); await ScrollToBottom(); }
     }
 
+    // Generate an image DIRECTLY from the user's typed prompt (bypass the LLM), via /v1/images/generations.
+    // The 🔬 button above uses a fixed prompt for a deterministic smoke test; this uses whatever's typed.
+    async Task DirectImageFromPromptAsync()
+    {
+        if (_busy) return;
+        var prompt = (_input ?? "").Trim();
+        if (prompt.Length == 0) return;
+        _input = "";
+        _messages.Add(new Msg { Role = "user", Text = prompt });
+        _busy = true; _busyNote = "Generating image (direct SD-Turbo, bypassing LLM)…"; StateHasChanged(); await ScrollToBottom();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var reqBody = System.Text.Json.JsonSerializer.Serialize(new { prompt });
+            var resp = await Ai.RequestJsonAsync("POST", "/v1/images/generations", reqBody);
+            sw.Stop();
+            Console.WriteLine($"Direct image gen = {sw.Elapsed.TotalSeconds:F1}s (prompt: {prompt})");
+            using var doc = System.Text.Json.JsonDocument.Parse(resp);
+            var b64 = doc.RootElement.GetProperty("data")[0].GetProperty("b64_json").GetString();
+            var bytes = Convert.FromBase64String(b64!);
+            using var blob = new Blob(new[] { bytes }, new BlobOptions { Type = "image/png" });
+            var msg = new Msg { Role = "system", Text = $"image {sw.Elapsed.TotalSeconds:F1}s" };
+            msg.Images.Add(new ChatImage { Url = URL.CreateObjectURL(blob), Label = prompt });
+            _messages.Add(msg);
+        }
+        catch (Exception ex) { Console.WriteLine($"Image gen FAILED: {ex.GetType().Name}: {ex.Message}"); _messages.Add(new Msg { Role = "system", Text = $"Image gen error: {ex.Message}" }); }
+        finally { _busy = false; _busyNote = ""; StateHasChanged(); await ScrollToBottom(); }
+    }
+
     void HandleSlash(string text)
     {
         var parts = text.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
