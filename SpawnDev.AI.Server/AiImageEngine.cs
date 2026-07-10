@@ -47,6 +47,11 @@ public sealed class AiImageEngine : IDisposable
     /// <summary>Progress callback while a model loads ((stage, pct)).</summary>
     public Action<string, int>? OnLoadProgress { get; set; }
 
+    /// <summary>Called at the START of <see cref="GenerateAsync"/> to evict the OTHER model kind (the LLM)
+    /// from the shared GPU before we load/run SD-Turbo - one large model resident per device. Prevents the
+    /// LLM + image co-residence OOM / WebGPU device-loss (page crash). No-op if null.</summary>
+    public Func<Task>? EvictOtherKind { get; set; }
+
     /// <summary>Resolve a requested name to a known option (null = unknown).</summary>
     public ImageModelOption? Resolve(string? name)
     {
@@ -60,6 +65,9 @@ public sealed class AiImageEngine : IDisposable
     {
         var opt = Resolve(model)
             ?? throw new FileNotFoundException($"Image model '{model}' is not in the image model list.");
+        // Free the LLM's GPU memory BEFORE we take our gate / load SD-Turbo - one large model resident per
+        // device (LLM + SD-Turbo together OOM'd the WebGPU device -> page crash). Gate-free -> no deadlock.
+        if (EvictOtherKind != null) await EvictOtherKind().ConfigureAwait(false);
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -84,6 +92,15 @@ public sealed class AiImageEngine : IDisposable
             return new AiGeneratedImage(result.ImageRGBA, result.Width, result.Height, usedSeed,
                 opt.Name, sw.Elapsed.TotalMilliseconds);
         }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Free the resident image pipeline from GPU memory (for the LLM registry to call before it
+    /// loads a model). Safe when nothing is resident. Serialized on the generation gate.</summary>
+    public async Task EvictAsync()
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try { _resident?.Dispose(); _resident = null; _residentName = null; }
         finally { _gate.Release(); }
     }
 

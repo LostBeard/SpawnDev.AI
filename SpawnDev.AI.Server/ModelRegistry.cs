@@ -57,6 +57,13 @@ public sealed class ModelRegistry : IAsyncDisposable
     public bool EnableWebGPUDecodeCapture { get; set; } = true;
 
     /// <summary>
+    /// Called at the START of every <see cref="AcquireAsync"/> (before this registry loads/uses its model)
+    /// to evict the OTHER model kind (the image pipeline) from the shared GPU - one large model resident per
+    /// device. Prevents the LLM + SD-Turbo co-residence OOM / WebGPU device-loss (page crash). No-op if null.
+    /// </summary>
+    public Func<Task>? EvictOtherKind { get; set; }
+
+    /// <summary>
     /// A serialized lease on a loaded model. Hold it for the duration of ONE generation, then dispose to
     /// release the gate. The model is loaded (or swapped in) before the lease is returned.
     /// </summary>
@@ -75,6 +82,9 @@ public sealed class ModelRegistry : IAsyncDisposable
     /// </summary>
     public async Task<Lease> AcquireAsync(string modelName, CancellationToken ct = default)
     {
+        // Free the OTHER kind's GPU model (the image pipeline) BEFORE we take our gate / load - one large
+        // model resident per device. Called gate-free here so it cannot deadlock against the image gate.
+        if (EvictOtherKind != null) await EvictOtherKind().ConfigureAwait(false);
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -95,6 +105,15 @@ public sealed class ModelRegistry : IAsyncDisposable
             _gate.Release(); // never strand the gate on a load failure
             throw;
         }
+    }
+
+    /// <summary>Free the resident LLM from GPU memory (for the image engine to call before it loads
+    /// SD-Turbo). Safe when nothing is resident (no-op). Serialized on the same gate as generation.</summary>
+    public async Task EvictAsync()
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try { _resident?.Dispose(); _resident = null; }
+        finally { _gate.Release(); }
     }
 
     public async ValueTask DisposeAsync()

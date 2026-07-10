@@ -117,6 +117,10 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             // serves the internal loop, /v1/images/generations, and /ai/artifacts over the worker
             // frames - the public page's chat can paint.
             _images = new AiImageEngine(_webTorrent, _http, _accelerator);
+            // One large GPU model resident per device: each kind evicts the other before it loads/runs, so
+            // the LLM and SD-Turbo never co-reside (co-residence OOM'd the WebGPU device -> page crash).
+            _images.EvictOtherKind = () => _registry!.EvictAsync();
+            _registry.EvictOtherKind = () => _images!.EvictAsync();
             _tools = new AiToolRegistry();
             _tools.Register(new GenerateImageTool(_images, _tools));
             engine.Tools = _tools;

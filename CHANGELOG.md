@@ -83,3 +83,16 @@ Notable changes per release. Preview - APIs will change.
   `IAiTool` registration now also serves any MCP client (Claude CLI, agents). Verified end-to-end against
   the desktop HTTP host: initialize / tools/list / ping / notification / error paths, plus a real
   `generate_image` call returning a 512x512 PNG as inline MCP image content.
+
+## 1.0.0-preview.7 - LLM/image co-residence crash fix (one large GPU model resident per device)
+
+- **Cross-kind GPU eviction.** The LLM (`ModelRegistry`) and the image pipeline (`AiImageEngine`) each held
+  a multi-GB resident model on the SAME accelerator with no coordination, so an LLM + SD-Turbo (UNet 1.7 GB
+  + VAE + text-encoder) co-residence blew past the WebGPU device budget → device loss → the browser page
+  crashed. Reported symptoms: "the LLM can't do image-gen (crashes the page)" and "image-gen twice in a row
+  crashes." Fix: each engine now evicts the OTHER kind before it loads/runs - an `EvictOtherKind` hook called
+  gate-free at the start of `ModelRegistry.AcquireAsync` / `AiImageEngine.GenerateAsync`, plus an
+  `EvictAsync()` on each, wired in `AiWorkerServer` - so only ONE large model is resident per device. Proven
+  end-to-end on hardware WebGPU (real Chrome, `tools/drive-ai-coreside.cs`): chat → image-gen → image-gen →
+  chat completes with NO page crash. Tradeoff: an LLM↔image switch reloads the incoming model (OPFS→GPU);
+  letting a small LLM + tiled SD-Turbo co-reside when they actually fit is a follow-up optimization.
