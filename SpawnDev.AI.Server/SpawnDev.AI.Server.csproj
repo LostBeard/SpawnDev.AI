@@ -24,8 +24,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.ILGPU.ML" Version="4.0.0-preview.10" />
-		<PackageReference Include="SpawnDev.BlazorJS.WebWorkers" Version="3.2.4" />
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="4.0.0-preview.11" />
+		<PackageReference Include="SpawnDev.BlazorJS.WebWorkers" Version="3.2.5" />
 	</ItemGroup>
 
 </Project>
