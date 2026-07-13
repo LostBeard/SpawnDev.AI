@@ -1,25 +1,26 @@
 <Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
 
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
-    <!-- ILGPU resolves methods (Math.Clamp etc.) via reflection at runtime - trimming removes them
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+		<!-- ILGPU resolves methods (Math.Clamp etc.) via reflection at runtime - trimming removes them
          and the WORKER dies with MissingMethodException in RemappedIntrinsics (hit on the first
          Pages deploy, 2026-07-04). Same standing rule as the ML demo: never trim, never AOT. -->
-    <PublishTrimmed>false</PublishTrimmed>
-    <RunAOTCompilation>false</RunAOTCompilation>
-	  <CompressionEnabled>false</CompressionEnabled>
-  </PropertyGroup>
+		<PublishTrimmed>false</PublishTrimmed>
+		<RunAOTCompilation>false</RunAOTCompilation>
+		<CompressionEnabled>false</CompressionEnabled>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.9" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.9" PrivateAssets="all" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.9" />
+		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.9" PrivateAssets="all" />
+		<PackageReference Include="SpawnDev.BlazorJS" Version="3.5.26" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\SpawnDev.AI.Server\SpawnDev.AI.Server.csproj" />
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\SpawnDev.AI.Server\SpawnDev.AI.Server.csproj" />
+	</ItemGroup>
 
 </Project>
