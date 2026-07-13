@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using SpawnDev.ILGPU.ML.GGUF;
 using SpawnDev.ILGPU.ML.Pipelines;
 using SpawnDev.ILGPU.ML.Preprocessing;
@@ -56,6 +58,19 @@ public sealed class AiChatEngine : IAiChatService
     /// <summary>Max server-tool execution rounds per generation (loop guard).</summary>
     public int MaxToolRounds { get; set; } = 3;
 
+    /// <summary>When true (default) and a <c>generate_image</c> server tool is available, a user message
+    /// that clearly asks to CREATE a visual pre-emptively FORCES the image tool instead of trusting the
+    /// model to emit the call. A small instruct model (qwen2.5-0.5b) REFUSES ~40% of plain image requests
+    /// ("draw a cat" → "I'm sorry, I can't draw") because the tool call is its own stochastic decision, and
+    /// the refusal is often the argmax (greedy doesn't help - measured 2026-07-13). Forcing writes only the
+    /// CAPTION with the model (prefill-committed to the tool call), so there is no refusal path. Set false to
+    /// restore pure model-driven routing.</summary>
+    public bool ForceImageToolOnIntent { get; set; } = true;
+
+    /// <summary>The image tool this engine force-calls on visual-creation intent (see
+    /// <see cref="ForceImageToolOnIntent"/>).</summary>
+    public string ImageToolName { get; set; } = "generate_image";
+
     private async Task<AiChatResult> GenerateAsync(AiChatRequest request, Func<string, Task>? onDelta, CancellationToken ct)
     {
         // Server-tool injection (client tools take precedence).
@@ -71,6 +86,18 @@ public sealed class AiChatEngine : IAiChatService
                     function = new { name = t.Name, description = t.Description, parameters = schema.RootElement.Clone() },
                 });
             }).ToList();
+
+        // Pre-emptive image-tool forcing: when the latest user turn clearly asks to CREATE a visual and the
+        // generate_image tool is available, force it rather than gamble on the model choosing to call it. This
+        // runs BEFORE the normal generation so a refusal is never produced or streamed. Falls through to the
+        // normal path if the caption/execution fails.
+        if (ForceImageToolOnIntent && serverTools is { Count: > 0 }
+            && serverTools.Any(t => string.Equals(t.Name, ImageToolName, StringComparison.OrdinalIgnoreCase))
+            && HasImageIntent(LastUserMessage(request.Messages)))
+        {
+            var forced = await TryForcedImageAsync(request, toolsJson, onDelta, ct).ConfigureAwait(false);
+            if (forced is not null) return forced;
+        }
 
         var messages = request.Messages.ToList();
         List<AiToolArtifact>? artifacts = null;
@@ -162,6 +189,125 @@ public sealed class AiChatEngine : IAiChatService
         {
             TextWithoutToolCalls = calls.Count > 0 ? StripToolCalls(res.Text).Trim() : res.Text,
         };
+    }
+
+    // ── Pre-emptive image-tool forcing ──
+    // The model REFUSES ~40% of plain image requests and the refusal is the greedy argmax, so no sampling or
+    // prompt tweak makes it reliable (measured on qwen2.5-0.5b, both Ollama + HF GGUFs, 2026-07-13). When the
+    // user clearly wants an image we bypass the routing decision entirely: prefill the assistant turn with the
+    // tool-call opener so the model can ONLY write the caption, then execute the tool ourselves. A greedy
+    // caption pass is fast (~48 new tokens) and the model still authors the caption; a deterministic derivation
+    // from the user text is the fallback when the caption pass yields nothing usable.
+    private async Task<AiChatResult?> TryForcedImageAsync(AiChatRequest request, IReadOnlyList<string>? toolsJson,
+        Func<string, Task>? onDelta, CancellationToken ct)
+    {
+        string userMsg = LastUserMessage(request.Messages) ?? "";
+        string caption = "";
+        try
+        {
+            using var lease = await _registry.AcquireAsync(request.Model, ct).ConfigureAwait(false);
+            var lm = lease.Model;
+            var (promptIds, stopIds) = ChatTemplates.BuildChatPrompt(lm.Gguf, lm.Tokenizer, ToTuples(request.Messages),
+                toolsJson: toolsJson);
+            // Force the assistant turn to begin as a generate_image call; the model completes only the caption
+            // string, and we stop it at the closing quote. (These are ordinary tokens for ChatML/qwen, not
+            // specials, so plain Encode matches what the template would produce.)
+            const string prefix = "<tool_call>\n{\"name\": \"" + "generate_image" + "\", \"arguments\": {\"prompt\": \"";
+            var forcedIds = promptIds.Concat(lm.Tokenizer.Encode(prefix)).ToArray();
+            var cfg = new GenerationConfig { MaxNewTokens = 48, Strategy = "greedy" };
+            var res = await lm.Generator.GenerateAsync(forcedIds, cfg, new[] { "\"", "\n", "</tool_call>" }, stopIds, null, ct)
+                .ConfigureAwait(false);
+            caption = CleanCaption(res.Text);
+        }
+        catch { /* caption pass failed - fall back to the derived caption below */ }
+
+        if (string.IsNullOrWhiteSpace(caption)) caption = DeriveCaption(userMsg);
+        if (string.IsNullOrWhiteSpace(caption)) return null;   // nothing usable - let the normal path answer
+
+        var tool = Tools?.Get(ImageToolName);
+        if (tool == null) return null;
+        var argsJson = JsonSerializer.Serialize(new { prompt = caption });
+        var exec = await tool.ExecuteAsync(argsJson, ct).ConfigureAwait(false);
+        var call = new AiToolCall(ImageToolName, argsJson);
+
+        if (exec.Artifacts is not { Count: > 0 })
+        {
+            // Image generation itself failed (e.g. the diffusion model could not load). Surface that plainly
+            // rather than falling through to a confusing "I can't make images" model refusal.
+            if (exec.IsError)
+            {
+                if (onDelta != null) await onDelta(exec.TextForModel).ConfigureAwait(false);
+                return new AiChatResult(exec.TextForModel, 0, 0, AiStopKind.Stop, new[] { call })
+                { TextWithoutToolCalls = exec.TextForModel };
+            }
+            return null;
+        }
+
+        var artifacts = exec.Artifacts.ToList();
+        // Deterministic artifact refs the ENGINE controls (same as the agentic-loop path). The image is the
+        // response; every surface resolves ai-artifact://{id}. The demo strips the ref markdown and paints the
+        // image, so this stays image-only (no chatty preamble a forced call shouldn't invent).
+        var refs = string.Join("\n", artifacts.Select(a => $"![{a.Label ?? caption}](ai-artifact://{a.Id})"));
+        if (onDelta != null) await onDelta(refs).ConfigureAwait(false);
+        return new AiChatResult(refs, 0, 0, AiStopKind.Stop, new[] { call })
+        {
+            TextWithoutToolCalls = "",
+            Artifacts = artifacts,
+        };
+    }
+
+    private static string? LastUserMessage(IReadOnlyList<AiChatMessage> messages)
+    {
+        for (int i = messages.Count - 1; i >= 0; i--)
+            if (string.Equals(messages[i].Role, "user", StringComparison.OrdinalIgnoreCase))
+                return messages[i].Content;
+        return null;
+    }
+
+    // A visual-CREATION verb paired with a visual noun (or an imperative draw/paint/sketch opener). Conservative
+    // on purpose: it must fire on real image requests ("draw a cat", "generate an image of a robot", "I want a
+    // photo of a lake", "show me a picture of paris") without hijacking ordinary chat that merely mentions a
+    // picture. Only consulted for the LATEST user turn.
+    private static readonly Regex ImperativeDraw = new(
+        @"^\s*(please\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+)*(draw|sketch|paint|illustrate|render)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex CreateVisual = new(
+        @"\b(draw|sketch|paint|illustrate|render|generate|create|make|produce|show|give|want|need|design|imagine)\b[\s\w,.'-]{0,40}?\b(image|images|picture|pictures|pic|pics|photo|photos|photograph|drawing|painting|illustration|art|artwork|wallpaper|logo|portrait|selfie|meme|icon|scene|render|visual)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>True when the message clearly asks the assistant to CREATE a visual (image-generation intent).</summary>
+    public static bool HasImageIntent(string? message)
+        => !string.IsNullOrWhiteSpace(message) && (ImperativeDraw.IsMatch(message) || CreateVisual.IsMatch(message));
+
+    // Trim the model's caption to a clean single line (drop a trailing quote/brace/backslash and any tail after
+    // a newline). Guards against the model running past the caption before the stop string bites.
+    private static string CleanCaption(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return "";
+        var s = raw.Trim();
+        int nl = s.IndexOf('\n'); if (nl >= 0) s = s[..nl];
+        s = s.TrimEnd('"', '}', '\\', ' ', '\t', ',');
+        s = s.Trim().Trim('"').Trim();
+        return s.Length is > 1 and < 300 ? s : "";
+    }
+
+    // Deterministic fallback caption: strip a leading polite/imperative wrapper ("please draw me a picture of ")
+    // so the remaining subject phrase drives the diffusion model. Returns the whole message if nothing strips.
+    private static readonly Regex CaptionStrip = new(
+        @"^\s*(please\s+|hey\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+|i\s+(want|need|would\s+like)\s+(you\s+to\s+)?)*"
+        + @"(draw|sketch|paint|illustrate|render|generate|create|make|produce|show|give|design|imagine)?\s*"
+        + @"(me\s+)?(a|an|some|the)?\s*"
+        + @"(image|picture|pic|photo|photograph|drawing|painting|illustration|art|artwork|wallpaper|logo|portrait|render|visual)?\s*"
+        + @"(of\s+)?",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static string DeriveCaption(string userMsg)
+    {
+        if (string.IsNullOrWhiteSpace(userMsg)) return "";
+        var s = userMsg.Trim().TrimEnd('.', '!', '?', ' ');
+        var stripped = CaptionStrip.Replace(s, "", 1).Trim();
+        var result = stripped.Length >= 2 ? stripped : s;   // never return an empty caption
+        return result.Length < 300 ? result : result[..300];
     }
 
     // ── Streaming tool-markup holdback ──

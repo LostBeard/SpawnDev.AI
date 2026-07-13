@@ -9,6 +9,13 @@ using SpawnDev.AI.Server;
 
 int port = int.TryParse(Environment.GetEnvironmentVariable("SPAWNDEV_AI_PORT"), out var p) && p > 0 ? p : 11434;
 
+// Diagnostic: `probe-intent` runs the model-free image-intent detector battery (false pos/neg). No GPU.
+if (args.Length > 0 && args[0] == "probe-intent")
+{
+    Environment.ExitCode = ProbeHub.CheckIntent();
+    return;
+}
+
 // Accelerator: CUDA > OpenCL > CPU (desktop host; the browser host uses WebGPU).
 var context = SpawnDev.ILGPU.ML.MLContext.Create().ToContext();
 Accelerator accelerator =
@@ -16,6 +23,16 @@ Accelerator accelerator =
     ?? context.Devices.FirstOrDefault(d => d.AcceleratorType == AcceleratorType.OpenCL)?.CreateAccelerator(context)
     ?? context.Devices.First(d => d.AcceleratorType == AcceleratorType.CPU).CreateAccelerator(context);
 Console.WriteLine($"[SpawnDev.AI] accelerator: {accelerator.Name} ({accelerator.AcceleratorType})");
+
+// ── Diagnostic: `probe-hub [modelName]` loads the EXACT HuggingFace GGUF the BROWSER worker uses (via
+// HubModelProvider) and runs the image tool-calling probe, isolating tool-CALLING (does the model emit a
+// <tool_call>?) from image generation with a stub tool. Answers whether the browser's HF GGUF refuses
+// tool calls where the Ollama-cached GGUF (normal host path) succeeds. Kept as a repeatable diagnostic.
+if (args.Length > 0 && args[0] == "probe-hub")
+{
+    await ProbeHub.RunAsync(accelerator, args.Length > 1 ? args[1] : "qwen2.5:0.5b-instruct-q8_0");
+    return;
+}
 
 var store = new OllamaModelStore();
 Console.WriteLine($"[SpawnDev.AI] Ollama cache: {OllamaModelStore.DefaultRoot()} (exists: {store.CacheExists}, models: {store.List().Count})");

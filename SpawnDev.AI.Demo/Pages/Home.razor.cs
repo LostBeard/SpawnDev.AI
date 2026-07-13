@@ -15,6 +15,20 @@ public partial class Home
     readonly List<string> _models = new();
     List<(string Name, string Note)> _imageModels = new();
 
+    // ── Agent settings (user-editable via the ⚙️ panel) ──
+    // The system prompt shapes how the model behaves. Image REQUESTS no longer depend on this text - the
+    // server forces the generate_image tool on clear visual intent (AiChatEngine.ForceImageToolOnIntent) - but
+    // the prompt still steers tone, refusal behavior, and when the model volunteers an image on its own.
+    const string DefaultSystemPrompt =
+        "You are a helpful assistant running entirely on the user's own GPU in their browser, with no "
+        + "internet access. Answer questions, facts, math, explanations, stories, and poems clearly in plain "
+        + "text. When the user asks for a picture, photo, or drawing, the app generates the image "
+        + "automatically - you don't need to do anything, so never say you are unable to make images.";
+    bool _showSettings;
+    string _systemPrompt = DefaultSystemPrompt;
+    float _temperature = 0.3f;
+    int _maxTokens = 384;
+
     sealed class ChatImage { public string Url = ""; public string Label = "image"; }
     sealed class Msg
     {
@@ -60,6 +74,9 @@ public partial class Home
 
     Task SendPreset(string text) { _input = text; return SendAsync(); }
 
+    void ToggleSettings() { _showSettings = !_showSettings; StateHasChanged(); }
+    void ResetSystemPrompt() { _systemPrompt = DefaultSystemPrompt; StateHasChanged(); }
+
     async Task OnKeyDown(KeyboardEventArgs e)
     { if (e.Key == "Enter" && !e.ShiftKey) await SendAsync(); }
 
@@ -92,27 +109,18 @@ public partial class Home
         int deltas = 0;
         try
         {
-            // The model has a generate_image tool (injected server-side by the worker). A small model
-            // WILL NOT reliably call a tool it is never told it has - the bare "helpful assistant"
-            // prompt made qwen2.5-0.5b REFUSE image requests ~60% of the time ("I can't generate images
-            // from text"), because nothing told it it could. Naming the tool + scoping it to explicit
-            // image intent takes image requests from ~40% -> ~100% called, while the "(and only if)…
-            // never call generate_image" clause keeps it from drawing on factual/creative prompts.
-            var convo = new List<AiChatMessage> { new("system",
-                "You are a helpful assistant running entirely on the user's own GPU in their browser. "
-                + "You can both chat and create images. If (and only if) the user explicitly asks you to "
-                + "draw, paint, generate, or show a picture, photo, or image, call generate_image with a "
-                + "vivid caption. For every other message - questions, facts, math, explanations, stories, "
-                + "poems - respond with plain text and never call generate_image.") };
+            // The system prompt is user-editable via the ⚙️ settings panel (_systemPrompt). Image requests
+            // no longer depend on it: the server pre-emptively forces the generate_image tool on clear visual
+            // intent (AiChatEngine.ForceImageToolOnIntent) because a 0.5b REFUSES ~40% of plain image requests
+            // and the refusal is the greedy argmax, so no prompt/sampling tweak makes it reliable. An empty
+            // prompt is allowed (some users want a bare model); we just skip the system turn then.
+            var convo = new List<AiChatMessage>();
+            if (!string.IsNullOrWhiteSpace(_systemPrompt)) convo.Add(new AiChatMessage("system", _systemPrompt));
             foreach (var m in _messages.Where(m => m.Role is "user" or "assistant"))
                 convo.Add(new AiChatMessage(m.Role, m.Text));
 
             var doneReason = await Ai.ChatStreamAsync(_model, convo,
-                // Temp 0.3 (was 0.7): the 0.5b's tool-routing is a sampling decision - 0.7 let a
-                // "refuse" (on image requests) or a spurious "draw" (on factual ones) win off the tail.
-                // 0.3 collapses toward the argmax (the correct route) without going fully greedy, keeping
-                // some variety in ordinary chat. Image requests: ~100% called; false-draws: ~0.
-                new AiGenerationOptions { MaxOutputTokens = 384, Strategy = "top_p", Temperature = 0.3f, TopP = 0.9f, RepetitionPenalty = 1.15f },
+                new AiGenerationOptions { MaxOutputTokens = _maxTokens, Strategy = "top_p", Temperature = _temperature, TopP = 0.9f, RepetitionPenalty = 1.15f },
                 onDelta: delta =>
                 {
                     _streaming += delta; deltas++;

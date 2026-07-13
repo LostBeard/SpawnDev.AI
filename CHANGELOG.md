@@ -96,3 +96,30 @@ Notable changes per release. Preview - APIs will change.
   end-to-end on hardware WebGPU (real Chrome, `tools/drive-ai-coreside.cs`): chat → image-gen → image-gen →
   chat completes with NO page crash. Tradeoff: an LLM↔image switch reloads the incoming model (OPFS→GPU);
   letting a small LLM + tiled SD-Turbo co-reside when they actually fit is a follow-up optimization.
+
+## 1.0.0-preview.8 - Reliable image requests (pre-emptive tool forcing) + agent settings UI
+
+- **The bug:** a small instruct model (qwen2.5-0.5b, the browser's default) REFUSES ~40% of plain image
+  requests - "draw a cat" → *"I'm sorry, but I can't draw."* - because emitting the `generate_image` tool
+  call is its own stochastic decision, and the refusal is the GREEDY ARGMAX (measured on the exact HF GGUF the
+  browser streams AND the Ollama GGUF: 4/7 image, 3/7 refuse at both temp 0.3 and temp 0). No prompt or
+  sampling tweak makes it reliable. This had been latent for a long time and only surfaced now that image
+  generation itself works.
+- **The fix (`AiChatEngine.ForceImageToolOnIntent`, default on).** When the latest user turn clearly asks to
+  CREATE a visual, the engine bypasses the model's routing decision entirely: it prefills the assistant turn
+  with the `generate_image` tool-call opener so the model can ONLY write the caption, then executes the tool
+  itself. No refusal path exists. The model still authors the caption (greedy ~48-token pass); a deterministic
+  strip of the user text is the fallback. Lives in the shared engine, so it fixes the desktop host, the
+  browser worker, and every protocol surface at once. Measured on the browser's HF `qwen2.5-0.5b` GGUF:
+  **7/7 image requests now generate (was 4/7), 0 refusals**, with clean model-authored captions ("draw a cat"
+  → `a cat`). A precise intent detector (imperative draw/paint/sketch, or a create/show/want verb + a visual
+  noun) scores **25/25 on a labeled battery, 0 false-positives / 0 false-negatives** - "tell me about the Mona
+  Lisa painting", "who painted the Sistine Chapel?", "show me the code for a for loop" all correctly stay text.
+  Control set through the full engine: 4/4 non-image prompts answer as TEXT with no spurious draws.
+- **Demo: agent settings panel (⚙️).** The system prompt is now user-viewable/editable (with Reset to
+  default), alongside Temperature and Max-response-tokens sliders. An empty system prompt is allowed (bare
+  model). Model + image-model pickers already lived in the header.
+- **Diagnostics:** `SpawnDev.AI.ServerHost probe-hub [model]` (loads the exact HF hub GGUF and measures
+  tool-call reliability) and `probe-intent` (model-free intent-detector battery) - repeatable regression tools.
+- Fixed the ServerHost's stale direct `SpawnDev.ILGPU` pin (4.17.2 → 4.17.6) that blocked its build against
+  ML preview.13.

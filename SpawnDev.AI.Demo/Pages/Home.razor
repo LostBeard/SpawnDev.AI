@@ -30,9 +30,37 @@
                         @foreach (var (name, _) in _imageModels) { <option value="@name">@name</option> }
                     </select>
                 </label>
+                <button class="gear @(_showSettings ? "on" : "")" @onclick="ToggleSettings" title="Agent settings (system prompt, temperature)">⚙️</button>
             </div>
         }
     </header>
+
+    @if (_ready && _showSettings)
+    {
+        <div class="settings">
+            <div class="setrow">
+                <label class="setlbl">System prompt
+                    <span class="sethint">Sets the assistant's persona and behavior. Image requests work regardless — the server auto-runs the image tool on any clear "draw / generate a picture" request.</span>
+                </label>
+                <textarea class="sysbox" @bind="_systemPrompt" @bind:event="oninput" rows="5" disabled="@_busy"
+                          placeholder="(empty = no system prompt — a bare model)"></textarea>
+                <div class="setactions">
+                    <button class="linkbtn" @onclick="ResetSystemPrompt" disabled="@_busy">Reset to default</button>
+                    <span class="setcount">@_systemPrompt.Length chars</span>
+                </div>
+            </div>
+            <div class="setgrid">
+                <label class="setlbl">Temperature <b>@_temperature.ToString("0.00")</b>
+                    <input type="range" min="0" max="1.5" step="0.05" @bind="_temperature" @bind:event="oninput" disabled="@_busy" />
+                    <span class="sethint">0 = focused/deterministic · higher = more creative &amp; varied</span>
+                </label>
+                <label class="setlbl">Max response tokens <b>@_maxTokens</b>
+                    <input type="range" min="64" max="2048" step="64" @bind="_maxTokens" @bind:event="oninput" disabled="@_busy" />
+                    <span class="sethint">Upper bound on reply length</span>
+                </label>
+            </div>
+        </div>
+    }
 
     @if (!_ready)
     {
@@ -121,6 +149,18 @@
     .pickers { display: flex; gap: .9rem; }
     .pickers label { font-size: .68rem; color: #7c8798; display: flex; flex-direction: column; gap: .15rem; }
     select { background: #131926; color: #d6dbe4; border: 1px solid #273043; border-radius: 6px; padding: .3rem .45rem; font-size: .8rem; }
+    .gear { background: #131926; border: 1px solid #273043; border-radius: 8px; color: #9fb0c8; font-size: 1rem; padding: .28rem .5rem; cursor: pointer; align-self: flex-end; line-height: 1; }
+    .gear.on { border-color: #7c3aed; background: #1c1730; }
+    .settings { border: 1px solid #273043; background: #0f1420; border-radius: 12px; padding: .85rem 1rem; margin-top: .7rem; display: flex; flex-direction: column; gap: .9rem; }
+    .settings .setlbl { display: flex; flex-direction: column; gap: .25rem; font-size: .74rem; color: #9fb0c8; }
+    .settings .setlbl b { color: #d6dbe4; font-weight: 600; }
+    .sethint { font-size: .66rem; color: #6a7688; line-height: 1.4; font-weight: 400; }
+    .sysbox { width: 100%; box-sizing: border-box; resize: vertical; background: #131926; border: 1px solid #273043; color: #d6dbe4; border-radius: 8px; padding: .5rem .6rem; font-size: .82rem; font-family: inherit; line-height: 1.5; margin-top: .35rem; }
+    .setactions { display: flex; justify-content: space-between; align-items: center; margin-top: .3rem; }
+    .setcount { font-size: .64rem; color: #5d6879; }
+    .setgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .setgrid input[type=range] { width: 100%; accent-color: #7c3aed; margin-top: .2rem; }
+    @@media (max-width: 560px) { .setgrid { grid-template-columns: 1fr; } }
     .hero { margin: auto; text-align: center; max-width: 520px; }
     .hero h2 { font-size: 1.5rem; margin-bottom: .4rem; }
     .hero p { color: #97a1b2; line-height: 1.55; }
