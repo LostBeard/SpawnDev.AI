@@ -44,7 +44,8 @@ public sealed record AiToolArtifact(string Id, string MimeType, byte[] Data, str
 /// An optional capability a tool can implement: given the latest user message, return authoritative
 /// reference text to inject as grounding context - or null when the message is not in the tool's domain.
 /// The engine consults this BEFORE generating so it can ground answers deterministically instead of
-/// relying on a small model to decide to call the tool (small models often don't, and then hallucinate).
+/// relying on a small model to decide to call the tool (small models often don't, and then answer
+/// inaccurately from memory).
 /// </summary>
 public interface IAiGroundingProvider
 {

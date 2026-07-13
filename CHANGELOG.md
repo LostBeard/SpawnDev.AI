@@ -131,11 +131,13 @@ Notable changes per release. Preview - APIs will change.
   CORS-friendly so it runs in the browser worker as-is. Anonymous, in-process cached. Verified directly:
   list/read/file all correct, 404 + path-traversal blocked.
 - **GitHub grounding (`AiChatEngine.GroundGitHubOnIntent`, default on).** A small model NEVER calls the tool
-  for SpawnDev questions (0/5 measured) and instead CONFIDENTLY HALLUCINATES ("SpawnDev.ILGPU enables OpenCL
-  on Linux" - wrong). So when the message mentions "spawndev" (a zero-false-positive trigger; battery 0 FP/0
-  FN over 9 cases), the engine pre-fetches the authoritative GitHub info and injects it as reference context.
-  Result on the 0.5B: **5/5 grounded, answers now correct** - real crew list, "1,021 typed wrappers", the
-  actual backend list - hallucination gone. Same shared-engine philosophy as the image forcing.
+  for SpawnDev questions (0/5 measured) and instead answers INACCURATELY from its own memory - reductive or
+  invented (e.g. reducing the six-backend GPU compute library SpawnDev.ILGPU to "OpenCL on Linux": a real
+  capability, but a misleading one-backend/one-OS caricature; and outright wrong on others like WebTorrent).
+  So when the message mentions "spawndev" (a zero-false-positive trigger; battery 0 FP/0 FN over 9 cases),
+  the engine pre-fetches the authoritative GitHub info and injects it as reference context. Result on the
+  0.5B: **5/5 grounded, answers now correct** - real crew list, "1,021 typed wrappers", the full backend
+  list. Same shared-engine philosophy as the image forcing.
 - **Demo:** default system prompt tells the model it can look up SpawnDev on GitHub; new "about SpawnDev 🧬"
   preset chip. Diagnostics: ServerHost `probe-github` (model call-rate), `probe-github-tool` (tool correctness).
 

@@ -74,8 +74,9 @@ public sealed class AiChatEngine : IAiChatService
     /// <summary>When true (default) and a <c>github_lookup</c> tool is available, a user message about
     /// SpawnDev is GROUNDED: the engine pre-fetches the authoritative GitHub info and injects it as reference
     /// context, instead of trusting the model to call the tool. A small model never calls it (0/5 measured)
-    /// and CONFIDENTLY HALLUCINATES about the libraries ("SpawnDev.ILGPU enables OpenCL on Linux" - wrong).
-    /// Grounding makes the answer correct regardless of model. Set false for pure model-driven tool use.</summary>
+    /// and instead answers INACCURATELY from memory - reductive or invented (e.g. reducing the six-backend GPU
+    /// compute library SpawnDev.ILGPU to "OpenCL on Linux", or getting WebTorrent wrong). Grounding makes the
+    /// answer correct regardless of model. Set false for pure model-driven tool use.</summary>
     public bool GroundGitHubOnIntent { get; set; } = true;
 
     /// <summary>The GitHub lookup tool consulted for SpawnDev grounding (see <see cref="GroundGitHubOnIntent"/>).</summary>
@@ -118,7 +119,7 @@ public sealed class AiChatEngine : IAiChatService
         var messages = request.Messages.ToList();
 
         // Grounding: a small model won't call a lookup tool for questions it should (github_lookup: 0/5
-        // measured) and HALLUCINATES instead. Any registered tool that implements IAiGroundingProvider gets
+        // measured) and answers inaccurately from memory instead. Any registered tool that implements IAiGroundingProvider gets
         // to inspect the latest user turn and return authoritative reference text, which we inject as context
         // so the answer is grounded, not invented. The GitHub tool grounds SpawnDev library/crew/app questions.
         if (GroundGitHubOnIntent && LastUserMessage(messages) is { Length: > 0 } lastForGrounding
