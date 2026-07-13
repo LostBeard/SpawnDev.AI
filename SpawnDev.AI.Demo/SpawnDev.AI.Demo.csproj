@@ -10,6 +10,7 @@
          Pages deploy, 2026-07-04). Same standing rule as the ML demo: never trim, never AOT. -->
     <PublishTrimmed>false</PublishTrimmed>
     <RunAOTCompilation>false</RunAOTCompilation>
+	  <CompressionEnabled>false</CompressionEnabled>
   </PropertyGroup>
 
   <ItemGroup>
