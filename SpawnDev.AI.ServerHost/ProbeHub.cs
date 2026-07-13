@@ -196,6 +196,7 @@ internal static class ProbeHub
             "Tell me about SpawnDev.ILGPU.",
             "What does SpawnDev.WebTorrent do?",
             "What is Anaglyphohol?",                 // non-SpawnDev app - tests index any-repo matching
+            "What is SpawnDev.BlazorJS and who is on the crew?",  // compound repo + crew - needs BOTH sections
             "What is the capital of France?",        // control - must NOT ground (no repo/spawndev intent)
         };
         Console.WriteLine($"[probe-github] model: {modelName}");
@@ -207,14 +208,14 @@ internal static class ProbeHub
             {
                 Model = modelName,
                 Messages = new[] { new AiChatMessage("system", sys), new AiChatMessage("user", q) },
-                Options = new AiGenerationOptions { MaxOutputTokens = 300, Temperature = 0.3f, Strategy = "top_p", TopP = 0.9f, RepetitionPenalty = 1.15f },
+                Options = new AiGenerationOptions { MaxOutputTokens = 500, Temperature = 0.3f, Strategy = "top_p", TopP = 0.9f, RepetitionPenalty = 1.15f },
             };
             var res = await engine.ChatAsync(req);
             bool used = counter.Count > 0;
             if (used) called++;
             string ans = (res.Text ?? "").Replace("\n", " ").Trim();
             Console.WriteLine($"[{(used ? "CALLED " : "no-call")}] {q}");
-            Console.WriteLine($"        -> {ans[..Math.Min(200, ans.Length)]}");
+            Console.WriteLine($"        -> {ans[..Math.Min(450, ans.Length)]}");
         }
         Console.WriteLine($"[probe-github] github_lookup called on {called}/{qs.Length} library questions");
     }

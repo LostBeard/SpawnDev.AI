@@ -92,7 +92,10 @@ public sealed class AiChatEngine : IAiChatService
         IReadOnlyList<string>? toolsJson = request.ToolsJson;
         if (serverTools is { Count: > 0 })
         {
-            var callable = serverTools.Where(t => t is not IAiGroundingProvider).ToList();
+            // Exclude grounding tools from the callable list ONLY while grounding is on (it already injects
+            // their answer). With grounding OFF - e.g. a capable model that reliably tool-calls - they become
+            // model-callable again, so the Ground toggle coherently switches between grounding and native use.
+            var callable = serverTools.Where(t => t is not IAiGroundingProvider || !GroundGitHubOnIntent).ToList();
             toolsJson = callable.Count > 0 ? callable.Select(t =>
             {
                 using var schema = System.Text.Json.JsonDocument.Parse(t.ParametersJsonSchema);

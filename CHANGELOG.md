@@ -97,6 +97,17 @@ Notable changes per release. Preview - APIs will change.
   chat completes with NO page crash. Tradeoff: an LLM↔image switch reloads the incoming model (OPFS→GPU);
   letting a small LLM + tiled SD-Turbo co-reside when they actually fit is a follow-up optimization.
 
+## 1.0.0-preview.11 - Compound repo+crew grounding + coherent Ground toggle
+
+- **Compound "what is X and who is on the crew?" grounds BOTH sections.** A message that names a repo AND
+  asks about the crew previously grounded only the repo section (which has no crew), so the crew half was
+  invented. Grounding now appends the crew section when crew intent co-occurs with a repo match. (The tiny
+  0.5B still doesn't always weave both halves into one answer - a model-capability limit, not a grounding
+  gap; the crew data is reliably in context.)
+- **`GroundGitHubOnIntent` toggle is now coherent.** Grounding-provider tools are excluded from the callable
+  tool list only WHILE grounding is on; turning grounding off makes them model-callable again, so the toggle
+  cleanly switches between engine-grounding (small models) and native model tool-calling (capable models).
+
 ## 1.0.0-preview.10 - Index-aware grounding: any LostBeard repo, from one cached request
 
 - **Pre-built digest (`spawndev-index.md`) + daily workflow.** `tools/build-index.cs` gathers every non-fork

@@ -134,13 +134,21 @@ public sealed class GitHubTool : IAiTool, IAiGroundingProvider
             if (GeneralIntent.IsMatch(userMessage)) { var r = await ExecuteAsync("{}", ct).ConfigureAwait(false); return r.IsError ? null : r.TextForModel; }
             return null;
         }
+        bool crew = CrewIntent.IsMatch(userMessage);
         // A specific repo named in the message → that repo's section (fall back to a live overview if the
         // digest somehow lacks it).
         var repo = MatchKnownRepo(userMessage, index);
         if (repo != null)
-            return IndexRepoSection(index, repo) ?? (await OverviewViaExecuteAsync(repo, ct).ConfigureAwait(false));
+        {
+            var repoRef = IndexRepoSection(index, repo) ?? (await OverviewViaExecuteAsync(repo, ct).ConfigureAwait(false));
+            // Compound "what is X and who is on the crew?" - the repo section has no crew, so append it,
+            // else the crew half of the answer has nothing to ground on and gets invented.
+            if (crew && repoRef != null && ExtractSection(index, "## The SpawnDev Crew") is { } crewRef)
+                return repoRef + "\n\n" + crewRef;
+            return repoRef;
+        }
         // Crew/team question → just the crew section (injecting all ~70 repo lines drowns a small model).
-        if (CrewIntent.IsMatch(userMessage)) return ExtractSection(index, "## The SpawnDev Crew") ?? IndexSummary(index);
+        if (crew) return ExtractSection(index, "## The SpawnDev Crew") ?? IndexSummary(index);
         // Otherwise a general SpawnDev/LostBeard question (list, "what is spawndev") → the summary.
         if (GeneralIntent.IsMatch(userMessage)) return IndexSummary(index);
         return null;
