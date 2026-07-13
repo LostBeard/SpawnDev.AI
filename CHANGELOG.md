@@ -97,6 +97,24 @@ Notable changes per release. Preview - APIs will change.
   chat completes with NO page crash. Tradeoff: an LLM↔image switch reloads the incoming model (OPFS→GPU);
   letting a small LLM + tiled SD-Turbo co-reside when they actually fit is a follow-up optimization.
 
+## 1.0.0-preview.9 - GitHub lookup tool (ask about the SpawnDev libraries + crew)
+
+- **`GitHubTool` (`github_lookup`).** A read-only, host-ALLOWLISTED GitHub tool so the chat model can answer
+  questions about the SpawnDev libraries, their code/docs, and the crew. No args → lists all SpawnDev repos +
+  descriptions; `{repo}` → that project's description + README (crew/credits preserved through truncation);
+  `{repo,path}` → a specific file. Every request URL is built internally from a validated `owner/name`+path
+  against `api.github.com` / `raw.githubusercontent.com` only (no SSRF; owner defaults to LostBeard), both
+  CORS-friendly so it runs in the browser worker as-is. Anonymous, in-process cached. Verified directly:
+  list/read/file all correct, 404 + path-traversal blocked.
+- **GitHub grounding (`AiChatEngine.GroundGitHubOnIntent`, default on).** A small model NEVER calls the tool
+  for SpawnDev questions (0/5 measured) and instead CONFIDENTLY HALLUCINATES ("SpawnDev.ILGPU enables OpenCL
+  on Linux" - wrong). So when the message mentions "spawndev" (a zero-false-positive trigger; battery 0 FP/0
+  FN over 9 cases), the engine pre-fetches the authoritative GitHub info and injects it as reference context.
+  Result on the 0.5B: **5/5 grounded, answers now correct** - real crew list, "1,021 typed wrappers", the
+  actual backend list - hallucination gone. Same shared-engine philosophy as the image forcing.
+- **Demo:** default system prompt tells the model it can look up SpawnDev on GitHub; new "about SpawnDev 🧬"
+  preset chip. Diagnostics: ServerHost `probe-github` (model call-rate), `probe-github-tool` (tool correctness).
+
 ## 1.0.0-preview.8 - Reliable image requests (pre-emptive tool forcing) + agent settings UI
 
 - **The bug:** a small instruct model (qwen2.5-0.5b, the browser's default) REFUSES ~40% of plain image

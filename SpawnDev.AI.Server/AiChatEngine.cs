@@ -71,6 +71,16 @@ public sealed class AiChatEngine : IAiChatService
     /// <see cref="ForceImageToolOnIntent"/>).</summary>
     public string ImageToolName { get; set; } = "generate_image";
 
+    /// <summary>When true (default) and a <c>github_lookup</c> tool is available, a user message about
+    /// SpawnDev is GROUNDED: the engine pre-fetches the authoritative GitHub info and injects it as reference
+    /// context, instead of trusting the model to call the tool. A small model never calls it (0/5 measured)
+    /// and CONFIDENTLY HALLUCINATES about the libraries ("SpawnDev.ILGPU enables OpenCL on Linux" - wrong).
+    /// Grounding makes the answer correct regardless of model. Set false for pure model-driven tool use.</summary>
+    public bool GroundGitHubOnIntent { get; set; } = true;
+
+    /// <summary>The GitHub lookup tool consulted for SpawnDev grounding (see <see cref="GroundGitHubOnIntent"/>).</summary>
+    public string GitHubToolName { get; set; } = "github_lookup";
+
     private async Task<AiChatResult> GenerateAsync(AiChatRequest request, Func<string, Task>? onDelta, CancellationToken ct)
     {
         // Server-tool injection (client tools take precedence).
@@ -100,6 +110,16 @@ public sealed class AiChatEngine : IAiChatService
         }
 
         var messages = request.Messages.ToList();
+
+        // GitHub grounding: a small model won't call github_lookup for SpawnDev questions (0/5 measured) and
+        // HALLUCINATES about the libraries instead. When the user asks about SpawnDev, pre-fetch the
+        // authoritative GitHub info and inject it as reference context so the answer is grounded, not invented.
+        if (GroundGitHubOnIntent && serverTools?.Any(t => string.Equals(t.Name, GitHubToolName, StringComparison.OrdinalIgnoreCase)) == true
+            && HasGitHubIntent(LastUserMessage(messages)))
+        {
+            var reference = await PrefetchGitHubAsync(LastUserMessage(messages)!, ct).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(reference)) messages = WithReference(messages, reference);
+        }
         List<AiToolArtifact>? artifacts = null;
         AiChatResult result;
         int round = 0;
@@ -270,6 +290,52 @@ public sealed class AiChatEngine : IAiChatService
     /// <summary>True when the message clearly asks the assistant to CREATE a visual (image-generation intent).</summary>
     public static bool HasImageIntent(string? message)
         => !string.IsNullOrWhiteSpace(message) && (ImperativeDraw.IsMatch(message) || CreateVisual.IsMatch(message));
+
+    // ── GitHub grounding (SpawnDev library / crew questions) ──
+    // "spawndev" is an unambiguous product signal (nobody says it except about these libraries), so it's a
+    // zero-false-positive trigger that covers "what is SpawnDev.X", "list the SpawnDev libraries", "who's on
+    // the SpawnDev crew", etc.
+    private static readonly Regex SpawnDevMention = new(@"\bspawndev\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex SpawnDevRepo = new(@"\bSpawnDev(?:\.[A-Za-z0-9]+)+\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex CrewIntent = new(@"\b(crew|team|who\s+(?:made|built|created|wrote|is\s+behind|develops?|maintains?))\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>True when the message is about SpawnDev (its libraries or the crew) - the grounding trigger.</summary>
+    public static bool HasGitHubIntent(string? message)
+        => !string.IsNullOrWhiteSpace(message) && SpawnDevMention.IsMatch(message);
+
+    // Resolve the message to a github_lookup arguments object: a named SpawnDev.X repo → that repo; a
+    // crew/team/who-built question → the SpawnDev.AI repo (its README carries the crew section); otherwise
+    // list all repos so the model has the catalog.
+    private string ResolveGitHubArgs(string message)
+    {
+        var repo = SpawnDevRepo.Match(message);
+        if (repo.Success) return JsonSerializer.Serialize(new { repo = repo.Value });
+        if (CrewIntent.IsMatch(message)) return JsonSerializer.Serialize(new { repo = "SpawnDev.AI" });
+        return "{}";
+    }
+
+    private async Task<string?> PrefetchGitHubAsync(string message, CancellationToken ct)
+    {
+        var tool = Tools?.Get(GitHubToolName);
+        if (tool == null) return null;
+        try
+        {
+            var exec = await tool.ExecuteAsync(ResolveGitHubArgs(message), ct).ConfigureAwait(false);
+            return exec.IsError ? null : exec.TextForModel;
+        }
+        catch { return null; }   // network/rate-limit failure - fall through to a normal (ungrounded) answer
+    }
+
+    private static List<AiChatMessage> WithReference(IReadOnlyList<AiChatMessage> messages, string reference)
+    {
+        var block = "Reference information from the SpawnDev GitHub (authoritative - base your answer on this, "
+            + "do not contradict it or invent details):\n\n" + reference;
+        var list = messages.ToList();
+        int sys = list.FindIndex(m => string.Equals(m.Role, "system", StringComparison.OrdinalIgnoreCase));
+        if (sys >= 0) list[sys] = new AiChatMessage("system", list[sys].Content + "\n\n" + block);
+        else list.Insert(0, new AiChatMessage("system", block));
+        return list;
+    }
 
     // Fallback caption path: ask the model for the caption by prefilling the assistant turn with the
     // generate_image tool-call opener so it can ONLY write the caption string; stop at the closing quote. Used

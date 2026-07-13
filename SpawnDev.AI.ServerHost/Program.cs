@@ -16,6 +16,13 @@ if (args.Length > 0 && args[0] == "probe-intent")
     return;
 }
 
+// Diagnostic: `probe-github-tool` exercises the GitHub tool directly (list/read/file/errors). No GPU.
+if (args.Length > 0 && args[0] == "probe-github-tool")
+{
+    Environment.ExitCode = await ProbeHub.CheckGitHubToolAsync();
+    return;
+}
+
 // Accelerator: CUDA > OpenCL > CPU (desktop host; the browser host uses WebGPU).
 var context = SpawnDev.ILGPU.ML.MLContext.Create().ToContext();
 Accelerator accelerator =
@@ -31,6 +38,13 @@ Console.WriteLine($"[SpawnDev.AI] accelerator: {accelerator.Name} ({accelerator.
 if (args.Length > 0 && args[0] == "probe-hub")
 {
     await ProbeHub.RunAsync(accelerator, args.Length > 1 ? args[1] : "qwen2.5:0.5b-instruct-q8_0");
+    return;
+}
+
+// Diagnostic: `probe-github [model]` measures whether the model CALLS github_lookup for library questions.
+if (args.Length > 0 && args[0] == "probe-github")
+{
+    await ProbeHub.RunGitHubAsync(accelerator, args.Length > 1 ? args[1] : "qwen2.5:0.5b-instruct-q8_0");
     return;
 }
 
@@ -53,6 +67,7 @@ using var images = new AiImageEngine(webTorrent, imageHttp, accelerator)
 };
 var tools = new AiToolRegistry();
 tools.Register(new GenerateImageTool(images, tools));
+tools.Register(new GitHubTool(imageHttp));   // SpawnDev library/crew Q&A via GitHub (allowlisted hosts)
 engine.Tools = tools;
 
 var router = new AiApiRouter(engine) { Images = images, Tools = tools };

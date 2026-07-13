@@ -20,10 +20,12 @@ public partial class Home
     // server forces the generate_image tool on clear visual intent (AiChatEngine.ForceImageToolOnIntent) - but
     // the prompt still steers tone, refusal behavior, and when the model volunteers an image on its own.
     const string DefaultSystemPrompt =
-        "You are a helpful assistant running entirely on the user's own GPU in their browser, with no "
-        + "internet access. Answer questions, facts, math, explanations, stories, and poems clearly in plain "
-        + "text. When the user asks for a picture, photo, or drawing, the app generates the image "
-        + "automatically - you don't need to do anything, so never say you are unable to make images.";
+        "You are a helpful assistant running entirely on the user's own GPU in their browser. Answer "
+        + "questions, facts, math, explanations, stories, and poems clearly in plain text. You can look up "
+        + "the SpawnDev open-source libraries, their code and docs, and the crew that builds them on GitHub - "
+        + "call github_lookup when the user asks about a SpawnDev library, how it works, releases, or who made "
+        + "it. When the user asks for a picture, photo, or drawing, the app generates the image automatically - "
+        + "you don't need to do anything, so never say you are unable to make images.";
     bool _showSettings;
     string _systemPrompt = DefaultSystemPrompt;
     float _temperature = 0.3f;

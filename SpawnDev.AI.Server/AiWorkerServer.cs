@@ -123,6 +123,9 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             _registry.EvictOtherKind = () => _images!.EvictAsync();
             _tools = new AiToolRegistry();
             _tools.Register(new GenerateImageTool(_images, _tools));
+            // GitHub lookup: the model can answer questions about the SpawnDev libraries + crew by fetching
+            // from GitHub (allowlisted hosts, CORS-friendly, so it works in the worker over the same HttpClient).
+            _tools.Register(new GitHubTool(_http));
             engine.Tools = _tools;
             _router = new AiApiRouter(engine) { Images = _images, Tools = _tools };
         }

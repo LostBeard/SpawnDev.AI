@@ -36,6 +36,36 @@ internal static class ProbeHub
         "what's 2 + 2?",
     };
 
+    /// <summary>Model-free check of the GitHub tool itself: list repos, read a repo overview, read a file,
+    /// and exercise the error/allowlist paths. No GPU.</summary>
+    public static async Task<int> CheckGitHubToolAsync()
+    {
+        using var http = new HttpClient();
+        var tool = new GitHubTool(http);
+        (string Label, string Args)[] calls =
+        {
+            ("list repos", "{}"),
+            ("read repo (bare name)", "{\"repo\":\"SpawnDev.BlazorJS\"}"),
+            ("read repo (owner/name)", "{\"repo\":\"LostBeard/SpawnDev.AI\"}"),
+            ("read a file", "{\"repo\":\"SpawnDev.AI\",\"path\":\"CHANGELOG.md\"}"),
+            ("crew question source", "{\"repo\":\"SpawnDev.ILGPU\"}"),
+            ("bad repo (404)", "{\"repo\":\"LostBeard/does-not-exist-xyz\"}"),
+            ("path traversal blocked", "{\"repo\":\"SpawnDev.AI\",\"path\":\"../../etc/passwd\"}"),
+        };
+        int fails = 0;
+        foreach (var (label, args) in calls)
+        {
+            var res = await tool.ExecuteAsync(args);
+            string first = (res.TextForModel ?? "").Replace("\n", " ");
+            Console.WriteLine($"[{(res.IsError ? "ERR " : "ok  ")}] {label,-24} -> {first[..Math.Min(120, first.Length)]}");
+            // Sanity: the two intentional-failure cases SHOULD be errors; the rest should NOT be.
+            bool expectErr = label.Contains("404") || label.Contains("traversal");
+            if (res.IsError != expectErr) { fails++; Console.WriteLine($"      ^^ UNEXPECTED (expectErr={expectErr})"); }
+        }
+        Console.WriteLine($"[probe-github-tool] unexpected outcomes={fails} of {calls.Length}");
+        return fails;
+    }
+
     /// <summary>Model-free check of the image-intent detector: labeled battery, reports false pos/neg.</summary>
     public static int CheckIntent()
     {
@@ -78,8 +108,30 @@ internal static class ProbeHub
             if (!got && expect) fn++;
             Console.WriteLine($"[{mark,-9}] intent={got,-5} expect={expect,-5}  {q}");
         }
-        Console.WriteLine($"[probe-intent] false-positives={fp} false-negatives={fn} of {cases.Length}");
-        return fp + fn;
+        Console.WriteLine($"[probe-intent] IMAGE false-positives={fp} false-negatives={fn} of {cases.Length}");
+
+        (string Q, bool Expect)[] gh =
+        {
+            ("What is SpawnDev.BlazorJS?", true),
+            ("who is on the SpawnDev crew?", true),
+            ("list the SpawnDev libraries", true),
+            ("tell me about SpawnDev.ILGPU", true),
+            ("what does spawndev.webtorrent do", true),
+            ("what is the capital of France?", false),
+            ("draw a cat", false),
+            ("write me a poem", false),
+            ("who painted the Mona Lisa?", false),
+        };
+        int gfp = 0, gfn = 0;
+        foreach (var (q, expect) in gh)
+        {
+            bool got = AiChatEngine.HasGitHubIntent(q);
+            if (got && !expect) gfp++;
+            if (!got && expect) gfn++;
+            Console.WriteLine($"[{(got == expect ? "ok  " : got ? "FALSE-POS" : "FALSE-NEG"),-9}] github intent={got,-5} expect={expect,-5}  {q}");
+        }
+        Console.WriteLine($"[probe-intent] GITHUB false-positives={gfp} false-negatives={gfn} of {gh.Length}");
+        return fp + fn + gfp + gfn;
     }
 
     public static async Task RunAsync(Accelerator accelerator, string modelName)
@@ -132,6 +184,69 @@ internal static class ProbeHub
             }
             Console.WriteLine($"[probe-hub] {label}: IMAGE={imgs} REFUSE={refuses} TEXT={texts} of {Questions.Length}");
         }
+    }
+
+    /// <summary>Does the model actually CALL github_lookup for SpawnDev library/crew questions, and does the
+    /// answer use the fetched info? Runs the full agentic loop with the REAL GitHub tool (call-counted).</summary>
+    public static async Task RunGitHubAsync(Accelerator accelerator, string modelName)
+    {
+        await using var webTorrent = new SpawnDev.WebTorrent.WebTorrentClient();
+        using var http = new HttpClient();
+        var provider = new HubModelProvider(webTorrent, http, new[]
+        {
+            new HubModelOption("qwen2.5:0.5b-instruct-q8_0", "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q8_0.gguf", 531_067_136),
+            new HubModelOption("qwen2.5:1.5b-instruct-q4_k_m", "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "qwen2.5-1.5b-instruct-q4_k_m.gguf", 1_117_320_000),
+        });
+        await using var registry = new ModelRegistry(provider, accelerator, 4096);
+        var engine = new AiChatEngine(registry);
+        var tools = new AiToolRegistry();
+        var counter = new CallCountingTool(new GitHubTool(http));
+        tools.Register(counter);
+        engine.Tools = tools;
+
+        const string sys =
+            "You are a helpful assistant. You can look up the SpawnDev open-source libraries, their code and "
+            + "docs, and the crew that builds them on GitHub - call github_lookup when the user asks about a "
+            + "SpawnDev library, how it works, releases, or who made it.";
+        string[] qs =
+        {
+            "What is SpawnDev.BlazorJS?",
+            "List the SpawnDev libraries.",
+            "Who is on the SpawnDev crew?",
+            "Tell me about SpawnDev.ILGPU.",
+            "What does SpawnDev.WebTorrent do?",
+        };
+        Console.WriteLine($"[probe-github] model: {modelName}");
+        int called = 0;
+        foreach (var q in qs)
+        {
+            counter.Count = 0;
+            var req = new AiChatRequest
+            {
+                Model = modelName,
+                Messages = new[] { new AiChatMessage("system", sys), new AiChatMessage("user", q) },
+                Options = new AiGenerationOptions { MaxOutputTokens = 300, Temperature = 0.3f, Strategy = "top_p", TopP = 0.9f, RepetitionPenalty = 1.15f },
+            };
+            var res = await engine.ChatAsync(req);
+            bool used = counter.Count > 0;
+            if (used) called++;
+            string ans = (res.Text ?? "").Replace("\n", " ").Trim();
+            Console.WriteLine($"[{(used ? "CALLED " : "no-call")}] {q}");
+            Console.WriteLine($"        -> {ans[..Math.Min(200, ans.Length)]}");
+        }
+        Console.WriteLine($"[probe-github] github_lookup called on {called}/{qs.Length} library questions");
+    }
+
+    sealed class CallCountingTool : IAiTool
+    {
+        private readonly IAiTool _inner;
+        public int Count;
+        public CallCountingTool(IAiTool inner) => _inner = inner;
+        public string Name => _inner.Name;
+        public string Description => _inner.Description;
+        public string ParametersJsonSchema => _inner.ParametersJsonSchema;
+        public Task<AiToolExecutionResult> ExecuteAsync(string argumentsJson, CancellationToken ct = default)
+        { Count++; return _inner.ExecuteAsync(argumentsJson, ct); }
     }
 
     sealed class StubImageTool : IAiTool
