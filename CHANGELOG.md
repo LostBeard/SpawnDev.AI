@@ -97,6 +97,30 @@ Notable changes per release. Preview - APIs will change.
   chat completes with NO page crash. Tradeoff: an LLM↔image switch reloads the incoming model (OPFS→GPU);
   letting a small LLM + tiled SD-Turbo co-reside when they actually fit is a follow-up optimization.
 
+## 1.0.0-preview.10 - Index-aware grounding: any LostBeard repo, from one cached request
+
+- **Pre-built digest (`spawndev-index.md`) + daily workflow.** `tools/build-index.cs` gathers every non-fork
+  LostBeard repo (bug-repro/test/demo repos filtered out) into one markdown digest - SpawnDev libraries
+  (primary) + the apps built with them (Anaglyphohol, AubsCraft, LostSpawns, rendusa, ...) + the crew, each
+  with a description + README excerpt. `.github/workflows/build-spawndev-index.yml` refreshes it twice daily
+  with the Actions GITHUB_TOKEN (5000/hr). The browser AI fetches this ONCE from `raw.githubusercontent.com`
+  (CDN, cached in-session) instead of spending the user's anonymous `api.github.com` budget (60/hr per IP).
+- **Grounding is now index-aware and works for ANY repo, via `IAiGroundingProvider`.** The grounding
+  intent+resolution moved out of the engine into `GitHubTool` (which owns the digest): it recognizes any repo
+  named in the digest - not just `SpawnDev.*` - plus crew/list/general "spawndev/lostbeard" questions, and
+  returns the matching digest section (or a live overview if the digest lacks it). The engine just asks any
+  registered `IAiGroundingProvider` for reference text and injects it. `github_lookup` itself is also
+  index-first: list + repo-overview calls serve from the cached digest (0 api calls); only a specific file or
+  a non-default-owner repo hits the live API.
+- **Grounding tools are no longer advertised as model-callable.** Grounding already injects the answer as
+  context, so dangling `github_lookup` in front of a small model just made it emit malformed calls (or try
+  to "look up" the capital of France) instead of answering - any `IAiGroundingProvider` server tool is now
+  excluded from the injected tool list. Crew questions inject only the crew section, not all ~70 repos.
+  Verified on the 0.5B: 6/6 SpawnDev/app questions grounded correct (incl. Anaglyphohol from the digest),
+  control ("capital of France") ungrounded and answered normally.
+- Demo: "about SpawnDev 🧬" preset; system prompt reflects automatic grounding. Diagnostics: `probe-github`
+  now covers a non-SpawnDev app (Anaglyphohol) and a control question.
+
 ## 1.0.0-preview.9 - GitHub lookup tool (ask about the SpawnDev libraries + crew)
 
 - **`GitHubTool` (`github_lookup`).** A read-only, host-ALLOWLISTED GitHub tool so the chat model can answer

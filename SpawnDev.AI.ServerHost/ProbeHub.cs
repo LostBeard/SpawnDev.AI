@@ -109,29 +109,9 @@ internal static class ProbeHub
             Console.WriteLine($"[{mark,-9}] intent={got,-5} expect={expect,-5}  {q}");
         }
         Console.WriteLine($"[probe-intent] IMAGE false-positives={fp} false-negatives={fn} of {cases.Length}");
-
-        (string Q, bool Expect)[] gh =
-        {
-            ("What is SpawnDev.BlazorJS?", true),
-            ("who is on the SpawnDev crew?", true),
-            ("list the SpawnDev libraries", true),
-            ("tell me about SpawnDev.ILGPU", true),
-            ("what does spawndev.webtorrent do", true),
-            ("what is the capital of France?", false),
-            ("draw a cat", false),
-            ("write me a poem", false),
-            ("who painted the Mona Lisa?", false),
-        };
-        int gfp = 0, gfn = 0;
-        foreach (var (q, expect) in gh)
-        {
-            bool got = AiChatEngine.HasGitHubIntent(q);
-            if (got && !expect) gfp++;
-            if (!got && expect) gfn++;
-            Console.WriteLine($"[{(got == expect ? "ok  " : got ? "FALSE-POS" : "FALSE-NEG"),-9}] github intent={got,-5} expect={expect,-5}  {q}");
-        }
-        Console.WriteLine($"[probe-intent] GITHUB false-positives={gfp} false-negatives={gfn} of {gh.Length}");
-        return fp + fn + gfp + gfn;
+        // GitHub grounding intent is now index-aware and lives in GitHubTool (any repo name, not a fixed
+        // regex) - it's exercised end-to-end by `probe-github`, not here.
+        return fp + fn;
     }
 
     public static async Task RunAsync(Accelerator accelerator, string modelName)
@@ -205,9 +185,9 @@ internal static class ProbeHub
         engine.Tools = tools;
 
         const string sys =
-            "You are a helpful assistant. You can look up the SpawnDev open-source libraries, their code and "
-            + "docs, and the crew that builds them on GitHub - call github_lookup when the user asks about a "
-            + "SpawnDev library, how it works, releases, or who made it.";
+            "You are a helpful assistant. When the user asks about the SpawnDev open-source libraries, the apps "
+            + "built with them, or the crew, authoritative reference information from GitHub is added to the "
+            + "conversation automatically - answer from it and do not say you need a repository name.";
         string[] qs =
         {
             "What is SpawnDev.BlazorJS?",
@@ -215,6 +195,8 @@ internal static class ProbeHub
             "Who is on the SpawnDev crew?",
             "Tell me about SpawnDev.ILGPU.",
             "What does SpawnDev.WebTorrent do?",
+            "What is Anaglyphohol?",                 // non-SpawnDev app - tests index any-repo matching
+            "What is the capital of France?",        // control - must NOT ground (no repo/spawndev intent)
         };
         Console.WriteLine($"[probe-github] model: {modelName}");
         int called = 0;
@@ -237,16 +219,23 @@ internal static class ProbeHub
         Console.WriteLine($"[probe-github] github_lookup called on {called}/{qs.Length} library questions");
     }
 
-    sealed class CallCountingTool : IAiTool
+    sealed class CallCountingTool : IAiTool, IAiGroundingProvider
     {
         private readonly IAiTool _inner;
-        public int Count;
+        public int Count;   // counts both direct model calls (ExecuteAsync) and grounding (GetGroundingAsync)
         public CallCountingTool(IAiTool inner) => _inner = inner;
         public string Name => _inner.Name;
         public string Description => _inner.Description;
         public string ParametersJsonSchema => _inner.ParametersJsonSchema;
         public Task<AiToolExecutionResult> ExecuteAsync(string argumentsJson, CancellationToken ct = default)
         { Count++; return _inner.ExecuteAsync(argumentsJson, ct); }
+        public async Task<string?> GetGroundingAsync(string userMessage, CancellationToken ct = default)
+        {
+            if (_inner is not IAiGroundingProvider gp) return null;
+            var r = await gp.GetGroundingAsync(userMessage, ct);
+            if (r != null) Count++;   // count only when grounding actually fired (non-null reference)
+            return r;
+        }
     }
 
     sealed class StubImageTool : IAiTool

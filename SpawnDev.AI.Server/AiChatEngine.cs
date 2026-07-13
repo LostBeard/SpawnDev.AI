@@ -83,11 +83,16 @@ public sealed class AiChatEngine : IAiChatService
 
     private async Task<AiChatResult> GenerateAsync(AiChatRequest request, Func<string, Task>? onDelta, CancellationToken ct)
     {
-        // Server-tool injection (client tools take precedence).
+        // Server-tool injection (client tools take precedence). Tools that ground (IAiGroundingProvider) are
+        // NOT advertised as callable: grounding already injects their answer as context, and dangling the tool
+        // in front of a small model just makes it emit malformed calls (or try to "look up" the capital of
+        // France) instead of answering. They still ground below; only NON-grounding tools stay model-callable.
         var serverTools = request.ToolsJson == null ? Tools?.List() : null;
         IReadOnlyList<string>? toolsJson = request.ToolsJson;
         if (serverTools is { Count: > 0 })
-            toolsJson = serverTools.Select(t =>
+        {
+            var callable = serverTools.Where(t => t is not IAiGroundingProvider).ToList();
+            toolsJson = callable.Count > 0 ? callable.Select(t =>
             {
                 using var schema = System.Text.Json.JsonDocument.Parse(t.ParametersJsonSchema);
                 return System.Text.Json.JsonSerializer.Serialize(new
@@ -95,7 +100,8 @@ public sealed class AiChatEngine : IAiChatService
                     type = "function",
                     function = new { name = t.Name, description = t.Description, parameters = schema.RootElement.Clone() },
                 });
-            }).ToList();
+            }).ToList() : null;
+        }
 
         // Pre-emptive image-tool forcing: when the latest user turn clearly asks to CREATE a visual and the
         // generate_image tool is available, force it rather than gamble on the model choosing to call it. This
@@ -111,13 +117,14 @@ public sealed class AiChatEngine : IAiChatService
 
         var messages = request.Messages.ToList();
 
-        // GitHub grounding: a small model won't call github_lookup for SpawnDev questions (0/5 measured) and
-        // HALLUCINATES about the libraries instead. When the user asks about SpawnDev, pre-fetch the
-        // authoritative GitHub info and inject it as reference context so the answer is grounded, not invented.
-        if (GroundGitHubOnIntent && serverTools?.Any(t => string.Equals(t.Name, GitHubToolName, StringComparison.OrdinalIgnoreCase)) == true
-            && HasGitHubIntent(LastUserMessage(messages)))
+        // Grounding: a small model won't call a lookup tool for questions it should (github_lookup: 0/5
+        // measured) and HALLUCINATES instead. Any registered tool that implements IAiGroundingProvider gets
+        // to inspect the latest user turn and return authoritative reference text, which we inject as context
+        // so the answer is grounded, not invented. The GitHub tool grounds SpawnDev library/crew/app questions.
+        if (GroundGitHubOnIntent && LastUserMessage(messages) is { Length: > 0 } lastForGrounding
+            && serverTools?.FirstOrDefault(t => string.Equals(t.Name, GitHubToolName, StringComparison.OrdinalIgnoreCase)) is IAiGroundingProvider grounder)
         {
-            var reference = await PrefetchGitHubAsync(LastUserMessage(messages)!, ct).ConfigureAwait(false);
+            var reference = await grounder.GetGroundingAsync(lastForGrounding, ct).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(reference)) messages = WithReference(messages, reference);
         }
         List<AiToolArtifact>? artifacts = null;
@@ -290,41 +297,6 @@ public sealed class AiChatEngine : IAiChatService
     /// <summary>True when the message clearly asks the assistant to CREATE a visual (image-generation intent).</summary>
     public static bool HasImageIntent(string? message)
         => !string.IsNullOrWhiteSpace(message) && (ImperativeDraw.IsMatch(message) || CreateVisual.IsMatch(message));
-
-    // ── GitHub grounding (SpawnDev library / crew questions) ──
-    // "spawndev" is an unambiguous product signal (nobody says it except about these libraries), so it's a
-    // zero-false-positive trigger that covers "what is SpawnDev.X", "list the SpawnDev libraries", "who's on
-    // the SpawnDev crew", etc.
-    private static readonly Regex SpawnDevMention = new(@"\bspawndev\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex SpawnDevRepo = new(@"\bSpawnDev(?:\.[A-Za-z0-9]+)+\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex CrewIntent = new(@"\b(crew|team|who\s+(?:made|built|created|wrote|is\s+behind|develops?|maintains?))\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    /// <summary>True when the message is about SpawnDev (its libraries or the crew) - the grounding trigger.</summary>
-    public static bool HasGitHubIntent(string? message)
-        => !string.IsNullOrWhiteSpace(message) && SpawnDevMention.IsMatch(message);
-
-    // Resolve the message to a github_lookup arguments object: a named SpawnDev.X repo → that repo; a
-    // crew/team/who-built question → the SpawnDev.AI repo (its README carries the crew section); otherwise
-    // list all repos so the model has the catalog.
-    private string ResolveGitHubArgs(string message)
-    {
-        var repo = SpawnDevRepo.Match(message);
-        if (repo.Success) return JsonSerializer.Serialize(new { repo = repo.Value });
-        if (CrewIntent.IsMatch(message)) return JsonSerializer.Serialize(new { repo = "SpawnDev.AI" });
-        return "{}";
-    }
-
-    private async Task<string?> PrefetchGitHubAsync(string message, CancellationToken ct)
-    {
-        var tool = Tools?.Get(GitHubToolName);
-        if (tool == null) return null;
-        try
-        {
-            var exec = await tool.ExecuteAsync(ResolveGitHubArgs(message), ct).ConfigureAwait(false);
-            return exec.IsError ? null : exec.TextForModel;
-        }
-        catch { return null; }   // network/rate-limit failure - fall through to a normal (ungrounded) answer
-    }
 
     private static List<AiChatMessage> WithReference(IReadOnlyList<AiChatMessage> messages, string reference)
     {

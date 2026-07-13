@@ -41,6 +41,19 @@ public sealed record AiToolExecutionResult(string TextForModel, IReadOnlyList<Ai
 public sealed record AiToolArtifact(string Id, string MimeType, byte[] Data, string? Label = null);
 
 /// <summary>
+/// An optional capability a tool can implement: given the latest user message, return authoritative
+/// reference text to inject as grounding context - or null when the message is not in the tool's domain.
+/// The engine consults this BEFORE generating so it can ground answers deterministically instead of
+/// relying on a small model to decide to call the tool (small models often don't, and then hallucinate).
+/// </summary>
+public interface IAiGroundingProvider
+{
+    /// <summary>Reference text for <paramref name="userMessage"/>, or null if it isn't in this provider's
+    /// domain (no grounding). Should be self-contained and concise enough to prepend to the prompt.</summary>
+    Task<string?> GetGroundingAsync(string userMessage, CancellationToken ct = default);
+}
+
+/// <summary>
 /// The registry of server-side tools + the artifact store their binary outputs land in. Register
 /// tools at startup (DI singleton); the chat engine, MCP surface, and protocol routers all read
 /// from here.

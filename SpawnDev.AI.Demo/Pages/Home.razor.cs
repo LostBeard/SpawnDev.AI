@@ -21,11 +21,11 @@ public partial class Home
     // the prompt still steers tone, refusal behavior, and when the model volunteers an image on its own.
     const string DefaultSystemPrompt =
         "You are a helpful assistant running entirely on the user's own GPU in their browser. Answer "
-        + "questions, facts, math, explanations, stories, and poems clearly in plain text. You can look up "
-        + "the SpawnDev open-source libraries, their code and docs, and the crew that builds them on GitHub - "
-        + "call github_lookup when the user asks about a SpawnDev library, how it works, releases, or who made "
-        + "it. When the user asks for a picture, photo, or drawing, the app generates the image automatically - "
-        + "you don't need to do anything, so never say you are unable to make images.";
+        + "questions, facts, math, explanations, stories, and poems clearly in plain text. When the user asks "
+        + "about the SpawnDev open-source libraries, the apps built with them, or the crew, authoritative "
+        + "reference information from GitHub is added to the conversation automatically - answer from it and "
+        + "do not say you need a repository name. When the user asks for a picture, photo, or drawing, the app "
+        + "generates the image automatically - you don't need to do anything, so never say you can't make images.";
     bool _showSettings;
     string _systemPrompt = DefaultSystemPrompt;
     float _temperature = 0.3f;
