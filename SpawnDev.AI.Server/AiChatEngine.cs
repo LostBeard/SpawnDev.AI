@@ -194,35 +194,27 @@ public sealed class AiChatEngine : IAiChatService
     // ── Pre-emptive image-tool forcing ──
     // The model REFUSES ~40% of plain image requests and the refusal is the greedy argmax, so no sampling or
     // prompt tweak makes it reliable (measured on qwen2.5-0.5b, both Ollama + HF GGUFs, 2026-07-13). When the
-    // user clearly wants an image we bypass the routing decision entirely: prefill the assistant turn with the
-    // tool-call opener so the model can ONLY write the caption, then execute the tool ourselves. A greedy
-    // caption pass is fast (~48 new tokens) and the model still authors the caption; a deterministic derivation
-    // from the user text is the fallback when the caption pass yields nothing usable.
+    // user clearly wants an image we bypass the routing decision entirely and run generate_image ourselves.
+    //
+    // CAPTION SOURCE — deterministic first, model only as fallback (PERF, 2026-07-13). Stripping the imperative
+    // wrapper off the user text ("draw a cat" → "a cat") yields a caption ~identical to what the model writes,
+    // and BETTER for detailed prompts (no 48-token truncation). Critically, deriving it touches NO model, so a
+    // resident SD-Turbo stays resident across consecutive image requests (~10s warm, like the direct button).
+    // The old always-run model caption pass thrashed VRAM: captioning loaded the LLM (evicting SD-Turbo), then
+    // image-gen evicted the LLM to reload SD-Turbo — two big loads per image (~35s). We only fall back to a
+    // model caption pass when the derived caption has no subject (e.g. bare "make a picture").
     private async Task<AiChatResult?> TryForcedImageAsync(AiChatRequest request, IReadOnlyList<string>? toolsJson,
         Func<string, Task>? onDelta, CancellationToken ct)
     {
         string userMsg = LastUserMessage(request.Messages) ?? "";
-        string caption = "";
-        try
+        string caption = DeriveCaption(userMsg);
+        if (!IsUsableCaption(caption))
         {
-            using var lease = await _registry.AcquireAsync(request.Model, ct).ConfigureAwait(false);
-            var lm = lease.Model;
-            var (promptIds, stopIds) = ChatTemplates.BuildChatPrompt(lm.Gguf, lm.Tokenizer, ToTuples(request.Messages),
-                toolsJson: toolsJson);
-            // Force the assistant turn to begin as a generate_image call; the model completes only the caption
-            // string, and we stop it at the closing quote. (These are ordinary tokens for ChatML/qwen, not
-            // specials, so plain Encode matches what the template would produce.)
-            const string prefix = "<tool_call>\n{\"name\": \"" + "generate_image" + "\", \"arguments\": {\"prompt\": \"";
-            var forcedIds = promptIds.Concat(lm.Tokenizer.Encode(prefix)).ToArray();
-            var cfg = new GenerationConfig { MaxNewTokens = 48, Strategy = "greedy" };
-            var res = await lm.Generator.GenerateAsync(forcedIds, cfg, new[] { "\"", "\n", "</tool_call>" }, stopIds, null, ct)
-                .ConfigureAwait(false);
-            caption = CleanCaption(res.Text);
+            // Subject-less request - let the model invent one (accepts the model-load cost for this rare case).
+            var modelCaption = await TryModelCaptionAsync(request, toolsJson, ct).ConfigureAwait(false);
+            if (IsUsableCaption(modelCaption)) caption = modelCaption!;
         }
-        catch { /* caption pass failed - fall back to the derived caption below */ }
-
-        if (string.IsNullOrWhiteSpace(caption)) caption = DeriveCaption(userMsg);
-        if (string.IsNullOrWhiteSpace(caption)) return null;   // nothing usable - let the normal path answer
+        if (!IsUsableCaption(caption)) return null;   // nothing usable - let the normal path answer
 
         var tool = Tools?.Get(ImageToolName);
         if (tool == null) return null;
@@ -279,6 +271,45 @@ public sealed class AiChatEngine : IAiChatService
     public static bool HasImageIntent(string? message)
         => !string.IsNullOrWhiteSpace(message) && (ImperativeDraw.IsMatch(message) || CreateVisual.IsMatch(message));
 
+    // Fallback caption path: ask the model for the caption by prefilling the assistant turn with the
+    // generate_image tool-call opener so it can ONLY write the caption string; stop at the closing quote. Used
+    // only when the deterministic DeriveCaption produced no subject - so it (and its LLM load) rarely runs.
+    private async Task<string?> TryModelCaptionAsync(AiChatRequest request, IReadOnlyList<string>? toolsJson, CancellationToken ct)
+    {
+        try
+        {
+            using var lease = await _registry.AcquireAsync(request.Model, ct).ConfigureAwait(false);
+            var lm = lease.Model;
+            var (promptIds, stopIds) = ChatTemplates.BuildChatPrompt(lm.Gguf, lm.Tokenizer, ToTuples(request.Messages),
+                toolsJson: toolsJson);
+            // Ordinary tokens for ChatML/qwen (not specials), so plain Encode matches the template's tokenization.
+            const string prefix = "<tool_call>\n{\"name\": \"generate_image\", \"arguments\": {\"prompt\": \"";
+            var forcedIds = promptIds.Concat(lm.Tokenizer.Encode(prefix)).ToArray();
+            var cfg = new GenerationConfig { MaxNewTokens = 48, Strategy = "greedy" };
+            var res = await lm.Generator.GenerateAsync(forcedIds, cfg, new[] { "\"", "\n", "</tool_call>" }, stopIds, null, ct)
+                .ConfigureAwait(false);
+            return CleanCaption(res.Text);
+        }
+        catch { return null; }   // caption pass failed - caller keeps whatever it had
+    }
+
+    // A caption is usable when, after dropping filler words (articles, "of", stray verbs the strip left), at
+    // least one real subject token of length >= 2 remains. Rejects empties and pure-filler like "a" / "of the".
+    private static readonly HashSet<string> CaptionFiller = new(StringComparer.OrdinalIgnoreCase)
+    { "a", "an", "the", "some", "of", "me", "it", "this", "that", "please", "draw", "paint", "sketch", "picture", "image", "photo" };
+    private static bool IsUsableCaption(string? caption)
+    {
+        if (string.IsNullOrWhiteSpace(caption)) return false;
+        var s = caption.Trim();
+        if (s.Length is < 2 or >= 300) return false;
+        foreach (var w in s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var t = w.Trim('.', ',', '!', '?', '"', '\'', ':', ';');
+            if (t.Length >= 2 && !CaptionFiller.Contains(t)) return true;
+        }
+        return false;
+    }
+
     // Trim the model's caption to a clean single line (drop a trailing quote/brace/backslash and any tail after
     // a newline). Guards against the model running past the caption before the stop string bites.
     private static string CleanCaption(string raw)
@@ -293,12 +324,15 @@ public sealed class AiChatEngine : IAiChatService
 
     // Deterministic fallback caption: strip a leading polite/imperative wrapper ("please draw me a picture of ")
     // so the remaining subject phrase drives the diffusion model. Returns the whole message if nothing strips.
+    // Each token is matched as a WHOLE word (it must be followed by whitespace, consumed with it) and
+    // overlapping alternatives are ordered longest-first ("an" before "a", "photograph" before "photo"),
+    // so we never chop a prefix off a word - e.g. "an image" must not strip to "n image".
     private static readonly Regex CaptionStrip = new(
-        @"^\s*(please\s+|hey\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+|i\s+(want|need|would\s+like)\s+(you\s+to\s+)?)*"
-        + @"(draw|sketch|paint|illustrate|render|generate|create|make|produce|show|give|design|imagine)?\s*"
-        + @"(me\s+)?(a|an|some|the)?\s*"
-        + @"(image|picture|pic|photo|photograph|drawing|painting|illustration|art|artwork|wallpaper|logo|portrait|render|visual)?\s*"
-        + @"(of\s+)?",
+        @"^\s*(?:(?:please|hey|can\s+you|could\s+you|would\s+you|i\s+(?:want|need|would\s+like)(?:\s+you\s+to)?)\s+)*"
+        + @"(?:(?:draw|sketch|paint|illustrate|render|generate|create|make|produce|show|give|design|imagine)\s+)?"
+        + @"(?:me\s+)?(?:(?:an|a|some|the)\s+)?"
+        + @"(?:(?:photograph|photo|picture|pics|pic|images|image|drawings|drawing|paintings|painting|illustration|artwork|art|wallpaper|logo|portrait|render|visual)\s+)?"
+        + @"(?:of\s+)?",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static string DeriveCaption(string userMsg)
@@ -306,7 +340,9 @@ public sealed class AiChatEngine : IAiChatService
         if (string.IsNullOrWhiteSpace(userMsg)) return "";
         var s = userMsg.Trim().TrimEnd('.', '!', '?', ' ');
         var stripped = CaptionStrip.Replace(s, "", 1).Trim();
-        var result = stripped.Length >= 2 ? stripped : s;   // never return an empty caption
+        // Empty/too-thin strip (e.g. bare "make a picture") returns "" so the caller falls back to the model
+        // caption pass; IsUsableCaption is the final gate either way.
+        var result = stripped.Length >= 2 ? stripped : "";
         return result.Length < 300 ? result : result[..300];
     }
 

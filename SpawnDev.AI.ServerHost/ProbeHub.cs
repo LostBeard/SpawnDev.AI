@@ -27,6 +27,8 @@ internal static class ProbeHub
         "generate an image of a robot",
         "show me a picture of paris",
         "create an image of a dragon",
+        "draw a majestic dragon breathing fire over a medieval castle at sunset",  // detailed - keep detail
+        "make a picture",                                                          // subjectless - model fallback
         // Control (non-image) - want TEXT, must NOT spuriously draw
         "what is the capital of France?",
         "write me a short poem about the sea",

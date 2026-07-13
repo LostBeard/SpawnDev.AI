@@ -116,6 +116,14 @@ Notable changes per release. Preview - APIs will change.
   noun) scores **25/25 on a labeled battery, 0 false-positives / 0 false-negatives** - "tell me about the Mona
   Lisa painting", "who painted the Sistine Chapel?", "show me the code for a for loop" all correctly stay text.
   Control set through the full engine: 4/4 non-image prompts answer as TEXT with no spurious draws.
+- **Caption source: deterministic first, model only as fallback (perf).** An LLM-prompted image was ~35s vs
+  ~10s for the direct button because captioning with the model thrashed VRAM: it loaded the LLM (evicting the
+  resident SD-Turbo), then image-gen evicted the LLM to reload SD-Turbo - two big loads per image, and every
+  consecutive "draw X" repeated the thrash. The forced path now derives the caption by stripping the imperative
+  off the user text ("draw a cat" → "a cat"; "draw a majestic dragon over a castle at sunset" keeps the full
+  detail, which the 48-token model pass would truncate), touching NO model - so a resident SD-Turbo stays
+  resident and consecutive image requests run ~10s warm like the direct button. The model caption pass remains
+  only as a fallback for a subject-less request (bare "make a picture").
 - **Demo: agent settings panel (⚙️).** The system prompt is now user-viewable/editable (with Reset to
   default), alongside Temperature and Max-response-tokens sliders. An empty system prompt is allowed (bare
   model). Model + image-model pickers already lived in the header.
