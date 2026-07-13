@@ -1,0 +1,40 @@
+name: Build SpawnDev index
+
+# Regenerates spawndev-index.md (the AI's single-request grounding digest of the SpawnDev libraries +
+# crew) twice a day. Uses the Actions GITHUB_TOKEN (5000 req/hr) so the in-browser AI never has to spend
+# the user's anonymous api.github.com budget (60/hr) gathering core info.
+on:
+  schedule:
+    - cron: '0 6,18 * * *'   # 06:00 and 18:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-spawndev-index
+  cancel-in-progress: false
+
+jobs:
+  build-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Generate spawndev-index.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: dotnet run tools/build-index.cs spawndev-index.md
+      - name: Commit if changed
+        run: |
+          if [ -n "$(git status --porcelain spawndev-index.md)" ]; then
+            git config user.name "spawndev-index-bot"
+            git config user.email "actions@github.com"
+            git add spawndev-index.md
+            git commit -m "chore: refresh spawndev-index.md [skip ci]"
+            git push
+          else
+            echo "spawndev-index.md unchanged"
+          fi
