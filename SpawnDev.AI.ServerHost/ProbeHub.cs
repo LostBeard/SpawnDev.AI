@@ -220,6 +220,93 @@ internal static class ProbeHub
         Console.WriteLine($"[probe-github] github_lookup called on {called}/{qs.Length} library questions");
     }
 
+    /// <summary>Minimal arch-support diagnostic: load an Ollama-cached model through our GGUF pipeline and
+    /// generate from a fixed prompt (greedy). Coherent output => the architecture is wired correctly;
+    /// garbage/loop => a graph gap (e.g. missing QK-norm); a throw => metadata/arch not handled at all.</summary>
+    public static async Task RunGenAsync(Accelerator accelerator, string modelName)
+    {
+        var store = new OllamaModelStore();
+        await using var registry = new ModelRegistry(new OllamaCacheModelProvider(store), accelerator, 4096);
+        var engine = new AiChatEngine(registry) { ForceImageToolOnIntent = false, GroundGitHubOnIntent = false };
+        var req = new AiChatRequest
+        {
+            Model = modelName,
+            Messages = new[]
+            {
+                new AiChatMessage("system", "You are a helpful, concise assistant."),
+                new AiChatMessage("user", "In one or two sentences: what is the capital of France, and name two famous landmarks there?"),
+            },
+            Options = new AiGenerationOptions { MaxOutputTokens = 200, Strategy = "greedy" },
+        };
+        Console.WriteLine($"[probe-gen] loading + generating: {modelName}");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var res = await engine.ChatAsync(req);
+        sw.Stop();
+        Console.WriteLine($"[probe-gen] {modelName} ({sw.Elapsed.TotalSeconds:F1}s, {res.GeneratedTokens} tok, stop={res.Stop}):");
+        Console.WriteLine("──────");
+        Console.WriteLine(res.Text);
+        Console.WriteLine("──────");
+    }
+
+    /// <summary>Measures NATIVE tool-calling with forcing + grounding OFF and both tools model-callable: does
+    /// the model itself call generate_image for image requests and github_lookup for library questions, and
+    /// nothing for plain chat? Uses the Ollama cache (no downloads) so any cached model can be swept. Answers
+    /// "does a newer/bigger model let us drop the forcing/grounding compensations?"</summary>
+    public static async Task RunNativeAsync(Accelerator accelerator, string modelName)
+    {
+        using var http = new HttpClient();
+        var store = new OllamaModelStore();
+        await using var registry = new ModelRegistry(new OllamaCacheModelProvider(store), accelerator, 4096);
+        var engine = new AiChatEngine(registry)
+        {
+            ForceImageToolOnIntent = false,   // NO image forcing - the model must choose to call it
+            GroundGitHubOnIntent = false,     // NO grounding - github_lookup becomes model-callable
+        };
+        var tools = new AiToolRegistry();
+        var image = new CallCountingTool(new StubImageTool());
+        var github = new CallCountingTool(new GitHubTool(http));
+        tools.Register(image);
+        tools.Register(github);
+        engine.Tools = tools;
+
+        const string sys =
+            "You are a helpful assistant. You have two tools: generate_image (make a picture from a prompt) "
+            + "and github_lookup (look up the SpawnDev libraries and crew). Call the right tool when it helps; "
+            + "answer directly otherwise.";
+        // (question, expected tool: "image" | "github" | "none")
+        (string Q, string Want)[] qs =
+        {
+            ("Draw a cat.", "image"),
+            ("Generate an image of a sunset over mountains.", "image"),
+            ("Make me a picture of a robot.", "image"),
+            ("What is SpawnDev.BlazorJS?", "github"),
+            ("Who is on the SpawnDev crew?", "github"),
+            ("Tell me about SpawnDev.ILGPU.", "github"),
+            ("What is the capital of France?", "none"),
+            ("Write a two-line poem about rain.", "none"),
+        };
+        Console.WriteLine($"[probe-native] model: {modelName} (forcing OFF, grounding OFF, tools model-callable)");
+        int correct = 0;
+        foreach (var (q, want) in qs)
+        {
+            image.Count = 0; github.Count = 0;
+            var req = new AiChatRequest
+            {
+                Model = modelName,
+                Messages = new[] { new AiChatMessage("system", sys), new AiChatMessage("user", q) },
+                Options = new AiGenerationOptions { MaxOutputTokens = 250, Temperature = 0.3f, Strategy = "top_p", TopP = 0.9f, RepetitionPenalty = 1.15f },
+            };
+            AiChatResult res;
+            try { res = await engine.ChatAsync(req); }
+            catch (Exception ex) { Console.WriteLine($"[ERR    ] {q} -> {ex.Message}"); continue; }
+            string got = image.Count > 0 ? "image" : github.Count > 0 ? "github" : "none";
+            bool ok = got == want;
+            if (ok) correct++;
+            Console.WriteLine($"[{(ok ? "ok  " : "MISS"),-6}] want={want,-6} got={got,-6}  {q}");
+        }
+        Console.WriteLine($"[probe-native] {modelName}: {correct}/{qs.Length} correct native tool routing");
+    }
+
     sealed class CallCountingTool : IAiTool, IAiGroundingProvider
     {
         private readonly IAiTool _inner;

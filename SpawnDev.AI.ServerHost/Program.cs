@@ -48,6 +48,21 @@ if (args.Length > 0 && args[0] == "probe-github")
     return;
 }
 
+// Diagnostic: `probe-gen <ollama-model>` loads a cached model through our pipeline + generates (arch check).
+if (args.Length > 0 && args[0] == "probe-gen")
+{
+    await ProbeHub.RunGenAsync(accelerator, args.Length > 1 ? args[1] : "qwen3:14b-q4_K_M");
+    return;
+}
+
+// Diagnostic: `probe-native <ollama-model>` measures NATIVE tool routing (forcing+grounding OFF) from the
+// Ollama cache - sweep any cached model (qwen2.5, qwen3, ...) to see which tier can drop the compensations.
+if (args.Length > 0 && args[0] == "probe-native")
+{
+    await ProbeHub.RunNativeAsync(accelerator, args.Length > 1 ? args[1] : "qwen2.5:1.5b-instruct-q4_K_M");
+    return;
+}
+
 var store = new OllamaModelStore();
 Console.WriteLine($"[SpawnDev.AI] Ollama cache: {OllamaModelStore.DefaultRoot()} (exists: {store.CacheExists}, models: {store.List().Count})");
 await using var registry = new ModelRegistry(new OllamaCacheModelProvider(store), accelerator);
