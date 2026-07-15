@@ -50,6 +50,18 @@ builder.Services.AddSpawnDevAI(options =>
         "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
         "qwen2.5-1.5b-instruct-q4_k_m.gguf",
         ApproxSizeBytes: 1_117_320_000));
+    // Qwen3 0.6B (Q8_0) - newest Qwen small model; standard transformer arch. WebGPU-verified.
+    options.Models.Add(new HubModelOption(
+        "qwen3:0.6b-q8_0",
+        "Qwen/Qwen3-0.6B-GGUF",
+        "Qwen3-0.6B-Q8_0.gguf",
+        ApproxSizeBytes: 639_446_688));
+    // LFM2 1.2B (Q4_K_M) - Liquid AI's ShortConv hybrid arch. WebGPU-verified (ShortConv WGSL).
+    options.Models.Add(new HubModelOption(
+        "lfm2:1.2b-q4_k_m",
+        "LiquidAI/LFM2-1.2B-GGUF",
+        "LFM2-1.2B-Q4_K_M.gguf",
+        ApproxSizeBytes: 730_893_248));
 });
 
 await builder.Build().BlazorJSRunAsync();
