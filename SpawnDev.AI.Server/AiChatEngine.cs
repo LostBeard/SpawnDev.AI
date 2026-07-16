@@ -95,7 +95,16 @@ public sealed class AiChatEngine : IAiChatService
             // Exclude grounding tools from the callable list ONLY while grounding is on (it already injects
             // their answer). With grounding OFF - e.g. a capable model that reliably tool-calls - they become
             // model-callable again, so the Ground toggle coherently switches between grounding and native use.
-            var callable = serverTools.Where(t => t is not IAiGroundingProvider || !GroundGitHubOnIntent).ToList();
+            var callable = serverTools.Where(t =>
+                // Grounding tools: excluded while grounding is on (it already injects their answer as context).
+                (t is not IAiGroundingProvider || !GroundGitHubOnIntent)
+                // The image tool: excluded while force-on-intent is on. ForceImageToolOnIntent CREATES images
+                // without the model ever calling the tool (registry-driven, see TryForcedImageAsync), so dangling
+                // its JSON schema in the chat is pure downside - a model not trained for tool-calling (LFM2)
+                // drowns in the schema and emits garbage ("generate_image, tool_name, function...") instead of
+                // answering "what is a chicken?". Symmetric to the grounding exclusion above; images still work.
+                && !(ForceImageToolOnIntent && string.Equals(t.Name, ImageToolName, StringComparison.OrdinalIgnoreCase))
+            ).ToList();
             toolsJson = callable.Count > 0 ? callable.Select(t =>
             {
                 using var schema = System.Text.Json.JsonDocument.Parse(t.ParametersJsonSchema);
