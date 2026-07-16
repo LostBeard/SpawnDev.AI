@@ -220,6 +220,59 @@ internal static class ProbeHub
         Console.WriteLine($"[probe-github] github_lookup called on {called}/{qs.Length} library questions");
     }
 
+    /// <summary>The demo's EXACT chat path on the desktop GPU: the same HF hub GGUF the browser streams, the
+    /// same two registered tools, the same system prompt, the same top_p sampling + RepetitionPenalty, and the
+    /// same STREAMING call the composer makes (Home.razor.cs:125). Prior LFM2 verification used greedy +
+    /// no-tools + non-streaming and passed while the demo produced garbage - this reproduces what TJ sees.
+    /// `probe-demo [model] [prompt]`.</summary>
+    public static async Task RunDemoAsync(Accelerator accelerator, string modelName, string prompt)
+    {
+        // Verbatim copy of SpawnDev.AI.Demo/Pages/Home.razor.cs DefaultSystemPrompt.
+        const string demoSys =
+            "You are a helpful assistant running entirely on the user's own GPU in their browser. Answer "
+            + "questions, facts, math, explanations, stories, and poems clearly in plain text. When the user asks "
+            + "about the SpawnDev open-source libraries, the apps built with them, or the crew, authoritative "
+            + "reference information from GitHub is added to the conversation automatically - answer from it and "
+            + "do not say you need a repository name. When the user asks for a picture, photo, or drawing, the app "
+            + "generates the image automatically - you don't need to do anything, so never say you can't make images.";
+
+        await using var webTorrent = new SpawnDev.WebTorrent.WebTorrentClient();
+        using var http = new HttpClient();
+        // Same model list the demo registers (SpawnDev.AI.Demo/Program.cs).
+        var provider = new HubModelProvider(webTorrent, http, new[]
+        {
+            new HubModelOption("qwen2.5:0.5b-instruct-q8_0", "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q8_0.gguf", 531_067_136),
+            new HubModelOption("smollm2:360m-instruct-q8_0", "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF", "smollm2-360m-instruct-q8_0.gguf", 386_404_352),
+            new HubModelOption("qwen2.5:1.5b-instruct-q4_k_m", "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "qwen2.5-1.5b-instruct-q4_k_m.gguf", 1_117_320_000),
+            new HubModelOption("qwen3:0.6b-q8_0", "Qwen/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q8_0.gguf", 639_446_688),
+            new HubModelOption("lfm2:1.2b-q4_k_m", "LiquidAI/LFM2-1.2B-GGUF", "LFM2-1.2B-Q4_K_M.gguf", 730_893_248),
+        });
+        await using var registry = new ModelRegistry(provider, accelerator, 4096);
+        // Engine + tools exactly as AiWorkerServer wires them (both tools registered; the demo's defaults
+        // for ForceImageToolOnIntent/GroundGitHubOnIntent left untouched).
+        var engine = new AiChatEngine(registry);
+        using var images = new AiImageEngine(webTorrent, http, accelerator);
+        var tools = new AiToolRegistry();
+        tools.Register(new GenerateImageTool(images, tools));
+        tools.Register(new GitHubTool(http));
+        engine.Tools = tools;
+
+        var req = new AiChatRequest
+        {
+            Model = modelName,
+            Messages = new[] { new AiChatMessage("system", demoSys), new AiChatMessage("user", prompt) },
+            // Verbatim from Home.razor.cs:125 (the composer's options).
+            Options = new AiGenerationOptions { MaxOutputTokens = 384, Strategy = "top_p", Temperature = 0.3f, TopP = 0.9f, RepetitionPenalty = 1.15f },
+        };
+        Console.WriteLine($"[probe-demo] model={modelName}");
+        Console.WriteLine($"[probe-demo] prompt={prompt}");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var res = await engine.ChatStreamAsync(req, delta => { Console.Write(delta); return Task.CompletedTask; });
+        sw.Stop();
+        Console.WriteLine();
+        Console.WriteLine($"────── [probe-demo] {sw.Elapsed.TotalSeconds:F1}s, {res.GeneratedTokens} tok, stop={res.Stop}");
+    }
+
     /// <summary>Minimal arch-support diagnostic: load an Ollama-cached model through our GGUF pipeline and
     /// generate from a fixed prompt (greedy). Coherent output => the architecture is wired correctly;
     /// garbage/loop => a graph gap (e.g. missing QK-norm); a throw => metadata/arch not handled at all.</summary>

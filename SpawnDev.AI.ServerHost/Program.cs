@@ -48,6 +48,18 @@ if (args.Length > 0 && args[0] == "probe-github")
     return;
 }
 
+// ── Diagnostic: `probe-demo [model] [prompt]` reproduces the DEMO's exact chat path on the desktop GPU:
+// same hub GGUF, same tools registered, same system prompt, same top_p sampling, same streaming call.
+// This is the gate for "does the demo answer coherently" - greedy/no-tools probes have passed while the
+// demo emitted garbage (LFM2, 2026-07-15), so verify here before declaring a chat fix done.
+if (args.Length > 0 && args[0] == "probe-demo")
+{
+    await ProbeHub.RunDemoAsync(accelerator,
+        args.Length > 1 ? args[1] : "lfm2:1.2b-q4_k_m",
+        args.Length > 2 ? args[2] : "Explain how you run entirely inside my browser.");
+    return;
+}
+
 // Diagnostic: `probe-gen <ollama-model>` loads a cached model through our pipeline + generates (arch check).
 if (args.Length > 0 && args[0] == "probe-gen")
 {
