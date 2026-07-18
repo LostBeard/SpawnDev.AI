@@ -51,8 +51,8 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.MultiMedia** (LostBeard/SpawnDev.MultiMedia) - Cross-platform media capture and playback for .NET - camera, microphone, speakers, video display. One API, every platform.
 - **SpawnDev.PatchStreams** (LostBeard/SpawnDev.PatchStreams) - Create streams with partial views, multiple streams, or read-only sources. Delete, insert, overwrite with full support for undo/redo and restore-points.
 - **SpawnDev.RTC** (LostBeard/SpawnDev.RTC) - Cross-platform WebRTC for .NET - browser and desktop from a single API
+- **SpawnDev.SpawnJS** (LostBeard/SpawnDev.SpawnJS) - JSON-free JavaScript interop for .NET WebAssembly (JSImport/JSExport, no Blazor dependency). The .NET side owns all marshalling - complex return values that Blazor cannot marshal cross intact.
 - **SpawnDev.UnitTesting** (LostBeard/SpawnDev.UnitTesting) - Cross-platform unit testing framework for .NET
-- **SpawnDev.VoxelEngine** (LostBeard/SpawnDev.VoxelEngine) - High-performance voxel engine built on SpawnDev.ILGPU. GPU-accelerated meshing, culling, LOD, and rendering targeting WebGPU, CUDA, OpenCL, and CPU.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -547,17 +547,17 @@ Cross-platform WebRTC for .NET - browser and desktop from a single API.  [Live D
 
 Repo: https://github.com/LostBeard/SpawnDev.RTC - full README + CHANGELOG available via github_lookup.
 
+## SpawnDev.SpawnJS
+JSON-free JavaScript interop for .NET WebAssembly (JSImport/JSExport, no Blazor dependency). The .NET side owns all marshalling - complex return values that Blazor cannot marshal cross intact.
+
+JSON-free JavaScript interop for .NET WebAssembly.  > *Blazor pushes the marshalling decision to the side that can't make it. SpawnJS moves it to the side that can.*  SpawnJS is a direct .NET <-> JavaScript interop layer built on `JSImport`/`JSExport`/`JSHost`/`JSObject` only. It has **no Blazor dependency**, so it runs in any .NET WASM host - Blazor, Avalonia, headless WASM console apps, and Web Workers.  Its API is modeled to be compatible with the Blazor WASM `IJSInProcessRuntime` / `IJSInProcessObjectReference` surface, so existing SpawnDev.BlazorJS-style interop code can run on SpawnJS wi...
+
+Repo: https://github.com/LostBeard/SpawnDev.SpawnJS - full README + CHANGELOG available via github_lookup.
+
 ## SpawnDev.UnitTesting
 Cross-platform unit testing framework for .NET
 
 A lightweight, cross-platform unit testing framework for .NET. Works everywhere - Blazor WASM, WPF, Console, and more.  Supersedes [SpawnDev.Blazor.UnitTesting](https://www.nuget.org/packages/SpawnDev.Blazor.UnitTesting) with a platform-agnostic core.   - **Cross-platform** - no Blazor, WPF, or browser dependencies in the core library - **Simple API** - `[TestMethod]` attribute and `UnitTestRunner` for reflection-based discovery - **Async support** - full `async Task` test methods with configurable timeouts - **Dependency injection** - test classes resolved via `IServiceProvider` and `Activato...
 
 Repo: https://github.com/LostBeard/SpawnDev.UnitTesting - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.VoxelEngine
-High-performance voxel engine built on SpawnDev.ILGPU. GPU-accelerated meshing, culling, LOD, and rendering targeting WebGPU, CUDA, OpenCL, and CPU.
-
-**High-performance voxel engine built on [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU). GPU-accelerated meshing, culling, LOD, terrain carving, physics, destruction, and VR rendering - from a single C# codebase targeting WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU.**  > **Status:** `0.1.0-rc.1` - first release candidate. API is functional and consumed by Lost Spawns + AubsCraft; expect iteration during the RC cycle.  Write voxel engine code in C# and let SpawnDev.ILGPU handle the GPU backend. In the browser, WebGPU compute shaders power the entire pipeline. On desktop, CUDA and ...
-
-Repo: https://github.com/LostBeard/SpawnDev.VoxelEngine - full README + CHANGELOG available via github_lookup.
 
