@@ -50,9 +50,9 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.MatrixLEDDisplay** (LostBeard/SpawnDev.MatrixLEDDisplay) - Wirelessly control the Matrix LED Display from Merkury Innovations with Blazor WebAssembly and the Web Bluetooth API.
 - **SpawnDev.MultiMedia** (LostBeard/SpawnDev.MultiMedia) - Cross-platform media capture and playback for .NET - camera, microphone, speakers, video display. One API, every platform.
 - **SpawnDev.PatchStreams** (LostBeard/SpawnDev.PatchStreams) - Create streams with partial views, multiple streams, or read-only sources. Delete, insert, overwrite with full support for undo/redo and restore-points.
+- **SpawnDev.Reachy** (LostBeard/SpawnDev.Reachy) - A C# SDK for the Reachy Mini robot, and Rose - a local-only voice companion app built on it.
 - **SpawnDev.RTC** (LostBeard/SpawnDev.RTC) - Cross-platform WebRTC for .NET - browser and desktop from a single API
 - **SpawnDev.SpawnJS** (LostBeard/SpawnDev.SpawnJS) - JSON-free JavaScript interop for .NET WebAssembly (JSImport/JSExport, no Blazor dependency). The .NET side owns all marshalling - complex return values that Blazor cannot marshal cross intact.
-- **SpawnDev.UnitTesting** (LostBeard/SpawnDev.UnitTesting) - Cross-platform unit testing framework for .NET
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -540,6 +540,13 @@ A patch-based `Stream` for non-destructive editing. Writes never touch the sourc
 
 Repo: https://github.com/LostBeard/SpawnDev.PatchStreams - full README + CHANGELOG available via github_lookup.
 
+## SpawnDev.Reachy
+A C# SDK for the Reachy Mini robot, and Rose - a local-only voice companion app built on it.
+
+A C# SDK for the [Reachy Mini](https://www.pollen-robotics.com/reachy-mini/) robot, and **Rose** - a local-only voice companion app built on it.  No C# client for the Reachy Mini daemon existed, so this is one. Everything the robot can do over its REST API is reachable from .NET, including the parts the stock apps never touch.  Rose runs entirely on your own hardware. No cloud AI, no subscription, no account, and the robot never sends audio anywhere except to the PC on your LAN.     - **You can talk to her.** Microphone to speech recognition to language model to speech synthesis to the robot's...
+
+Repo: https://github.com/LostBeard/SpawnDev.Reachy - full README + CHANGELOG available via github_lookup.
+
 ## SpawnDev.RTC
 Cross-platform WebRTC for .NET - browser and desktop from a single API
 
@@ -553,11 +560,4 @@ JSON-free JavaScript interop for .NET WebAssembly (JSImport/JSExport, no Blazor 
 JSON-free JavaScript interop for .NET WebAssembly.  > *Blazor pushes the marshalling decision to the side that can't make it. SpawnJS moves it to the side that can.*  SpawnJS is a direct .NET <-> JavaScript interop layer built on `JSImport`/`JSExport`/`JSHost`/`JSObject` only. It has **no Blazor dependency**, so it runs in any .NET WASM host - Blazor, Avalonia, headless WASM console apps, and Web Workers.  Its API is modeled to be compatible with the Blazor WASM `IJSInProcessRuntime` / `IJSInProcessObjectReference` surface, so existing SpawnDev.BlazorJS-style interop code can run on SpawnJS wi...
 
 Repo: https://github.com/LostBeard/SpawnDev.SpawnJS - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.UnitTesting
-Cross-platform unit testing framework for .NET
-
-A lightweight, cross-platform unit testing framework for .NET. Works everywhere - Blazor WASM, WPF, Console, and more.  Supersedes [SpawnDev.Blazor.UnitTesting](https://www.nuget.org/packages/SpawnDev.Blazor.UnitTesting) with a platform-agnostic core.   - **Cross-platform** - no Blazor, WPF, or browser dependencies in the core library - **Simple API** - `[TestMethod]` attribute and `UnitTestRunner` for reflection-based discovery - **Async support** - full `async Task` test methods with configurable timeouts - **Dependency injection** - test classes resolved via `IServiceProvider` and `Activato...
-
-Repo: https://github.com/LostBeard/SpawnDev.UnitTesting - full README + CHANGELOG available via github_lookup.
 
