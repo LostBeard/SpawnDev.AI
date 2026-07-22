@@ -230,7 +230,7 @@ Repo: https://github.com/LostBeard/SimpleWebWorkersExample - full README + CHANG
 ## SpawnDev.AI
 Run and serve local LLMs everywhere .NET runs - desktop and the browser - on the SpawnDev.ILGPU.ML inference engine (GGUF models, KV-cache decode, WebGPU dispatch-plan capture/replay).
 
-Run and serve local LLMs and image generation everywhere .NET runs - desktop **and the browser** - on the [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) inference engine (GGUF models, KV-cache decode, SD-Turbo image generation, WebGPU dispatch-plan capture/replay). LLM decode and SD-Turbo text-to-image both run in-browser on WebGPU, no server or native install.    Local LLM serving shouldn't require a native install. The same `AiApiRouter` that answers `curl localhost:11434/api/chat` on a desktop can run inside a shared worker in a browser tab, decoding on WebGPU at intera...
+> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.AI saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  Run and serve local LLMs and image generation everywhere .NET runs - desktop **and the browser** - on the [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) inference engine (GGUF models, KV-cache decode, SD-Turbo image generation, WebGPU dispatch-plan capture/replay). LLM decode and SD-Turbo text-to-image both...
 
 Repo: https://github.com/LostBeard/SpawnDev.AI - full README + CHANGELOG available via github_lookup.
 
@@ -270,7 +270,7 @@ Repo: https://github.com/LostBeard/SpawnDev.Blazor.UnitTesting - full README + C
 ## SpawnDev.BlazorJS
 Full Blazor WebAssembly and Javascript interop. Supports all Javascript data types and web browser APIs.
 
-Full Blazor WebAssembly and JavaScript interop. 1,021 strongly typed C# wrappers for browser APIs - create JavaScript objects, access properties, call methods, and handle events the .NET way without writing JavaScript.  **[Full API Documentation](Docs/README.md)** - Complete MDN-style API reference with guides, 1,021 typed wrapper references, and real C# examples.  [Live Demo](https://blazorjs.spawndev.com/)  - .NET 8, 9, and 10 - Blazor WebAssembly Standalone App - Blazor Web App - Interactive WebAssembly mode without prerendering  **Note:** Version 3.x dropped support for .NET 6 and 7. Use v...
+> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.BlazorJS saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  Full Blazor WebAssembly and JavaScript interop. 1,021 strongly typed C# wrappers for browser APIs - create JavaScript objects, access properties, call methods, and handle events the .NET way without writing JavaScript.  **[Full API Documentation](Docs/README.md)** - Complete MDN-style API reference with guides, 1,021 type...
 
 Repo: https://github.com/LostBeard/SpawnDev.BlazorJS - full README + CHANGELOG available via github_lookup.
 
@@ -452,7 +452,7 @@ Repo: https://github.com/LostBeard/SpawnDev.BlazorJS.WebTorrents - full README +
 ## SpawnDev.BlazorJS.WebWorkers
 Easily call Services in separate threads with WebWorkers and SharedWebWorkers. Run Blazor WASM in the ServiceWorker.
 
-- Call services in separate threads with WebWorkers and SharedWebWorkers  - Call services in other Windows - Add and remove services at runtime ([Runtime Services](#runtime-services)) - Supports keyed services - Create a new instance of a class and add it as a runtime service using a `new` expression - [TaskPool](#webworkerservicetaskpool) support via WebWorkers - Component's can call their own private static methods in background threads (supports service injection) - Supports method parameter service injection via `[FromServices]` and `[FromKeyedServices]` parameter attributes - Works in Bla...
+> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.BlazorJS.WebWorkers saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  - Call services in separate threads with WebWorkers and SharedWebWorkers  - Call services in other Windows - Add and remove services at runtime ([Runtime Services](#runtime-services)) - Supports keyed services - Create a new instance of a class and add it as a runtime service using a `new` expression - [TaskPoo...
 
 Repo: https://github.com/LostBeard/SpawnDev.BlazorJS.WebWorkers - full README + CHANGELOG available via github_lookup.
 
@@ -501,7 +501,7 @@ Repo: https://github.com/LostBeard/SpawnDev.Identification - full README + CHANG
 ## SpawnDev.ILGPU
 .Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
 
-**Run [ILGPU](https://github.com/m4rs-mt/ILGPU) C# kernels on WebGPU, WebGL, Wasm, Cuda, OpenCL, and CPU - from a single codebase.**   Write parallel compute code in C# and let the library pick the best available backend automatically. In the browser, three backends (WebGPU, WebGL, Wasm) bring GPU-accelerated compute to virtually every modern browser. On desktop and server, ILGPU's native Cuda and OpenCL backends are available alongside CPU. The same async extension methods work everywhere.  > **Your existing ILGPU kernels run in the browser with zero changes to the kernel code - and the same ...
+> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.ILGPU saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  **Run [ILGPU](https://github.com/m4rs-mt/ILGPU) C# kernels on WebGPU, WebGL, Wasm, Cuda, OpenCL, and CPU - from a single codebase.**   Write parallel compute code in C# and let the library pick the best available backend automatically. In the browser, three backends (WebGPU, WebGL, Wasm) bring GPU-accelerated compute to virt...
 
 Repo: https://github.com/LostBeard/SpawnDev.ILGPU - full README + CHANGELOG available via github_lookup.
 
@@ -557,7 +557,7 @@ Repo: https://github.com/LostBeard/SpawnDev.RTC - full README + CHANGELOG availa
 ## SpawnDev.SpawnJS
 JSON-free JavaScript interop for .NET WebAssembly (JSImport/JSExport, no Blazor dependency). The .NET side owns all marshalling - complex return values that Blazor cannot marshal cross intact.
 
-JSON-free JavaScript interop for .NET WebAssembly.  > *Blazor pushes the marshalling decision to the side that can't make it. SpawnJS moves it to the side that can.*  SpawnJS is a direct .NET <-> JavaScript interop layer built on `JSImport`/`JSExport`/`JSHost`/`JSObject` only. It has **no Blazor dependency**, so it runs in any .NET WASM host - Blazor, Avalonia, headless WASM console apps, and Web Workers.  Its API is modeled to be compatible with the Blazor WASM `IJSInProcessRuntime` / `IJSInProcessObjectReference` surface, so existing SpawnDev.BlazorJS-style interop code can run on SpawnJS wi...
+> ### ⚠️ This library needs funding to survive. > SpawnJS is built and maintained by **one independent developer, unfunded.** Open-source work at this > scale does not sustain itself - without support it dies on the vine. If you or your organization build > on SpawnJS, please **[sponsor its development »](https://github.com/sponsors/LostBeard)**. > **$500/month gets us back to warp speed.** 58 MIT-licensed packages, 414,000+ NuGet downloads - your > sponsorship is what keeps them alive and moving.  JSON-free JavaScript interop for .NET WebAssembly.  > *Blazor pushes the marshalling decision to...
 
 Repo: https://github.com/LostBeard/SpawnDev.SpawnJS - full README + CHANGELOG available via github_lookup.
 
