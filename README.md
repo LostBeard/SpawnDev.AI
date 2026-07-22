@@ -1,5 +1,7 @@
 # SpawnDev.AI
 
+> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.AI saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.
+
 Run and serve local LLMs and image generation everywhere .NET runs - desktop **and the browser** - on the
 [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) inference engine (GGUF models,
 KV-cache decode, SD-Turbo image generation, WebGPU dispatch-plan capture/replay). LLM decode and
