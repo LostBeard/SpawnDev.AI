@@ -52,7 +52,6 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.PatchStreams** (LostBeard/SpawnDev.PatchStreams) - Create streams with partial views, multiple streams, or read-only sources. Delete, insert, overwrite with full support for undo/redo and restore-points.
 - **SpawnDev.Reachy** (LostBeard/SpawnDev.Reachy) - A C# SDK for the Reachy Mini robot, and Rose - a local-only voice companion app built on it.
 - **SpawnDev.RTC** (LostBeard/SpawnDev.RTC) - Cross-platform WebRTC for .NET - browser and desktop from a single API
-- **SpawnDev.SpawnJS** (LostBeard/SpawnDev.SpawnJS) - JSON-free JavaScript interop for .NET WebAssembly (JSImport/JSExport, no Blazor dependency). The .NET side owns all marshalling - complex return values that Blazor cannot marshal cross intact.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -71,6 +70,7 @@ Real applications that use the SpawnDev libraries (and show off what they can do
 - **claude-crew** (LostBeard/claude-crew) - Configure Claude Code to actually use what you're paying for. Bat files that fix the silent effort downgrade for Max 20x subscribers, with mitmproxy verification proving they work.
 - **DayZServerRunner** (LostBeard/DayZServerRunner) - DayZ server manager for Windows and Linux
 - **free-your-data** (LostBeard/free-your-data) - Tools and articles for escaping Google Photos, Drive, and other cloud data hostage situations
+- **Gemineachy** (LostBeard/Gemineachy) - A .Net Wasm browser extension that adds tools to Gemini chat.
 - **lostbeard.github.io** (LostBeard/lostbeard.github.io)
 - **LostSpawns** (LostBeard/LostSpawns) - Lost Spawns is a post-apocalyptic survival voxel game inspired by DayZ. It runs entirely client-side in your web browser using WebGPU for hardware-accelerated 3D rendering and GPU compute — no plugins, no native code, just C# and Blazor.
 - **NanoFrameTest1** (LostBeard/NanoFrameTest1) - Blazor WebAssembly and nanoFramework fun with Freenove ESP32-S3-WROOM Camera Dev Board
@@ -180,6 +180,13 @@ Repo: https://github.com/LostBeard/DayZServerRunner - full README + CHANGELOG av
 Tools and articles for escaping Google Photos, Drive, and other cloud data hostage situations
 
 Repo: https://github.com/LostBeard/free-your-data - full README + CHANGELOG available via github_lookup.
+
+## Gemineachy
+A .Net Wasm browser extension that adds tools to Gemini chat.
+
+A .Net Wasm browser extension that adds tools to Gemini chat.   - Async query Gemini with optional File attachments working. - Testing making in browser tools available to agent to extend abilities.  - Reachy Mini control  - Animated agent avatar(s) - Local LLM and ML access via tools to extend abilities
+
+Repo: https://github.com/LostBeard/Gemineachy - full README + CHANGELOG available via github_lookup.
 
 ## lostbeard.github.io
 
@@ -553,11 +560,4 @@ Cross-platform WebRTC for .NET - browser and desktop from a single API
 Cross-platform WebRTC for .NET - browser and desktop from a single API.  [Live Demo](https://lostbeard.github.io/SpawnDev.RTC/) - Video/audio/text chat room, serverless via WebTorrent tracker  SpawnDev.RTC provides a unified WebRTC interface that works identically in Blazor WebAssembly (using native browser WebRTC) and on desktop .NET (using a bundled SipSorcery fork with proven browser-interop DTLS/SRTP). Write your peer connection, data channel, and signaling code once - it runs everywhere.   - **True cross-platform** - Browser (Blazor WASM) and desktop (.NET 10) from one codebase - **Full W...
 
 Repo: https://github.com/LostBeard/SpawnDev.RTC - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.SpawnJS
-JSON-free JavaScript interop for .NET WebAssembly (JSImport/JSExport, no Blazor dependency). The .NET side owns all marshalling - complex return values that Blazor cannot marshal cross intact.
-
-> ### ⚠️ This library needs funding to survive. > SpawnJS is built and maintained by **one independent developer, unfunded.** Open-source work at this > scale does not sustain itself - without support it dies on the vine. If you or your organization build > on SpawnJS, please **[sponsor its development »](https://github.com/sponsors/LostBeard)**. > **$500/month gets us back to warp speed.** 58 MIT-licensed packages, 414,000+ NuGet downloads - your > sponsorship is what keeps them alive and moving.  JSON-free JavaScript interop for .NET WebAssembly.  > *Blazor pushes the marshalling decision to...
-
-Repo: https://github.com/LostBeard/SpawnDev.SpawnJS - full README + CHANGELOG available via github_lookup.
 
