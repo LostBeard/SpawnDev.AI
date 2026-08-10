@@ -70,7 +70,7 @@ Real applications that use the SpawnDev libraries (and show off what they can do
 - **claude-crew** (LostBeard/claude-crew) - Configure Claude Code to actually use what you're paying for. Bat files that fix the silent effort downgrade for Max 20x subscribers, with mitmproxy verification proving they work.
 - **DayZServerRunner** (LostBeard/DayZServerRunner) - DayZ server manager for Windows and Linux
 - **free-your-data** (LostBeard/free-your-data) - Tools and articles for escaping Google Photos, Drive, and other cloud data hostage situations
-- **Gemineachy** (LostBeard/Gemineachy) - A .Net Wasm browser extension that adds tools to Gemini chat.
+- **Gemineachy** (LostBeard/Gemineachy) - A .Net Wasm browser extension that adds tools, games, and eventually full Reachy Mini integration to Gemini web browser chat. 
 - **lostbeard.github.io** (LostBeard/lostbeard.github.io)
 - **LostSpawns** (LostBeard/LostSpawns) - Lost Spawns is a post-apocalyptic survival voxel game inspired by DayZ. It runs entirely client-side in your web browser using WebGPU for hardware-accelerated 3D rendering and GPU compute — no plugins, no native code, just C# and Blazor.
 - **NanoFrameTest1** (LostBeard/NanoFrameTest1) - Blazor WebAssembly and nanoFramework fun with Freenove ESP32-S3-WROOM Camera Dev Board
@@ -182,9 +182,9 @@ Tools and articles for escaping Google Photos, Drive, and other cloud data hosta
 Repo: https://github.com/LostBeard/free-your-data - full README + CHANGELOG available via github_lookup.
 
 ## Gemineachy
-A .Net Wasm browser extension that adds tools to Gemini chat.
+A .Net Wasm browser extension that adds tools, games, and eventually full Reachy Mini integration to Gemini web browser chat. 
 
-A .Net Wasm browser extension that adds tools to Gemini chat.   - Async query Gemini with optional File attachments working. - Testing making in browser tools available to agent to extend abilities.  - Reachy Mini control  - Animated agent avatar(s) - Local LLM and ML access via tools to extend abilities
+A .Net Wasm browser extension that adds tools, games, and eventually full Reachy Mini integration to Gemini web browser chat.   - Checkers with Gemini  - Reachy Mini control  - Animated agent avatar(s) - Local LLM and ML tools via [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) - Multi-agent gaming and collaboration
 
 Repo: https://github.com/LostBeard/Gemineachy - full README + CHANGELOG available via github_lookup.
 
