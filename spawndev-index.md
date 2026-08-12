@@ -43,6 +43,7 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.Cronos** (LostBeard/SpawnDev.Cronos) - A cron based timer for .Net
 - **SpawnDev.EBML** (LostBeard/SpawnDev.EBML) - An extendable .Net library for reading and writing Extensible Binary Meta Language (aka EBML) documents. Includes schema for Matroska and WebM.
 - **SpawnDev.GameUI** (LostBeard/SpawnDev.GameUI) - GPU-rendered game UI library for Blazor WebAssembly. PC, VR, AR, mobile. Mouse, keyboard, gamepad, VR controllers, hand tracking.
+- **SpawnDev.GenericInvocation** (LostBeard/SpawnDev.GenericInvocation) - A high-performance reflection utility for **.NET 8, 9, and 10** that bridges the gap between runtime `Type` variables and compile-time generic (`<T>`) method signatures.
 - **SpawnDev.Identification** (LostBeard/SpawnDev.Identification) - Identity verification using ECDSA signatures for browser and non-browser platforms.
 - **SpawnDev.ILGPU** (LostBeard/SpawnDev.ILGPU) - .Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
 - **SpawnDev.ILGPU.ML** (LostBeard/SpawnDev.ILGPU.ML) - Hardware-agnostic machine learning infrastructure for .NET. Implements high-performance neural network layers in C# that are transpiled to run on WebGPU, CUDA, OpenCL, WebGL, CPU, and Wasm via SpawnDev.ILGPU. Optimized for Blazor WebAssembly and native GPU execution.
@@ -51,7 +52,6 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.MultiMedia** (LostBeard/SpawnDev.MultiMedia) - Cross-platform media capture and playback for .NET - camera, microphone, speakers, video display. One API, every platform.
 - **SpawnDev.PatchStreams** (LostBeard/SpawnDev.PatchStreams) - Create streams with partial views, multiple streams, or read-only sources. Delete, insert, overwrite with full support for undo/redo and restore-points.
 - **SpawnDev.Reachy** (LostBeard/SpawnDev.Reachy) - A C# SDK for the Reachy Mini robot, and Rose - a local-only voice companion app built on it.
-- **SpawnDev.RTC** (LostBeard/SpawnDev.RTC) - Cross-platform WebRTC for .NET - browser and desktop from a single API
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -498,6 +498,13 @@ GPU-rendered game UI library for Blazor WebAssembly. All UI rendered by WebGPU -
 
 Repo: https://github.com/LostBeard/SpawnDev.GameUI - full README + CHANGELOG available via github_lookup.
 
+## SpawnDev.GenericInvocation
+A high-performance reflection utility for **.NET 8, 9, and 10** that bridges the gap between runtime `Type` variables and compile-time generic (`<T>`) method signatures.
+
+A high-performance reflection utility for **.NET 8, 9, and 10** that bridges the gap between runtime `Type` variables and compile-time generic (`<T>`) method signatures.  By utilizing **one-time compiled Expression Trees** and **cached non-boxing generic bridges**, `SpawnDev.GenericInvocation` completely avoids the heavy runtime performance penalties of `MethodInfo.Invoke` and the memory churn of the C# `dynamic` keyword call-site binder.   In advanced architecture patterns (like high-throughput Marshallers, Serializers, or JS-Interop pipelines), you often encounter situations where you know a...
+
+Repo: https://github.com/LostBeard/SpawnDev.GenericInvocation - full README + CHANGELOG available via github_lookup.
+
 ## SpawnDev.Identification
 Identity verification using ECDSA signatures for browser and non-browser platforms.
 
@@ -553,11 +560,4 @@ A C# SDK for the Reachy Mini robot, and Rose - a local-only voice companion app 
 A C# SDK for the [Reachy Mini](https://www.pollen-robotics.com/reachy-mini/) robot, and **Rose** - a local-only voice companion app built on it.  No C# client for the Reachy Mini daemon existed, so this is one. Everything the robot can do over its REST API is reachable from .NET, including the parts the stock apps never touch.  Rose runs entirely on your own hardware. No cloud AI, no subscription, no account, and the robot never sends audio anywhere except to the PC on your LAN.     - **You can talk to her.** Microphone to speech recognition to language model to speech synthesis to the robot's...
 
 Repo: https://github.com/LostBeard/SpawnDev.Reachy - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.RTC
-Cross-platform WebRTC for .NET - browser and desktop from a single API
-
-Cross-platform WebRTC for .NET - browser and desktop from a single API.  [Live Demo](https://lostbeard.github.io/SpawnDev.RTC/) - Video/audio/text chat room, serverless via WebTorrent tracker  SpawnDev.RTC provides a unified WebRTC interface that works identically in Blazor WebAssembly (using native browser WebRTC) and on desktop .NET (using a bundled SipSorcery fork with proven browser-interop DTLS/SRTP). Write your peer connection, data channel, and signaling code once - it runs everywhere.   - **True cross-platform** - Browser (Blazor WASM) and desktop (.NET 10) from one codebase - **Full W...
-
-Repo: https://github.com/LostBeard/SpawnDev.RTC - full README + CHANGELOG available via github_lookup.
 
