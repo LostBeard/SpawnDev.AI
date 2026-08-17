@@ -1,10 +1,10 @@
-<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+﻿<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
 
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+		<OverrideHtmlAssetPlaceholders>false</OverrideHtmlAssetPlaceholders>
 		<!-- ILGPU resolves methods (Math.Clamp etc.) via reflection at runtime - trimming removes them
          and the WORKER dies with MissingMethodException in RemappedIntrinsics (hit on the first
          Pages deploy, 2026-07-04). Same standing rule as the ML demo: never trim, never AOT. -->
@@ -12,13 +12,18 @@
 		<RunAOTCompilation>false</RunAOTCompilation>
 		<CompressionEnabled>false</CompressionEnabled>
 	</PropertyGroup>
-
+	
+	<PropertyGroup>
+		<StaticWebAssetFingerprintingEnabled>false</StaticWebAssetFingerprintingEnabled>
+		<StaticWebAssetsFingerprintContent>false</StaticWebAssetsFingerprintContent>
+	</PropertyGroup>
+	
 	<ItemGroup>
-		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.9" />
-		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.9" PrivateAssets="all" />
-	</ItemGroup>
+		<!-- Required in the exe project (this one) -->
+		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.0.6" />
+		<!-- Add Blazor support to SpawnJS -->
+		<PackageReference Include="SpawnDev.SpawnJS.Blazor" Version="2.0.6" />
 
-	<ItemGroup>
 		<ProjectReference Include="..\SpawnDev.AI.Server\SpawnDev.AI.Server.csproj" />
 	</ItemGroup>
 

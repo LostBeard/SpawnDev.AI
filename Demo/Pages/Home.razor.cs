@@ -1,11 +1,12 @@
-using Microsoft.AspNetCore.Components;
+﻿using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
+using SpawnDev.SpawnJS.JSObjects;
 using SpawnDev.AI;
 using SpawnDev.AI.Server;
 using SpawnDev.SpawnJS.Blazor;
-using SpawnDev.SpawnJS.JSObjects;
+using SpawnDev.SpawnJS;
 
-namespace SpawnDev.AI.Demo.Pages;
+namespace Demo.Pages;
 
 public partial class Home
 {
@@ -44,14 +45,13 @@ public partial class Home
     string _input = "", _streaming = "";
     ElementReference _scrollRef;
 
-    [Inject] NavigationManager Nav { get; set; } = default!;
-
     async Task StartAsync()
     {
         _starting = true;
         // ?worker=dedicated forces a dedicated worker (diagnostic: the piece-download loop
         // reproduced only under SharedWorker, 2026-07-04).
-        if (Nav.Uri.Contains("worker=dedicated", StringComparison.OrdinalIgnoreCase))
+        var location = JS.Get<string>("location.href");
+        if (location.Contains("worker=dedicated", StringComparison.OrdinalIgnoreCase))
             Ai.PreferSharedWorker = false;
         _status = Ai.PreferSharedWorker ? "Attaching shared worker, requesting WebGPU…" : "Attaching DEDICATED worker, requesting WebGPU…";
         StateHasChanged();

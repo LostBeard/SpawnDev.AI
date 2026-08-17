@@ -1,5 +1,5 @@
 using System.Text.Json;
-using SpawnDev.BlazorJS.WebWorkers;
+using SpawnDev.SpawnJS.WebWorkers;
 
 namespace SpawnDev.AI.Server;
 

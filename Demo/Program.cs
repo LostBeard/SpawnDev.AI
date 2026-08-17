@@ -1,18 +1,19 @@
-using Microsoft.AspNetCore.Components.Web;
-using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
-using SpawnDev.AI.Demo;
+using Demo.Pages;
+using SpawnDev.AI.Server;
 using SpawnDev.AsyncFileSystem;
 using SpawnDev.AsyncFileSystem.BrowserWASM;
-using SpawnDev.AI.Server;
 using SpawnDev.SpawnJS;
+using SpawnDev.SpawnJS.RazorRenderer;
 using SpawnDev.SpawnJS.WebWorkers;
 using SpawnDev.WebTorrent;
 
-var builder = WebAssemblyHostBuilder.CreateDefault(args);
-builder.RootComponents.Add<App>("#app");
-builder.RootComponents.Add<HeadOutlet>("head::after");
+var builder = SpawnJSAppBuilder.CreateDefault(args, out var JS);
 
-builder.Services.AddSingleton(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+builder.RootComponents.Add<Home>();
+
+builder.RootComponents.AddSharedStyleSheet("css/app.css");
+
+builder.Services.AddSingleton(sp => new HttpClient { BaseAddress = new Uri(JS.AppBaseUri) });
 
 // SpawnDev stack - the SAME registrations run in Window, Worker, and SharedWorker scopes; only the
 // worker instance ends up owning the GPU + model registry.
@@ -65,4 +66,4 @@ builder.Services.AddSpawnDevAI(options =>
         ApproxSizeBytes: 730_893_248));
 });
 
-await builder.Build().SpawnJSRunAsync();
+await builder.Build().RunAsync();
