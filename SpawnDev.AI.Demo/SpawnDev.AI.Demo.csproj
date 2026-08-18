@@ -4,25 +4,25 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<OverrideHtmlAssetPlaceholders>false</OverrideHtmlAssetPlaceholders>
-		<!-- ILGPU resolves methods (Math.Clamp etc.) via reflection at runtime - trimming removes them
-         and the WORKER dies with MissingMethodException in RemappedIntrinsics (hit on the first
-         Pages deploy, 2026-07-04). Same standing rule as the ML demo: never trim, never AOT. -->
+		<!-- Disable compression (optional, based on use case) -->
+		<CompressionEnabled>false</CompressionEnabled>
+		<!-- Disables the Hot Reload background client for WASM -->
+		<WasmEnableHotReload>false</WasmEnableHotReload>
+
 		<PublishTrimmed>false</PublishTrimmed>
 		<RunAOTCompilation>false</RunAOTCompilation>
 		<CompressionEnabled>false</CompressionEnabled>
 	</PropertyGroup>
-	
-	<PropertyGroup>
-		<StaticWebAssetFingerprintingEnabled>false</StaticWebAssetFingerprintingEnabled>
-		<StaticWebAssetsFingerprintContent>false</StaticWebAssetsFingerprintContent>
-	</PropertyGroup>
-	
+
 	<ItemGroup>
-		<!-- Required in the exe project (this one) -->
-		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.2" />
 		<!-- Add Blazor support to SpawnJS -->
 		<PackageReference Include="SpawnDev.SpawnJS.Blazor" Version="2.1.7" />
+		
+		<PackageReference Include="SpawnDev.SpawnJS.RazorRenderer" Version="2.1.0" />
+
+		<!-- Required in the exe project (this one) -->
+		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.2" />
+
 
 		<ProjectReference Include="..\SpawnDev.AI.Server\SpawnDev.AI.Server.csproj" />
 	</ItemGroup>
