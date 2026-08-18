@@ -4,19 +4,30 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>1.1.0-preview.1</Version>
+		<Version>1.0.0-preview.1</Version>
+		<PackageReleaseNotes>v1.0.0 - New</PackageReleaseNotes>
 		<Title>SpawnDev.AI</Title>
 		<Authors>LostBeard</Authors>
 		<Description>Core contracts for the SpawnDev AI stack: chat sessions, Ollama/OpenAI-compatible API shapes, and tool-calling contracts. Shared by SpawnDev.AI.Server (desktop HTTP + browser-worker model server) and SpawnDev.AI.Blazor (chat UI components).</Description>
 		<PackageProjectUrl>https://github.com/LostBeard/SpawnDev.AI</PackageProjectUrl>
 		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+		<PackageIcon>icon-128.png</PackageIcon>
 		<PackageTags>AI;LLM;Ollama;DotNetWebAssembly;WebGPU;GGUF;ToolCalling</PackageTags>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<EmbedAllSources>true</EmbedAllSources>
 		<DebugType>Embedded</DebugType>
 		<LangVersion>latest</LangVersion>
 		<IsPackable>true</IsPackable>
+		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="..\icon-128.png" Pack="true" PackagePath="\" />
+		<None Include="..\LICENSE.txt" Pack="true" PackagePath="\" />
+		<None Include="..\README.md" Pack="true" PackagePath="\" />
+	</ItemGroup>
 
 </Project>
