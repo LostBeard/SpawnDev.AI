@@ -20,9 +20,9 @@
 	
 	<ItemGroup>
 		<!-- Required in the exe project (this one) -->
-		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.0.6" />
+		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.1" />
 		<!-- Add Blazor support to SpawnJS -->
-		<PackageReference Include="SpawnDev.SpawnJS.Blazor" Version="2.0.6" />
+		<PackageReference Include="SpawnDev.SpawnJS.Blazor" Version="2.1.4" />
 
 		<ProjectReference Include="..\SpawnDev.AI.Server\SpawnDev.AI.Server.csproj" />
 	</ItemGroup>
