@@ -19,12 +19,6 @@
 		<!-- Required in the exe project (this one) -->
 		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.1" />
 
-		<!-- Trim-safe ILGPU. A DIRECT reference wins over the older version pulled in
-		     transitively by SpawnDev.ILGPU.ML, so a published (trimmed) build no longer
-		     dies in the worker with
-		         MissingMethodException: System.Math, Clamp
-		     Remove this pin once SpawnDev.ILGPU.ML itself is rebuilt against >= 5.2.0. -->
-		<PackageReference Include="SpawnDev.ILGPU" Version="5.2.1" />
 
 		<ProjectReference Include="..\SpawnDev.AI.Server\SpawnDev.AI.Server.csproj" />
 	</ItemGroup>
