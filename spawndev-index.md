@@ -51,7 +51,6 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.MatrixLEDDisplay** (LostBeard/SpawnDev.MatrixLEDDisplay) - Wirelessly control the Matrix LED Display from Merkury Innovations with Blazor WebAssembly and the Web Bluetooth API.
 - **SpawnDev.MultiMedia** (LostBeard/SpawnDev.MultiMedia) - Cross-platform media capture and playback for .NET - camera, microphone, speakers, video display. One API, every platform.
 - **SpawnDev.PatchStreams** (LostBeard/SpawnDev.PatchStreams) - Create streams with partial views, multiple streams, or read-only sources. Delete, insert, overwrite with full support for undo/redo and restore-points.
-- **SpawnDev.Reachy** (LostBeard/SpawnDev.Reachy) - A C# SDK for the Reachy Mini robot, and Rose - a local-only voice companion app built on it.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -553,11 +552,4 @@ Create streams with partial views, multiple streams, or read-only sources. Delet
 A patch-based `Stream` for non-destructive editing. Writes never touch the source bytes — they compose a virtual view of one or more underlying streams (or byte ranges within them) that callers can read as if it were a single stream. Every edit becomes a patch: cheap to record, cheap to undo, cheap to redo.  Targets: `net10.0`, `net9.0`, `net8.0`.   Some workloads need to edit a stream but can't afford to copy it — a large file, a parsed media container (e.g. WebM), or a stream whose source data is effectively read-only. Traditional stream editing means buffering and rewriting. PatchStreams st...
 
 Repo: https://github.com/LostBeard/SpawnDev.PatchStreams - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.Reachy
-A C# SDK for the Reachy Mini robot, and Rose - a local-only voice companion app built on it.
-
-A C# SDK for the [Reachy Mini](https://www.pollen-robotics.com/reachy-mini/) robot, and **Rose** - a local-only voice companion app built on it.  No C# client for the Reachy Mini daemon existed, so this is one. Everything the robot can do over its REST API is reachable from .NET, including the parts the stock apps never touch.  Rose runs entirely on your own hardware. No cloud AI, no subscription, no account, and the robot never sends audio anywhere except to the PC on your LAN.     - **You can talk to her.** Microphone to speech recognition to language model to speech synthesis to the robot's...
-
-Repo: https://github.com/LostBeard/SpawnDev.Reachy - full README + CHANGELOG available via github_lookup.
 
