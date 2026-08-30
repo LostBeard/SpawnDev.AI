@@ -624,9 +624,16 @@ public sealed class AiApiRouter
         }
         catch (Exception ex)
         {
-            // Report the failure rather than an empty transcript: "" is indistinguishable from silence,
-            // and a caller cannot tell a broken model from a quiet microphone.
-            await t.WriteJsonAsync(500, new { error = $"{ex.GetType().Name}: {ex.Message}" });
+            // Report the failure rather than an empty transcript: "" is indistinguishable from silence, and
+            // a caller cannot tell a broken model from a quiet microphone.
+            // ⚠️ Include the STACK. A bare "NullReferenceException: Arg_NullReferenceException" names nothing
+            // - it cost a round trip of guessing before this was added. The frames are what identify the
+            // failing call, and this runs in a worker whose exceptions are not otherwise visible.
+            await t.WriteJsonAsync(500, new
+            {
+                error = $"{ex.GetType().Name}: {ex.Message}",
+                detail = ex.ToString().Length > 2000 ? ex.ToString()[..2000] : ex.ToString(),
+            });
         }
     }
 

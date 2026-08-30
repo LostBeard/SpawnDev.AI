@@ -1,5 +1,4 @@
 using SpawnDev.AI.Server;
-using SpawnDev.ILGPU.ML.Pipelines;
 
 namespace SpawnDev.AI.Demo.Tests;
 
@@ -78,10 +77,23 @@ public sealed class AiSpeechTests
     /// Transcribe the fixture and require the transcript to MATCH its known text.
     /// </summary>
     /// <remarks>
-    /// Threshold is a word error rate of 0.34, i.e. at most roughly two of the eight words wrong. Whisper
-    /// tiny on a clean 4 s clip should be far better; the allowance is for casing/punctuation drift and the
-    /// odd substitution, not for a broken decode. A WER of 1.0 (or an empty transcript) is what a broken
-    /// speech path produces, and that fails.
+    /// TWO assertions, because either alone is the wrong test.
+    /// <list type="number">
+    /// <item><description>The sentence FRAME must survive: the content words that are not proper nouns
+    /// ("recordings", "public", "domain"). A transcript that loses those is a broken decode however good
+    /// its word count looks.</description></item>
+    /// <item><description>A word error rate bound, to catch a transcript that keeps those words inside
+    /// something wrong.</description></item>
+    /// </list>
+    /// <para>
+    /// ⚠️ The bound is 0.40 rather than something tighter for a MEASURED reason: whisper-tiny renders
+    /// "LibriVox" as "legal box" (observed 2026-08-30 - "All legal box recordings are in the public
+    /// domain.", WER 25.0%). That is a small model missing an unusual proper noun, not a defect in this
+    /// pipeline, and it eats two of the eight words on its own. A threshold with no headroom above a known
+    /// benign miss turns the next equally benign miss into a red build - and a test that cries wolf gets
+    /// muted, which is worse than a slightly loose bound. The frame check is what keeps this honest: it is
+    /// what actually fails on garbage.
+    /// </para>
     /// </remarks>
     [AiTest(Heavy = true, Timeout = 900_000)]
     public async Task TranscribesKnownAudio()
@@ -95,9 +107,18 @@ public sealed class AiSpeechTests
         if (string.IsNullOrWhiteSpace(text))
             throw new Exception("transcription returned EMPTY text for 4s of clear speech");
 
-        var wer = SpokenTextCheck.WordErrorRate(KnownTranscript, text);
+        // 1. the sentence frame - the words a working decode cannot lose
+        var heard = Words(text);
+        foreach (var required in new[] { "recordings", "public", "domain" })
+            if (!heard.Contains(required))
+                throw new Exception(
+                    $"transcript is missing the content word '{required}', so the decode did not survive. " +
+                    $"expected ~'{KnownTranscript}' got '{text}'");
+
+        // 2. and it must not bury those words inside something wrong
+        var wer = WordErrorRate(KnownTranscript, text);
         Console.WriteLine($"[AiSpeechTests] WER vs known transcript = {wer:P1}");
-        if (wer > 0.34)
+        if (wer > 0.40)
             throw new Exception(
                 $"transcript does not match the fixture's KNOWN text (WER {wer:P1}). " +
                 $"expected ~'{KnownTranscript}' got '{text}'");
@@ -129,6 +150,53 @@ public sealed class AiSpeechTests
 
         Console.WriteLine($"[AiSpeechTests] stable across two runs ({firstMs:F0}ms then {secondMs:F0}ms, "
                         + $"warm should be faster): '{first}'");
+    }
+
+    /// <summary>
+    /// STRICT word error rate of <paramref name="heard"/> against <paramref name="expected"/>, 0 to 1.
+    /// </summary>
+    /// <remarks>
+    /// Levenshtein distance over words (substitutions + deletions + insertions) divided by the expected word
+    /// count, after lowercasing and stripping punctuation.
+    /// <para>
+    /// ⚠️ Deliberately NOT <c>SpawnDev.ILGPU.ML.Pipelines.SpokenTextCheck.WordErrorRate</c>, even though it
+    /// exists and is public. Its own remarks say it "skips freely at the head and tail of the transcript"
+    /// because ZipVoice regenerates its reference clip's speech ahead of the requested line - leniency that
+    /// is correct for scoring a TTS clone and WRONG for scoring a recogniser on a 4 s clip, where a
+    /// hallucinated preamble is a real error and should be charged. A test that owns its metric also cannot
+    /// be broken by a package it does not control.
+    /// </para>
+    /// </remarks>
+    /// <param name="expected">Known reference text.</param>
+    /// <param name="heard">Transcript under test.</param>
+    /// <returns>0 for a perfect match; 1 when nothing matches. Can exceed 1 if the transcript inserts
+    /// heavily, so callers comparing against a threshold see runaway output as a failure.</returns>
+    private static double WordErrorRate(string expected, string heard)
+    {
+        var e = Words(expected);
+        var h = Words(heard);
+        if (e.Length == 0) return h.Length == 0 ? 0 : 1;
+
+        // Classic edit-distance table over WORDS.
+        var d = new int[e.Length + 1, h.Length + 1];
+        for (var i = 0; i <= e.Length; i++) d[i, 0] = i;
+        for (var j = 0; j <= h.Length; j++) d[0, j] = j;
+        for (var i = 1; i <= e.Length; i++)
+            for (var j = 1; j <= h.Length; j++)
+            {
+                var cost = e[i - 1] == h[j - 1] ? 0 : 1;
+                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
+            }
+        return d[e.Length, h.Length] / (double)e.Length;
+    }
+
+    /// <summary>Lowercase, drop punctuation, split on whitespace.</summary>
+    private static string[] Words(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (var ch in text)
+            sb.Append(char.IsLetterOrDigit(ch) || ch == '\'' ? char.ToLowerInvariant(ch) : ' ');
+        return sb.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries);
     }
 
     /// <summary>Fetch and decode the fixture to mono float PCM.</summary>
