@@ -48,6 +48,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     private ModelRegistry? _registry;
     private AiApiRouter? _router;
     private AiImageEngine? _images;
+    private AiSpeechEngine? _speech;
     private AiToolRegistry? _tools;
 
     public AiWorkerServer(WebTorrentClient webTorrent, HttpClient http, AiWorkerServerOptions options)
@@ -119,15 +120,37 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             _images = new AiImageEngine(_webTorrent, _http, _accelerator);
             // One large GPU model resident per device: each kind evicts the other before it loads/runs, so
             // the LLM and SD-Turbo never co-reside (co-residence OOM'd the WebGPU device -> page crash).
-            _images.EvictOtherKind = () => _registry!.EvictAsync();
-            _registry.EvictOtherKind = () => _images!.EvictAsync();
+            _speech = new AiSpeechEngine(_http, _accelerator);
+
+            // ⚠️ Per-kind residency is a hard rule here, so every kind must evict every OTHER kind - with
+            // three kinds that is no longer a pair of hooks but a ring, and adding a fourth would be worse
+            // again. MEASURED 2026-08-30 on the two-kind version: three interleaved image+chat turns spent
+            // ~130s re-uploading an SD-Turbo UNet that had just been evicted (38.4s, 44.4s, 46.6s), on a GPU
+            // with 10.6 GB free where nothing needed evicting at all. The right shape is a VRAM budget with
+            // LRU eviction, so a model is only evicted when the incoming one genuinely does not fit; this
+            // ring is the honest interim, not the destination.
+            _images.EvictOtherKind = async () =>
+            {
+                await _registry!.EvictAsync();
+                await _speech!.EvictAsync();
+            };
+            _registry.EvictOtherKind = async () =>
+            {
+                await _images!.EvictAsync();
+                await _speech!.EvictAsync();
+            };
+            _speech.EvictOtherKind = async () =>
+            {
+                await _registry!.EvictAsync();
+                await _images!.EvictAsync();
+            };
             _tools = new AiToolRegistry();
             _tools.Register(new GenerateImageTool(_images, _tools));
             // GitHub lookup: the model can answer questions about the SpawnDev libraries + crew by fetching
             // from GitHub (allowlisted hosts, CORS-friendly, so it works in the worker over the same HttpClient).
             _tools.Register(new GitHubTool(_http));
             engine.Tools = _tools;
-            _router = new AiApiRouter(engine) { Images = _images, Tools = _tools };
+            _router = new AiApiRouter(engine) { Images = _images, Tools = _tools, Speech = _speech };
         }
         finally { _initGate.Release(); }
     }
@@ -136,6 +159,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     {
         _images?.Dispose();
         if (_registry != null) await _registry.DisposeAsync().ConfigureAwait(false);
+        _speech?.Dispose();
         _accelerator?.Dispose();
     }
 

@@ -110,6 +110,31 @@ public sealed class AiWorkerClient
         return (doc.RootElement.GetProperty("default").GetString() ?? "", list);
     }
 
+    /// <summary>
+    /// Transcribe mono PCM through the worker's speech engine.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Sends the samples as a JSON number array, which matches <c>/api/transcribe</c>'s first cut and is
+    /// the WRONG shape for long audio: 30 s at 16 kHz is 480,000 numbers, and JSON-encoding that pulls bulk
+    /// audio through the .NET heap. Fine for an utterance; the follow-up is a transferred Float32Array over
+    /// the worker port. The signature does not change when that lands.
+    /// </remarks>
+    /// <param name="samples">Mono PCM in [-1, 1].</param>
+    /// <param name="sampleRate">Sample rate of <paramref name="samples"/>.</param>
+    /// <returns>The transcript, the model that produced it, and inference milliseconds.</returns>
+    public async Task<(string Text, string Model, double InferenceMs)> TranscribeAsync(
+        float[] samples, int sampleRate)
+    {
+        var body = JsonSerializer.Serialize(new { samples, sample_rate = sampleRate }, J);
+        var json = await RequestJsonAsync("POST", "/api/transcribe", body);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        return (
+            root.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "",
+            root.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "",
+            root.TryGetProperty("inference_ms", out var ms) ? ms.GetDouble() : 0);
+    }
+
     public async Task<string> ChatStreamAsync(string model, IReadOnlyList<AiChatMessage> messages,
         AiGenerationOptions? options = null, Action<string>? onDelta = null)
     {

@@ -20,8 +20,16 @@ public sealed class AiChatTests
 {
     private readonly AiWorkerClient _client;
 
-    /// <summary>The smallest configured model, to keep the first download as short as possible.</summary>
-    private const string Model = "smollm2:360m-instruct-q8_0";
+    /// <summary>
+    /// The demo's DEFAULT model - deliberately, so these tests cover the path a real visitor takes.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ This was `smollm2:360m-instruct-q8_0` (the smallest download) until 2026-08-30, which meant the
+    /// suite never exercised the model the demo actually starts with - and the Captain's reported failure
+    /// was on the default. A test that covers a cheaper path than the product's own default is testing the
+    /// wrong thing; the download cost is paid once into the OPFS-cached browser profile.
+    /// </remarks>
+    private const string Model = "qwen2.5:0.5b-instruct-q8_0";
 
     /// <summary>New instance.</summary>
     /// <param name="client">The window-side client the UI itself uses.</param>

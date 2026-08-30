@@ -25,6 +25,9 @@ public sealed class AiApiRouter
     /// <summary>Optional tool registry - enables /ai/artifacts/{id} (base64 fetch of tool outputs).</summary>
     public AiToolRegistry? Tools { get; set; }
 
+    /// <summary>Optional speech engine - enables /api/transcribe (speech to text).</summary>
+    public AiSpeechEngine? Speech { get; set; }
+
     /// <summary>Server version string reported by /api/version.</summary>
     public string Version { get; set; } = "0.1.0-spawndev";
 
@@ -53,6 +56,7 @@ public sealed class AiApiRouter
             case ("POST", "/v1/messages/count_tokens"): await V1CountTokens(Body(body), t); return true;
             case ("POST", "/v1/images/generations") when Images != null: await V1ImagesGenerations(Body(body), t); return true;
             case ("POST", "/mcp") when Tools != null: await Mcp(Body(body), t); return true;
+            case ("POST", "/api/transcribe") when Speech != null: await ApiTranscribe(Body(body), t); return true;
             case ("GET", _) when Tools != null && path.StartsWith("/ai/artifacts/", StringComparison.Ordinal):
                 await GetArtifact(path["/ai/artifacts/".Length..], t); return true;
             case ("GET", "/ai/image-models") when Images != null:
@@ -574,6 +578,56 @@ public sealed class AiApiRouter
             else { o.Strategy = "top_p"; o.TopP = topP ?? 1.0f; }
         }
         else o.Strategy = "greedy";
+    }
+
+    /// <summary>
+    /// POST /api/transcribe - speech to text. Body: <c>{ samples: number[], sample_rate: int }</c>, mono
+    /// PCM in [-1, 1]. Responds <c>{ text, model, inference_ms }</c>.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ PCM as a JSON number array is deliberately the FIRST cut, not the end state: it is the simplest
+    /// thing that works over both transports (HTTP and the worker MessagePort) and lets the speech loop be
+    /// gated end to end. It is also the WRONG shape for real audio - 30 s at 16 kHz is 480,000 numbers, and
+    /// JSON-encoding that violates the standing "bulk bytes stay out of the .NET heap" rule. The follow-up
+    /// is a binary frame (or a transferred Float32Array on the worker port); the route and the engine do not
+    /// change when that lands.
+    /// </remarks>
+    private async Task ApiTranscribe(JsonElement body, IAiServerTransport t)
+    {
+        if (!body.TryGetProperty("samples", out var samplesEl) || samplesEl.ValueKind != JsonValueKind.Array)
+        {
+            await t.WriteJsonAsync(400, new { error = "body needs a 'samples' array of mono PCM in [-1,1]" });
+            return;
+        }
+        var sampleRate = body.TryGetProperty("sample_rate", out var srEl) && srEl.TryGetInt32(out var sr)
+            ? sr : 16000;
+
+        var samples = new float[samplesEl.GetArrayLength()];
+        var i = 0;
+        foreach (var v in samplesEl.EnumerateArray()) samples[i++] = (float)v.GetDouble();
+
+        if (samples.Length == 0)
+        {
+            await t.WriteJsonAsync(400, new { error = "'samples' was empty" });
+            return;
+        }
+
+        try
+        {
+            var result = await Speech!.TranscribeAsync(samples, sampleRate).ConfigureAwait(false);
+            await t.WriteJsonAsync(200, new
+            {
+                text = result.Text,
+                model = result.Model,
+                inference_ms = result.InferenceMs,
+            });
+        }
+        catch (Exception ex)
+        {
+            // Report the failure rather than an empty transcript: "" is indistinguishable from silence,
+            // and a caller cannot tell a broken model from a quiet microphone.
+            await t.WriteJsonAsync(500, new { error = $"{ex.GetType().Name}: {ex.Message}" });
+        }
     }
 
     private static string FinishReason(AiChatResult r) => r.Stop == AiStopKind.Length ? "length" : "stop";
