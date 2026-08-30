@@ -2,7 +2,7 @@ using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.ILGPU.ML.Pipelines;
-using SpawnDev.SpawnJS;
+using SpawnDev.WebTorrent;
 
 namespace SpawnDev.AI.Server;
 
@@ -24,9 +24,11 @@ public sealed record AiTranscription(string Text, string Model, double Inference
 /// <c>SpawnDev.ILGPU.ML.Demo/Pages/WhisperPage.razor</c>, and both matter:
 /// </para>
 /// <list type="number">
-/// <item><description>It loads by STREAM, not <c>hub.LoadAsync</c>. That reference pulls each ONNX file
-/// into a <c>byte[]</c> - in the browser, onto the single-threaded WASM heap. Streaming is what
-/// SpawnDev.ILGPU.ML 5.2.0 added <c>OpenStreamAsync</c> for, and it keeps the bytes JS-side.</description></item>
+/// <item><description>It loads through a LAZY-HASH torrent (<see cref="OpenModelStreamAsync"/>), not
+/// <c>hub.LoadAsync</c>. That reference pulls each ONNX file into a <c>byte[]</c> - in the browser, onto the
+/// single-threaded WASM heap - and re-fetches it on every reload. Lazy-hash exists so anything reachable by
+/// URL is streamable WITH RANDOM ACCESS, cached to OPFS, restored on reload with zero re-download, and
+/// seeded to peers.</description></item>
 /// <item><description>It passes the <c>decoder_with_past</c> session. Without it every decode step re-feeds
 /// the WHOLE token sequence and recomputes every previous position's K/V - quadratic, and it materialises
 /// full-sequence logits (~13 MB) per step. MEASURED by the ML repo at ~3.5x in the browser
@@ -35,6 +37,7 @@ public sealed record AiTranscription(string Text, string Model, double Inference
 /// </remarks>
 public sealed class AiSpeechEngine : IDisposable
 {
+    private readonly WebTorrentClient _webTorrent;
     private readonly HttpClient _http;
     private readonly Accelerator _accelerator;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -46,10 +49,13 @@ public sealed class AiSpeechEngine : IDisposable
     private string? _residentModel;
 
     /// <summary>New instance.</summary>
-    /// <param name="http">Used for the desktop load path, where the browser OPFS hub is unavailable.</param>
+    /// <param name="webTorrent">Delivers models as LAZY-HASH torrents through the hub - see
+    /// <see cref="OpenModelStreamAsync"/> for why that and not a plain range stream.</param>
+    /// <param name="http">Used by <c>HubModelStream</c> for its size probe and web-seed fetches.</param>
     /// <param name="accelerator">The shared accelerator.</param>
-    public AiSpeechEngine(HttpClient http, Accelerator accelerator)
+    public AiSpeechEngine(WebTorrentClient webTorrent, HttpClient http, Accelerator accelerator)
     {
+        _webTorrent = webTorrent;
         _http = http;
         _accelerator = accelerator;
     }
@@ -148,11 +154,6 @@ public sealed class AiSpeechEngine : IDisposable
     /// <summary>
     /// Open a repo file as a SEEKABLE stream and build a session from it.
     /// </summary>
-    /// <remarks>
-    /// Browser: the OPFS-cached <c>BlobStream</c>, which is an <c>IJSReadStream</c>, so the model never
-    /// enters the .NET heap. Elsewhere (and if OPFS is unavailable): an <see cref="HttpRangeStream"/>,
-    /// whose peak memory is one chunk rather than the whole file.
-    /// </remarks>
     private async Task<InferenceSession> LoadSessionAsync(string filename, CancellationToken ct)
     {
         var stream = await OpenModelStreamAsync(filename, ct).ConfigureAwait(false);
@@ -161,39 +162,54 @@ public sealed class AiSpeechEngine : IDisposable
                 .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Open a repo file as a seekable stream via the hub, as a LAZY-HASH torrent.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ This deliberately goes through <see cref="HubModelStream.OpenAsync"/> rather than
+    /// <c>ModelHub.OpenStreamAsync</c> or a bare <see cref="HttpRangeStream"/>. Lazy-hash exists precisely so
+    /// that anything reachable by URL is STREAMABLE WITH RANDOM ACCESS: the model becomes a persistent
+    /// torrent from the first byte, downloads on demand from the hub web seed, computes its infohash as it
+    /// goes, caches pieces to OPFS under a stable URL-derived key, RESTORES on reload with zero re-download,
+    /// and seeds to peers. `HubModelStream.OpenAsync`'s own remarks record that it "replaces the old
+    /// non-persistent HttpRangeStream fallback, which made NO torrent ... so every page refresh
+    /// re-downloaded the whole file".
+    /// <para>
+    /// The first cut of this engine used exactly that superseded path. It worked, and it re-downloaded
+    /// Whisper on every reload - which is the whole thing lazy-hash was built to stop.
+    /// </para>
+    /// <para>
+    /// A seekable stream is not a nicety here either: <c>CreateFromOnnxStreamAsync</c> SEEKS to each weight,
+    /// so random access is a hard requirement of the loader, not just an optimisation.
+    /// </para>
+    /// </remarks>
+    /// <param name="filename">Path within the repo, e.g. <c>onnx/encoder_model.onnx</c>.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A seekable stream over the model file.</returns>
     private async Task<Stream> OpenModelStreamAsync(string filename, CancellationToken ct)
     {
-        var js = SpawnJSRuntime.Instance;
-        if (js is { IsBrowser: true })
-        {
-            using var hub = new ModelHub(js);
-            var blob = await hub.OpenStreamAsync(ModelRepo, filename).ConfigureAwait(false);
-            if (blob != null) return blob;
-            // null means OPFS is unavailable in this context - fall through rather than fail.
-        }
-
-        var url = $"https://huggingface.co/{ModelRepo}/resolve/main/{filename}";
-        using var head = new HttpRequestMessage(HttpMethod.Head, url);
-        using var res = await _http.SendAsync(head, ct).ConfigureAwait(false);
-        res.EnsureSuccessStatusCode();
-        var length = res.Content.Headers.ContentLength
-                     ?? throw new Exception($"HEAD {url} returned no Content-Length; cannot range-read it");
-        return new HttpRangeStream(_http, url, length);
+        var hub = new HubModelStream(_webTorrent, _http);
+        // deselect:false - we need the weights, not just the structure.
+        var model = await hub.OpenAsync(ModelRepo, filename, deselect: false, ct).ConfigureAwait(false);
+        if (model.Length <= 0)
+            throw new Exception($"hub returned a zero-length stream for {ModelRepo}/{filename}");
+        return model.Stream;
     }
 
+    /// <summary>
+    /// Fetch a small text file (the tokenizer) from the same hub path.
+    /// </summary>
+    /// <remarks>
+    /// Read fully into a string on purpose: a tokenizer is a few hundred KB of JSON, and the
+    /// "bulk bytes stay out of the managed heap" rule is about model WEIGHTS. Going through the hub keeps
+    /// one delivery path rather than two.
+    /// </remarks>
     private async Task<string> LoadTextAsync(string filename, CancellationToken ct)
     {
-        var js = SpawnJSRuntime.Instance;
-        if (js is { IsBrowser: true })
-        {
-            using var hub = new ModelHub(js);
-            var bytes = await hub.LoadAsync(ModelRepo, filename).ConfigureAwait(false);
-            // A tokenizer is a small JSON file, so the byte[] path is the right one here - the
-            // "bulk bytes stay in JS" rule is about model weights, not a few hundred KB of metadata.
-            if (bytes != null) return System.Text.Encoding.UTF8.GetString(bytes);
-        }
-        return await _http.GetStringAsync(
-            $"https://huggingface.co/{ModelRepo}/resolve/main/{filename}", ct).ConfigureAwait(false);
+        var stream = await OpenModelStreamAsync(filename, ct).ConfigureAwait(false);
+        await using (stream)
+        using (var reader = new StreamReader(stream))
+            return await reader.ReadToEndAsync(ct).ConfigureAwait(false);
     }
 
     /// <summary>Release the resident speech model.</summary>

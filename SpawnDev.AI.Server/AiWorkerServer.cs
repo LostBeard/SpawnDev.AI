@@ -120,7 +120,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             _images = new AiImageEngine(_webTorrent, _http, _accelerator);
             // One large GPU model resident per device: each kind evicts the other before it loads/runs, so
             // the LLM and SD-Turbo never co-reside (co-residence OOM'd the WebGPU device -> page crash).
-            _speech = new AiSpeechEngine(_http, _accelerator);
+            _speech = new AiSpeechEngine(_webTorrent, _http, _accelerator);
 
             // ⚠️ Per-kind residency is a hard rule here, so every kind must evict every OTHER kind - with
             // three kinds that is no longer a pair of hooks but a ring, and adding a fourth would be worse
