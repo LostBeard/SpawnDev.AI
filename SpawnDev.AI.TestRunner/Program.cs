@@ -10,12 +10,23 @@ using Microsoft.Playwright;
 //   dotnet run --project SpawnDev.AI.TestRunner -- MultiTurn        only tests whose name contains that
 //   dotnet run --project SpawnDev.AI.TestRunner -- --headed         watch it in a real browser window
 //   dotnet run --project SpawnDev.AI.TestRunner -- --url http://... use an already running dev server
+//   dotnet run --project SpawnDev.AI.TestRunner -- --cold          wipe the browser profile first
+//   dotnet run --project SpawnDev.AI.TestRunner -- --dedicated     dedicated worker, so its console reaches
+//                                                                 the window and model-load progress is
+//                                                                 VISIBLE (a shared worker's is not)
 //
 // Exit code is the number of failed tests, so it is usable as a gate.
+//
+// ⚠️ The browser profile PERSISTS between runs (see LaunchAsync). Model weights are OPFS-cached, and OPFS
+// lives in the profile, so a fresh context means every heavy run re-downloads every model from cold. That
+// is what made the first interleaved images+chat run sit for 24 minutes with nothing to show. Use --cold
+// deliberately when a cold load is the thing under test.
 
 var filter = "";
 var headed = false;
 var heavy = false;
+var cold = false;
+var dedicated = false;
 var verbose = false;
 var externalUrl = "";
 for (var i = 0; i < args.Length; i++)
@@ -24,12 +35,15 @@ for (var i = 0; i < args.Length; i++)
     {
         case "--headed": headed = true; break;
         case "--heavy": heavy = true; break;
+        case "--cold": cold = true; break;
+        case "--dedicated": dedicated = true; break;
         case "--verbose": verbose = true; break;
         case "--url": externalUrl = ++i < args.Length ? args[i] : ""; break;
         case "--filter": filter = ++i < args.Length ? args[i] : ""; break;
         case "-h":
         case "--help":
-            Console.WriteLine("usage: [filter] [--filter <text>] [--heavy] [--headed] [--verbose] [--url <url>]");
+            Console.WriteLine("usage: [filter] [--filter <text>] [--heavy] [--headed] [--verbose] "
+                            + "[--cold] [--dedicated] [--url <url>]");
             return 0;
         default:
             if (!args[i].StartsWith("-")) filter = args[i];
@@ -62,8 +76,11 @@ try
     // ?tests=1 is what makes the demo run the suite at all - without it a normal visitor just gets the app.
     var query = "?tests=1";
     if (heavy) query += "&heavy=1";
+    // A DEDICATED worker shares its console with the window, so Playwright can see model-load progress.
+    // A shared worker's console is invisible to page.Console, which makes a slow load look like a hang.
+    if (dedicated) query += "&worker=dedicated";
     if (!string.IsNullOrEmpty(filter)) query += $"&filter={Uri.EscapeDataString(filter)}";
-    return await RunAsync(url.TrimEnd('/') + "/" + query, headed, verbose, heavy);
+    return await RunAsync(url.TrimEnd('/') + "/" + query, headed, verbose, heavy, cold);
 }
 finally
 {
@@ -112,11 +129,11 @@ static async Task<(Process?, string)> StartServerAsync(string demoProject)
     return (process, completed == urlFound.Task ? urlFound.Task.Result : "");
 }
 
-static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heavy)
+static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heavy, bool cold)
 {
     using var playwright = await Playwright.CreateAsync();
-    await using var browser = await LaunchAsync(playwright, headed);
-    var page = await browser.NewPageAsync();
+    await using var context = await LaunchAsync(playwright, headed, cold);
+    var page = context.Pages.Count > 0 ? context.Pages[0] : await context.NewPageAsync();
 
     var finished = new TaskCompletionSource<string>();
     var results = new List<string>();
@@ -136,9 +153,12 @@ static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heav
     // completion signal is the page's own "RESULTS:" line.
     await page.GotoAsync(url, new() { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 60_000 });
 
-    // A heavy run downloads a model (hundreds of MB) before the first answer, so it gets a much longer
-    // ceiling than the fast suite.
-    var budget = heavy ? TimeSpan.FromMinutes(60) : TimeSpan.FromMinutes(10);
+    // A heavy run downloads models (an LLM, and for the image tests an image model too) before the first
+    // answer, so it gets a much longer ceiling than the fast suite.
+    // ⚠️ This MUST exceed the largest per-test Timeout in the suite, or the runner reports TIMED OUT while
+    // the test it is waiting on is still legitimately running - a harness that lies about its own subject.
+    // InterleavedImagesAndChatSurviveRepeatedEviction currently sits at 90 minutes.
+    var budget = heavy ? TimeSpan.FromMinutes(120) : TimeSpan.FromMinutes(10);
     var completed = await Task.WhenAny(finished.Task, Task.Delay(budget));
 
     Console.WriteLine();
@@ -162,14 +182,29 @@ static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heav
     return failed;
 }
 
-static async Task<IBrowser> LaunchAsync(IPlaywright playwright, bool headed)
+static async Task<IBrowserContext> LaunchAsync(IPlaywright playwright, bool headed, bool cold)
 {
+    // PERSISTENT profile, on purpose. Model weights are OPFS-cached and OPFS lives in the browser profile,
+    // so a fresh context re-downloads every model on every run - which turns a heavy run into a
+    // multi-gigabyte download rather than a test of the code. tools/drive-ai-imgtest.cs pins a persistent
+    // profile for exactly this reason ("so the SD-Turbo model OPFS-caches across runs => warm gen, not a
+    // cold re-download"). It also makes the tests more representative: a returning user has a warm cache.
+    var profileDir = Path.Combine(Path.GetTempPath(), "spawndev-ai-testrunner-profile");
+    if (cold && Directory.Exists(profileDir))
+    {
+        Console.WriteLine($"  --cold: wiping {profileDir}");
+        try { Directory.Delete(profileDir, recursive: true); } catch (Exception ex)
+        { Console.WriteLine($"  [warn] could not wipe the profile: {ex.Message}"); }
+    }
+    Directory.CreateDirectory(profileDir);
+    Console.WriteLine($"  profile: {profileDir}");
+
     // ⚠️ Prefer INSTALLED Chrome. Playwright's bundled chromium exposes a SOFTWARE WebGPU adapter, so a
     // GGUF decode either refuses to run or runs orders of magnitude slower - which reads as a hang rather
     // than a configuration problem. tools/drive-ai-demo.cs pins Channel="chrome" for the same reason.
     try
     {
-        return await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+        return await playwright.Chromium.LaunchPersistentContextAsync(profileDir, new()
         {
             Headless = !headed,
             Channel = "chrome",
@@ -179,6 +214,6 @@ static async Task<IBrowser> LaunchAsync(IPlaywright playwright, bool headed)
     {
         Console.WriteLine("  [warn] installed Chrome not found - falling back to bundled chromium, whose "
                         + "WebGPU adapter is SOFTWARE; model-backed tests may be unusably slow");
-        return await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = !headed });
+        return await playwright.Chromium.LaunchPersistentContextAsync(profileDir, new() { Headless = !headed });
     }
 }

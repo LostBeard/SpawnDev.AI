@@ -41,6 +41,7 @@ public static class AiTestSuiteRunner
         bool includeHeavy = false)
     {
         IncludeHeavy = includeHeavy;
+        ConfigureClientFromLocation(services);
         int passed = 0, failed = 0, skipped = 0;
         var tests = Discover(filter);
 
@@ -128,6 +129,40 @@ public static class AiTestSuiteRunner
             if (ex is TargetInvocationException { InnerException: { } tie }) { ex = tie; continue; }
             if (ex is AggregateException { InnerExceptions.Count: 1 } ae) { ex = ae.InnerExceptions[0]; continue; }
             return ex;
+        }
+    }
+
+    /// <summary>
+    /// Apply query-string switches to <c>AiWorkerClient</c> before any test runs.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ <c>?worker=dedicated</c> is read by <c>Home.razor.cs</c>, which sets
+    /// <c>PreferSharedWorker = false</c> as part of the START BUTTON flow. These tests never click that
+    /// button - they drive <c>AiWorkerClient</c> directly - so a switch handled only by the page would
+    /// silently do nothing here. The suite therefore reads it itself.
+    /// <para>
+    /// Why it matters: a SHARED worker's console output does NOT reach <c>page.Console</c>, so Playwright
+    /// cannot see model-load progress and a slow load is indistinguishable from a hang. A DEDICATED worker
+    /// shares its console with the window, which makes the load visible to the runner.
+    /// </para>
+    /// </remarks>
+    /// <param name="services">App service provider.</param>
+    private static void ConfigureClientFromLocation(IServiceProvider services)
+    {
+        if (QueryValue("worker") is not { } worker) return;
+        var client = services.GetService(typeof(SpawnDev.AI.Server.AiWorkerClient))
+            as SpawnDev.AI.Server.AiWorkerClient;
+        if (client == null) return;
+
+        if (worker.Equals("dedicated", StringComparison.OrdinalIgnoreCase))
+        {
+            client.PreferSharedWorker = false;
+            Console.WriteLine("[AiTestSuiteRunner] worker=dedicated - console output will reach the window");
+        }
+        else if (worker.Equals("shared", StringComparison.OrdinalIgnoreCase))
+        {
+            client.PreferSharedWorker = true;
+            Console.WriteLine("[AiTestSuiteRunner] worker=shared");
         }
     }
 
