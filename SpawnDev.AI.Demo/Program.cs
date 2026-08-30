@@ -1,4 +1,5 @@
 using SpawnDev.AI.Demo.Pages;
+using SpawnDev.AI.Demo.Tests;
 using SpawnDev.AI.Server;
 using SpawnDev.AsyncFileSystem;
 using SpawnDev.AsyncFileSystem.BrowserWASM;
@@ -66,4 +67,21 @@ builder.Services.AddSpawnDevAI(options =>
         ApproxSizeBytes: 730_893_248));
 });
 
-await builder.Build().RunAsync();
+// RunAsync's callback runs after auto-starting services are up. The test suite runs ONLY in the window
+// scope and ONLY when asked for with `?tests=1` - the shared worker loads this same Program.cs and must
+// serve as a worker rather than re-run the suite, and a normal visitor must not trigger a model download.
+// `?filter=Name` scopes the run; `?heavy=1` includes the model-downloading tests.
+// The Playwright TestRunner reads the READY/TEST/RESULTS console lines this writes.
+await builder.Build().RunAsync(async app =>
+{
+    if (!JS.IsWindow) return;
+    if (!AiTestSuiteRunner.RequestedFromLocation()) return;
+
+    var failed = await AiTestSuiteRunner.RunAllAsync(
+        app.Services,
+        AiTestSuiteRunner.FilterFromLocation(),
+        AiTestSuiteRunner.HeavyFromLocation());
+
+    // Surface the count where a driver can read it without parsing, too.
+    JS.Set("spawndevAiTestFailures", failed);
+});

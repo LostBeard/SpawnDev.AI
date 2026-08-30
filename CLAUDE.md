@@ -41,6 +41,33 @@ SpawnDev.BlazorJS → SpawnDev.ILGPU / SpawnDev.WebTorrent → SpawnDev.ILGPU.ML
 
 ## Verification
 
-Rule 5 applies: gate before Captain sees it. Live gates so far: desktop HTTP (all 3 protocol
-surfaces + /v1/images/generations + the agentic generate_image loop), browser shared-worker chat
-(Playwright driver: `tools/drive-ai-demo.cs`). A PMT harness is the right long-term fix - flagged.
+Rule 5 applies: gate before Captain sees it.
+
+**The test suite: `SpawnDev.AI.TestRunner`** (Captain 2026-08-30 chose the
+`SpawnDev.SpawnJS.WebWorkers` harness style over PMT, and this is a port of it, so the console
+contract `READY:` / `TEST: name|result|ms|detail` / `RESULTS:` is identical).
+
+```
+dotnet run --project SpawnDev.AI.TestRunner                 fast suite, no model download
+dotnet run --project SpawnDev.AI.TestRunner -- --heavy      + the model-backed chat tests
+dotnet run --project SpawnDev.AI.TestRunner -- MultiTurn    filter by name
+dotnet run --project SpawnDev.AI.TestRunner -- --headed     watch it
+dotnet run --project SpawnDev.AI.TestRunner -- --url http://localhost:5199/   reuse a running server
+```
+
+Exit code is the number of failures, so it is usable as a gate. Tests live in
+`SpawnDev.AI.Demo/Tests/`, run in the WINDOW scope only, and are reached with `?tests=1`
+(`&heavy=1`, `&filter=`) so a normal visitor never triggers a model download. They drive
+`AiWorkerClient` - the same client the UI uses - so the worker transport, GGUF decode and KV cache
+are all real. Add a test class to `AiTestSuiteRunner.TestTypes`.
+
+- ⚠️ Mark anything that loads a model `Heavy = true`; the first run pulls hundreds of MB.
+- ⚠️ The runner prefers INSTALLED Chrome. Playwright's bundled chromium exposes a SOFTWARE WebGPU
+  adapter, which reads as a hang rather than a config problem.
+- ⚠️ A precondition the test is ABOUT must be asserted, never skipped. `SkipTestException` is for a
+  genuinely absent capability only.
+
+Other live gates: desktop HTTP (all 3 protocol surfaces + /v1/images/generations + the agentic
+generate_image loop), and `tools/drive-ai-demo.cs` - a single-shot UI-level Playwright gate that
+types into the composer and checks the answer. Keep it: it covers the Razor UI, which the suite
+does not.
