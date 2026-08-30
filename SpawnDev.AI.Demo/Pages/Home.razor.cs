@@ -5,10 +5,11 @@ using SpawnDev.AI;
 using SpawnDev.AI.Server;
 using SpawnDev.SpawnJS.Blazor;
 using SpawnDev.SpawnJS;
+using SpawnDev.ILGPU.ML.Preprocessing;
 
 namespace SpawnDev.AI.Demo.Pages;
 
-public partial class Home
+public partial class Home : IDisposable
 {
     bool _ready, _starting, _busy;
     string _status = "", _busyNote = "";
@@ -313,4 +314,149 @@ public partial class Home
         }
         StateHasChanged();
     }
+
+    // ── Voice input ───────────────────────────────────────────────────────────────────────────────────
+    // Speak instead of typing: the microphone feeds Whisper in the AI worker and the transcript lands in
+    // the composer, where it can be edited before sending rather than fired off blind.
+    //
+    // Capture runs at the microphone's NATIVE rate (48 kHz on most hardware) and the whole utterance is
+    // converted ONCE at the end. Resampling each ~10 ms chunk instead would hand the filter no signal
+    // either side of a chunk boundary, stitching in a discontinuity 100 times a second. Converting once
+    // also cuts what crosses to the worker by 3x, which matters here: AiWorkerClient.TranscribeAsync
+    // JSON-encodes the samples, so 9 s at 48 kHz would be 432,000 numbers.
+    //
+    // ⚠️ Requires an ILGPU.ML whose AudioPreprocessor.Resample band-limits before decimating. Up to and
+    // including 5.2.2 it was bare linear interpolation, which aliased 8-24 kHz back onto the speech and
+    // made Whisper return fluent, confident, unrelated text.
+    const int WhisperRate = 16000;
+    const double MaxUtteranceSeconds = 30.0;
+
+    MediaStreamCapture? _mic;
+    readonly List<float> _micSamples = new();
+    int _micRate = WhisperRate;
+    bool _listening;
+    double _listenSeconds;
+
+    async Task ToggleMicAsync()
+    {
+        if (_listening) await StopListeningAsync();
+        else await StartListeningAsync();
+    }
+
+    async Task StartListeningAsync()
+    {
+        if (_busy || _listening) return;
+
+        _mic ??= new MediaStreamCapture(JS);
+        // Re-subscribing on every start would fire the handler N times per chunk.
+        _mic.OnAudioReady -= OnMicAudio;
+        _mic.OnAudioReady += OnMicAudio;
+        _mic.OnAudioError -= OnMicError;
+        _mic.OnAudioError += OnMicError;
+
+        lock (_micSamples) _micSamples.Clear();
+        _listenSeconds = 0;
+
+        if (!await _mic.StartMicrophoneAsync())
+        {
+            _status = $"Microphone unavailable. {_mic.LastAudioError?.Message}";
+            StateHasChanged();
+            return;
+        }
+
+        _listening = true;
+        _status = "Listening\u2026";
+        StateHasChanged();
+    }
+
+    async Task StopListeningAsync()
+    {
+        if (!_listening) return;
+        _mic?.StopMicrophone();
+        _listening = false;
+
+        float[] captured;
+        lock (_micSamples) captured = _micSamples.ToArray();
+
+        if (captured.Length < _micRate / 2)
+        {
+            _status = "That was too short to transcribe.";
+            StateHasChanged();
+            return;
+        }
+
+        _busy = true;
+        _busyNote = "Transcribing\u2026";
+        StateHasChanged();
+        try
+        {
+            var samples = _micRate == WhisperRate
+                ? captured
+                : AudioPreprocessor.Resample(captured, _micRate, WhisperRate);
+
+            var (text, _, ms) = await Ai.TranscribeAsync(samples, WhisperRate);
+            text = (text ?? "").Trim();
+
+            if (text.Length == 0)
+            {
+                // Whisper answers silence with "[BLANK_AUDIO]" or nothing at all. Say so plainly rather
+                // than dropping an empty string into the composer.
+                _status = "Heard nothing to transcribe.";
+            }
+            else
+            {
+                _input = string.IsNullOrWhiteSpace(_input) ? text : $"{_input.TrimEnd()} {text}";
+                _status = $"Transcribed {captured.Length / (double)_micRate:F1}s in {ms:F0} ms";
+            }
+        }
+        catch (Exception ex)
+        {
+            _status = $"Transcription failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+            _busyNote = "";
+            StateHasChanged();
+        }
+    }
+
+    void OnMicAudio(float[] chunk, int rate)
+    {
+        _micRate = rate;
+        double seconds;
+        lock (_micSamples)
+        {
+            _micSamples.AddRange(chunk);
+            seconds = _micSamples.Count / (double)rate;
+        }
+
+        if (seconds >= MaxUtteranceSeconds)
+        {
+            _ = InvokeAsync(StopListeningAsync);
+            return;
+        }
+
+        // The sample count IS the clock. Repaint about four times a second, not once per chunk.
+        if (seconds - _listenSeconds >= 0.25)
+        {
+            _listenSeconds = seconds;
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    void OnMicError(Exception ex)
+    {
+        // A capture that dies silently is indistinguishable from a quiet room. Say it out loud.
+        _listening = false;
+        _status = $"Microphone stopped: {ex.Message}";
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        _mic?.Dispose();
+        _mic = null;
+    }
+
 }

@@ -138,6 +138,10 @@
         <div class="composer">
             <textarea @bind="_input" @bind:event="oninput" @onkeydown="OnKeyDown" rows="1"
                       placeholder="Message — or /model, /image-model, or ask for a picture…" disabled="@_busy"></textarea>
+            <button class="primary @(_listening ? "listening" : "")" @onclick="ToggleMicAsync" disabled="@_busy"
+                    title="@(_listening ? "Stop and transcribe" : "Speak your message")">
+                @(_listening ? $"⏹️ {_listenSeconds:F1}s" : "🎤")
+            </button>
             <button class="primary" @onclick="SendAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))">Send</button>
             <button class="primary" @onclick="DirectImageFromPromptAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))" title="Generate an image directly from your prompt (bypass the LLM)">🖼️</button>
             <button class="primary" @onclick="TestDirectImageAsync" disabled="@_busy" title="IMGTEST: direct SD-Turbo, fixed lighthouse prompt (bypass LLM)">🔬</button>
@@ -486,6 +490,19 @@
         50% {
             opacity: 0;
         }
+    }
+
+    /* Recording state for the microphone button - a pulsing red border, so "am I being listened to?"
+       is answerable at a glance rather than from the elapsed counter alone. */
+    .primary.listening {
+        border-color: #ef4444;
+        background: rgba(239, 68, 68, 0.12);
+        animation: sdai-listening 1.5s ease-in-out infinite;
+    }
+
+    @@keyframes sdai-listening {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45); }
+        50%      { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
     }
 
     .composer {
