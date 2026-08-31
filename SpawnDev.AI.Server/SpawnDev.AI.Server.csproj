@@ -35,7 +35,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.2.3" />
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.2.7-local.1" />
 		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.10" />
 	</ItemGroup>
 

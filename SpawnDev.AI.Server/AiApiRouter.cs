@@ -25,6 +25,14 @@ public sealed class AiApiRouter
     /// <summary>Optional tool registry - enables /ai/artifacts/{id} (base64 fetch of tool outputs).</summary>
     public AiToolRegistry? Tools { get; set; }
 
+    /// <summary>Optional voice engine - enables /api/speak (text to speech).</summary>
+    /// <remarks>
+    /// Separate from <see cref="Speech"/> on purpose: an app can want to LISTEN without talking back (a
+    /// dictation box) or to talk without listening (a read-aloud button), and each engine holds a different
+    /// model resident on a shared GPU. Coupling them would force both loads on anyone who wanted either.
+    /// </remarks>
+    public AiVoiceEngine? Voice { get; set; }
+
     /// <summary>Optional speech engine - enables /api/transcribe (speech to text).</summary>
     public AiSpeechEngine? Speech { get; set; }
 
@@ -57,6 +65,7 @@ public sealed class AiApiRouter
             case ("POST", "/v1/images/generations") when Images != null: await V1ImagesGenerations(Body(body), t); return true;
             case ("POST", "/mcp") when Tools != null: await Mcp(Body(body), t); return true;
             case ("POST", "/api/transcribe") when Speech != null: await ApiTranscribe(Body(body), t); return true;
+            case ("POST", "/api/speak") when Voice != null: await ApiSpeak(Body(body), t); return true;
             case ("GET", _) when Tools != null && path.StartsWith("/ai/artifacts/", StringComparison.Ordinal):
                 await GetArtifact(path["/ai/artifacts/".Length..], t); return true;
             case ("GET", "/ai/image-models") when Images != null:
@@ -629,6 +638,80 @@ public sealed class AiApiRouter
             // ⚠️ Include the STACK. A bare "NullReferenceException: Arg_NullReferenceException" names nothing
             // - it cost a round trip of guessing before this was added. The frames are what identify the
             // failing call, and this runs in a worker whose exceptions are not otherwise visible.
+            await t.WriteJsonAsync(500, new
+            {
+                error = $"{ex.GetType().Name}: {ex.Message}",
+                detail = ex.ToString().Length > 2000 ? ex.ToString()[..2000] : ex.ToString(),
+            });
+        }
+    }
+
+    /// <summary>
+    /// POST /api/speak - text to speech, in a cloned voice. Body:
+    /// <c>{ text, reference_samples: number[], reference_text, sample_rate }</c>.
+    /// Responds <c>{ samples, sample_rate, model, inference_ms, duration_seconds }</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ <c>reference_samples</c> is REQUIRED and there is no default voice. ZipVoice clones - it speaks in
+    /// the voice of a clip you give it - so in a conversation the reference is the turn the user just spoke,
+    /// and the assistant answers in their voice. An engine that silently substituted some stock voice when
+    /// the reference was missing would be a different product quietly pretending to be this one.
+    /// </para>
+    /// <para>
+    /// ⚠️ Same first-cut caveat as /api/transcribe: PCM as a JSON number array is the simplest thing that
+    /// works over BOTH transports (HTTP and the worker MessagePort), and it is the wrong shape for real
+    /// audio - a few seconds at 24 kHz is a six-figure array of numbers, which violates the standing "bulk
+    /// bytes stay out of the .NET heap" rule. The follow-up is a binary frame or a transferred
+    /// Float32Array; neither the route nor the engine changes when that lands.
+    /// </para>
+    /// </remarks>
+    private async Task ApiSpeak(JsonElement body, IAiServerTransport t)
+    {
+        var text = body.TryGetProperty("text", out var textEl) ? textEl.GetString() ?? "" : "";
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            await t.WriteJsonAsync(400, new { error = "body needs a non-empty 'text'" });
+            return;
+        }
+
+        if (!body.TryGetProperty("reference_samples", out var refEl) || refEl.ValueKind != JsonValueKind.Array
+            || refEl.GetArrayLength() == 0)
+        {
+            await t.WriteJsonAsync(400, new
+            {
+                error = "body needs a non-empty 'reference_samples' array - this voice is CLONED from a "
+                      + "reference clip, so there is no default voice to fall back to",
+            });
+            return;
+        }
+
+        var referenceText = body.TryGetProperty("reference_text", out var rtEl) ? rtEl.GetString() ?? "" : "";
+        var sampleRate = body.TryGetProperty("sample_rate", out var srEl) && srEl.TryGetInt32(out var sr)
+            ? sr : 16000;
+
+        var reference = new float[refEl.GetArrayLength()];
+        var i = 0;
+        foreach (var v in refEl.EnumerateArray()) reference[i++] = (float)v.GetDouble();
+
+        try
+        {
+            var result = await Voice!.SpeakAsync(text, referenceText, reference, sampleRate)
+                .ConfigureAwait(false);
+            await t.WriteJsonAsync(200, new
+            {
+                samples = result.Samples,
+                sample_rate = result.SampleRate,
+                model = result.Model,
+                inference_ms = result.InferenceMs,
+                duration_seconds = result.DurationSeconds,
+            });
+        }
+        catch (Exception ex)
+        {
+            // Same reasoning as ApiTranscribe: report the failure WITH frames. Silence is
+            // indistinguishable from a working model that produced nothing, and this runs in a worker
+            // whose exceptions are not otherwise visible.
             await t.WriteJsonAsync(500, new
             {
                 error = $"{ex.GetType().Name}: {ex.Message}",

@@ -48,7 +48,20 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     private ModelRegistry? _registry;
     private AiApiRouter? _router;
     private AiImageEngine? _images;
+    /// <summary>
+    /// What our models may hold on the GPU in the browser, in bytes.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ A guess, and necessarily so: WebGPU reports buffer LIMITS, not free memory, so there is nothing
+    /// to read. 4 GB comfortably holds the LLM, the recogniser and the voice at once - the set one
+    /// conversation turn needs - while still forcing SD-Turbo to trade against the LLM, which is the
+    /// pairing that actually OOM'd the device and crashed the page.
+    /// </remarks>
+    private const long BrowserVramBudgetBytes = 4L * 1024 * 1024 * 1024;
+
     private AiSpeechEngine? _speech;
+    private AiVoiceEngine? _voice;
+    private GpuResidency? _residency;
     private AiToolRegistry? _tools;
 
     public AiWorkerServer(WebTorrentClient webTorrent, HttpClient http, AiWorkerServerOptions options)
@@ -121,6 +134,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             // One large GPU model resident per device: each kind evicts the other before it loads/runs, so
             // the LLM and SD-Turbo never co-reside (co-residence OOM'd the WebGPU device -> page crash).
             _speech = new AiSpeechEngine(_webTorrent, _http, _accelerator);
+            _voice = new AiVoiceEngine(_webTorrent, _http, _accelerator);
 
             // ⚠️ Per-kind residency is a hard rule here, so every kind must evict every OTHER kind - with
             // three kinds that is no longer a pair of hooks but a ring, and adding a fourth would be worse
@@ -129,28 +143,50 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             // with 10.6 GB free where nothing needed evicting at all. The right shape is a VRAM budget with
             // LRU eviction, so a model is only evicted when the incoming one genuinely does not fit; this
             // ring is the honest interim, not the destination.
-            _images.EvictOtherKind = async () =>
+            // Residency is a BUDGET, not a ring. Each kind declares what it costs while resident and
+            // only yields when the incoming model genuinely does not fit - least-recently-used first.
+            //
+            // The ring this replaces evicted every kind before every other kind loaded. Safe, and hugely
+            // wasteful: MEASURED, three interleaved image+chat turns spent ~130s re-uploading an SD-Turbo
+            // UNet that had just been evicted, on a GPU with 10.6 GB free. A hands-free turn makes it worse
+            // still - transcribe, chat, speak is three kinds in a row, so a ring means three reloads PER
+            // TURN and no conversation is possible at any inference speed.
+            //
+            // ⚠️ "Evict nothing" is NOT the fix for "evict everything". Rose froze at 96% VRAM when a
+            // recogniser joined an 8B LLM and a voice cloner on one 12 GB card - a starved CUDA op wedged
+            // with no cancellation, so the turn never ended. Hence a budget with headroom.
+            //
+            // ⚠️ In the browser there is no free-VRAM number to read - WebGPU exposes buffer limits,
+            // not memory availability - so this budget is deliberately conservative and counts only OUR
+            // models. It cannot see the page's other GPU use, let alone another tab's.
+            _residency = new GpuResidency(BrowserVramBudgetBytes)
             {
-                await _registry!.EvictAsync();
-                await _speech!.EvictAsync();
+                OnLog = msg => Console.WriteLine(msg),
             };
-            _registry.EvictOtherKind = async () =>
-            {
-                await _images!.EvictAsync();
-                await _speech!.EvictAsync();
-            };
-            _speech.EvictOtherKind = async () =>
-            {
-                await _registry!.EvictAsync();
-                await _images!.EvictAsync();
-            };
+            _residency.Register("image", () => _images!.IsLoaded, 2_600L * 1024 * 1024,
+                () => _images!.EvictAsync());
+            _residency.Register("chat", () => _registry!.IsLoaded, 1_400L * 1024 * 1024,
+                () => _registry!.EvictAsync());
+            _residency.Register("speech", () => _speech!.IsLoaded, 200L * 1024 * 1024,
+                () => _speech!.EvictAsync());
+            _residency.Register("voice", () => _voice!.IsLoaded, 450L * 1024 * 1024,
+                () => _voice!.EvictAsync());
+
+            _images.EvictOtherKind = () => _residency.EnsureRoomForAsync("image");
+            _registry.EvictOtherKind = () => _residency.EnsureRoomForAsync("chat");
+            _speech.EvictOtherKind = () => _residency.EnsureRoomForAsync("speech");
+            _voice.EvictOtherKind = () => _residency.EnsureRoomForAsync("voice");
+
             _tools = new AiToolRegistry();
             _tools.Register(new GenerateImageTool(_images, _tools));
             // GitHub lookup: the model can answer questions about the SpawnDev libraries + crew by fetching
             // from GitHub (allowlisted hosts, CORS-friendly, so it works in the worker over the same HttpClient).
             _tools.Register(new GitHubTool(_http));
             engine.Tools = _tools;
-            _router = new AiApiRouter(engine) { Images = _images, Tools = _tools, Speech = _speech };
+            _router = new AiApiRouter(engine)
+            {
+                Images = _images, Tools = _tools, Speech = _speech, Voice = _voice,
+            };
         }
         finally { _initGate.Release(); }
     }
@@ -160,6 +196,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
         _images?.Dispose();
         if (_registry != null) await _registry.DisposeAsync().ConfigureAwait(false);
         _speech?.Dispose();
+        _voice?.Dispose();
         _accelerator?.Dispose();
     }
 

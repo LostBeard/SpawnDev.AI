@@ -107,6 +107,14 @@ public sealed class ModelRegistry : IAsyncDisposable
         }
     }
 
+    /// <summary>Whether an LLM currently holds GPU memory.</summary>
+    /// <remarks>
+    /// Exposed so <see cref="GpuResidency"/> can decide whether anything actually needs evicting - a budget
+    /// that cannot see what is resident has to assume the worst, which is the eviction thrash it exists to
+    /// stop.
+    /// </remarks>
+    public bool IsLoaded => _resident != null;
+
     /// <summary>Free the resident LLM from GPU memory (for the image engine to call before it loads
     /// SD-Turbo). Safe when nothing is resident (no-op). Serialized on the same gate as generation.</summary>
     public async Task EvictAsync()

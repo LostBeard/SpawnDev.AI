@@ -97,7 +97,37 @@ tools.Register(new GenerateImageTool(images, tools));
 tools.Register(new GitHubTool(imageHttp));   // SpawnDev library/crew Q&A via GitHub (allowlisted hosts)
 engine.Tools = tools;
 
-var router = new AiApiRouter(engine) { Images = images, Tools = tools };
+// Speech in and voice out, so the whole hands-free loop is reachable over plain HTTP - no browser, no
+// Playwright. The browser worker wires the same two engines; having them here means /api/transcribe and
+// /api/speak can be exercised with curl, which is how they get verified before anyone clicks anything.
+using var speech = new AiSpeechEngine(webTorrent, imageHttp, accelerator)
+{
+    OnLoadProgress = (stage, pct) => { if (pct % 25 == 0) Console.WriteLine($"[speech-load] {stage} {pct}%"); },
+};
+using var voice = new AiVoiceEngine(webTorrent, imageHttp, accelerator)
+{
+    OnLoadProgress = (stage, pct) => Console.WriteLine($"[voice-load] {stage} {pct}%"),
+};
+// Residency is a BUDGET, not a ring - see GpuResidency for the two measurements that shaped it (130s of
+// needless re-uploads on one side, a 96%-VRAM freeze on the other).
+//
+// On the desktop the budget comes from REAL free VRAM, which is the number the browser cannot give us.
+// Two thirds of what is free, so the desktop and anything else sharing the card keep headroom: this can
+// only account for our own models, and the freeze it guards against came from exactly what it cannot see.
+long freeVram = accelerator is ILGPU.Runtime.Cuda.CudaAccelerator cuda
+    ? cuda.GetFreeMemory()
+    : 4L * 1024 * 1024 * 1024;
+var residency = new GpuResidency((long)(freeVram * 0.66)) { OnLog = Console.WriteLine };
+Console.WriteLine($"[SpawnDev.AI] GPU residency budget: {residency.BudgetBytes / 1048576} MB "
+                + $"(free {freeVram / 1048576} MB)");
+residency.Register("image", () => images.IsLoaded, 2_600L * 1024 * 1024, () => images.EvictAsync());
+residency.Register("speech", () => speech.IsLoaded, 200L * 1024 * 1024, () => speech.EvictAsync());
+residency.Register("voice", () => voice.IsLoaded, 450L * 1024 * 1024, () => voice.EvictAsync());
+images.EvictOtherKind = () => residency.EnsureRoomForAsync("image");
+speech.EvictOtherKind = () => residency.EnsureRoomForAsync("speech");
+voice.EvictOtherKind = () => residency.EnsureRoomForAsync("voice");
+
+var router = new AiApiRouter(engine) { Images = images, Tools = tools, Speech = speech, Voice = voice };
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.SetMinimumLevel(LogLevel.Warning);

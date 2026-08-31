@@ -44,6 +44,13 @@ public sealed class AiImageEngine : IDisposable
     /// <summary>The model used when a request names none.</summary>
     public string DefaultModel { get; set; } = "sd-turbo";
 
+    /// <summary>Whether an image model currently holds GPU memory.</summary>
+    /// <remarks>
+    /// Exposed so <see cref="GpuResidency"/> can decide whether anything actually needs evicting. Without
+    /// it the budget has to assume the worst and evicts models that were never loaded.
+    /// </remarks>
+    public bool IsLoaded => _resident != null;
+
     /// <summary>Progress callback while a model loads ((stage, pct)).</summary>
     public Action<string, int>? OnLoadProgress { get; set; }
 
