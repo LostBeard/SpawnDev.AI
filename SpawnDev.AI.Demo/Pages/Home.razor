@@ -142,6 +142,12 @@
                     title="@(_listening ? "Stop and transcribe" : "Speak your message")">
                 @(_listening ? $"⏹️ {_listenSeconds:F1}s" : "🎤")
             </button>
+            @* Hands-free: listen, send, and speak the reply back in your own voice, then listen again.
+               NOT disabled while busy - stopping a runaway loop is exactly what you want mid-turn. *@
+            <button class="primary @(_handsFree ? "listening" : "")" @onclick="ToggleHandsFreeAsync"
+                    title="@(_handsFree ? "Stop hands-free conversation" : "Hands-free: talk, and it talks back in your voice")">
+                @(_handsFree ? "🛑 Hands-free" : "💬🔊")
+            </button>
             <button class="primary" @onclick="SendAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))">Send</button>
             <button class="primary" @onclick="DirectImageFromPromptAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))" title="Generate an image directly from your prompt (bypass the LLM)">🖼️</button>
             <button class="primary" @onclick="TestDirectImageAsync" disabled="@_busy" title="IMGTEST: direct SD-Turbo, fixed lighthouse prompt (bypass LLM)">🔬</button>

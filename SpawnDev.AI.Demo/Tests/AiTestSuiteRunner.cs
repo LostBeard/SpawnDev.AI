@@ -22,6 +22,7 @@ public static class AiTestSuiteRunner
         typeof(AiServerTests),
         typeof(AiChatTests),
         typeof(AiSpeechTests),
+        typeof(AiVoiceTests),
     };
 
     /// <summary>Milliseconds a test may run before it is reported as timed out. Overridable per test.</summary>

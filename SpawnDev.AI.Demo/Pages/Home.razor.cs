@@ -100,6 +100,7 @@ public partial class Home : IDisposable
 
         _messages.Add(new Msg { Role = "user", Text = text });
         _busy = true; _streaming = "";
+        string? spokenReply = null;
         _busyNote = _messages.Count(m => m.Role == "user") == 1
             ? "first message loads the model - downloads once, then cached" : "";
         StateHasChanged();
@@ -149,6 +150,7 @@ public partial class Home : IDisposable
             _messages.Add(msg);
             _status = $"last response: {msg.Ms / 1000.0:F1}s · {msg.TokPerSec:F1} tok/s · model {_model}";
             await RefreshStorageAsync();
+            spokenReply = msg.Text;
         }
         catch (Exception ex) { _messages.Add(new Msg { Role = "system", Text = $"Error: {ex.Message}" }); }
         finally
@@ -157,6 +159,11 @@ public partial class Home : IDisposable
             StateHasChanged();
             await ScrollToBottom();
         }
+
+        // Speaking happens AFTER the finally, so the reply is on screen and the composer is usable while
+        // it talks. Doing it inside the turn would leave the UI "busy" for the whole utterance.
+        if (_handsFree && !string.IsNullOrWhiteSpace(spokenReply))
+            await SpeakReplyAsync(spokenReply!);
     }
 
     // TEMP TEST HOOK (2026-07-05): drive SD-Turbo LOAD+GEN directly via /v1/images/generations, bypassing
@@ -337,6 +344,82 @@ public partial class Home : IDisposable
     bool _listening;
     double _listenSeconds;
 
+    // ── Hands-free conversation ───────────────────────────────────────────────────────────────────────
+    // Listen, transcribe, send, speak the reply in the USER'S OWN VOICE, listen again.
+    //
+    // ⚠️ The reply is spoken with the turn just heard as the voice reference - ZipVoice clones, so the
+    // assistant answers in the voice that asked. That is the product, not a shortcut; there is no stock
+    // voice, and an engine that substituted one would be a different thing wearing this one's clothes.
+    //
+    // ⚠️ The microphone is NOT reopened until playback finishes. A loop that listens while it talks hears
+    // itself, transcribes its own reply, and answers it - a feedback loop that looks like a hang and is
+    // not one. WaitForEndAsync is what keeps the two halves apart.
+    bool _handsFree;
+    AudioPlayback? _speaker;
+    float[]? _lastHeardSamples;
+    string _lastHeardText = "";
+
+    /// <summary>Turn the hands-free conversation on or off.</summary>
+    async Task ToggleHandsFreeAsync()
+    {
+        _handsFree = !_handsFree;
+        if (_handsFree)
+        {
+            _status = "Hands-free on — listening. Say something.";
+            StateHasChanged();
+            await StartListeningAsync();
+        }
+        else
+        {
+            _speaker?.Stop();
+            if (_listening) await StopListeningAsync();
+            _status = "Hands-free off.";
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Speak one reply, then hand the microphone back.</summary>
+    async Task SpeakReplyAsync(string text)
+    {
+        if (_lastHeardSamples == null || _lastHeardSamples.Length == 0)
+        {
+            // Nothing to clone from. Say so rather than falling silent: a hands-free loop that stops
+            // talking for no stated reason is indistinguishable from one that crashed.
+            _status = "Nothing to speak with — the voice is cloned from what you said, and I have no "
+                    + "audio for this turn.";
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            _busyNote = "Speaking…";
+            StateHasChanged();
+
+            var (samples, rate, _, ms) = await Ai.SpeakAsync(text, _lastHeardText, _lastHeardSamples,
+                WhisperRate);
+
+            _speaker ??= new AudioPlayback(JS);
+            var seconds = await _speaker.PlayAsync(samples, rate);
+            _status = $"Spoke {seconds:F1}s in {ms:F0} ms";
+            StateHasChanged();
+
+            await _speaker.WaitForEndAsync();
+        }
+        catch (Exception ex)
+        {
+            _status = $"Speaking failed: {ex.Message}";
+        }
+        finally
+        {
+            _busyNote = "";
+            StateHasChanged();
+        }
+
+        // Back to listening for the next turn - only now, with the speakers quiet.
+        if (_handsFree && !_listening) await StartListeningAsync();
+    }
+
     async Task ToggleMicAsync()
     {
         if (_listening) await StopListeningAsync();
@@ -407,6 +490,12 @@ public partial class Home : IDisposable
             {
                 _input = string.IsNullOrWhiteSpace(_input) ? text : $"{_input.TrimEnd()} {text}";
                 _status = $"Transcribed {captured.Length / (double)_micRate:F1}s in {ms:F0} ms";
+                // Keep the resampled audio and its transcript: they are the voice reference for the reply.
+                // ⚠️ The 16 kHz version, not the raw capture - it is what the recogniser heard, so the
+                // transcript describes exactly these samples. Handing the cloner a different rendering of
+                // the utterance than the text describes degrades the clone invisibly.
+                _lastHeardSamples = samples;
+                _lastHeardText = text;
             }
         }
         catch (Exception ex)
@@ -419,6 +508,11 @@ public partial class Home : IDisposable
             _busyNote = "";
             StateHasChanged();
         }
+
+        // Hands-free sends what it heard instead of parking it in the composer. Typing mode deliberately
+        // does NOT: a transcript you can read and correct before it goes is the safer default, and the
+        // whole point of hands-free is that there is nobody at the keyboard to do that.
+        if (_handsFree && !string.IsNullOrWhiteSpace(_input)) await SendAsync();
     }
 
     void OnMicAudio(float[] chunk, int rate)

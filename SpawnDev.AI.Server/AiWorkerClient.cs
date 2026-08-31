@@ -135,6 +135,43 @@ public sealed class AiWorkerClient
             root.TryGetProperty("inference_ms", out var ms) ? ms.GetDouble() : 0);
     }
 
+    /// <summary>
+    /// Speak <paramref name="text"/> in the voice of a reference clip. Returns mono PCM.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ <paramref name="referenceSamples"/> is required - this voice is CLONED, so in a conversation the
+    /// reference is the turn the user just spoke and the assistant answers in their own voice. There is no
+    /// stock voice to fall back to.
+    /// ⚠️ Same first-cut shape as <see cref="TranscribeAsync"/>: PCM crosses as a JSON number array, which
+    /// is what works over both transports today and is the wrong shape for audio. A transferred
+    /// Float32Array is the follow-up; this signature does not change when it lands.
+    /// </remarks>
+    public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs)> SpeakAsync(
+        string text, string referenceText, float[] referenceSamples, int referenceSampleRate)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            text,
+            reference_text = referenceText,
+            reference_samples = referenceSamples,
+            sample_rate = referenceSampleRate,
+        }, J);
+        var json = await RequestJsonAsync("POST", "/api/speak", body);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("error", out var err))
+            throw new Exception(err.GetString() ?? "speak failed");
+        var arr = root.GetProperty("samples");
+        var samples = new float[arr.GetArrayLength()];
+        var i = 0;
+        foreach (var v in arr.EnumerateArray()) samples[i++] = (float)v.GetDouble();
+        return (
+            samples,
+            root.TryGetProperty("sample_rate", out var sr) ? sr.GetInt32() : 24000,
+            root.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "",
+            root.TryGetProperty("inference_ms", out var ms) ? ms.GetDouble() : 0);
+    }
+
     public async Task<string> ChatStreamAsync(string model, IReadOnlyList<AiChatMessage> messages,
         AiGenerationOptions? options = null, Action<string>? onDelta = null)
     {
