@@ -133,6 +133,19 @@
                     }
                 </div>
             }
+            @* ⚠️ Speaking happens AFTER the turn's finally, so `_busy` is false and the bubble above is not
+               in the DOM - which meant the entire spoken reply had NO indicator at all. The first one pays
+               a cold ZipVoice load (two int8 graphs plus a 54 MB vocoder out of a remote archive): MEASURED
+               88.7 s, during which the page showed a finished text answer and nothing else. That is
+               indistinguishable from an assistant that simply never speaks, which is exactly how it was
+               reported. *@
+            @if (_speaking)
+            {
+                <div class="msg assistant speaking">
+                    <div class="who">Assistant</div>
+                    <div class="text">🔊 @(string.IsNullOrEmpty(_status) ? "Speaking…" : _status)</div>
+                </div>
+            }
         </div>
 
         <div class="composer">

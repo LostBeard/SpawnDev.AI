@@ -10,7 +10,38 @@ namespace SpawnDev.AI.Server;
 /// <param name="Text">The transcript.</param>
 /// <param name="Model">Which speech model produced it.</param>
 /// <param name="InferenceMs">Wall time for encode + decode, excluding model load.</param>
-public sealed record AiTranscription(string Text, string Model, double InferenceMs);
+public sealed record AiTranscription(string Text, string Model, double InferenceMs)
+{
+    /// <summary>Where the time went, or null if the executor did not report.</summary>
+    /// <remarks>
+    /// ⚠️ Carried back to the CALLER on purpose. The engine runs in a shared worker, whose console is not
+    /// the page console - so a `Console.WriteLine` split here is invisible to the window, to a Playwright
+    /// gate, and to anyone with DevTools open on the page. A number nobody can read does not count as
+    /// instrumentation.
+    /// </remarks>
+    public AiInferenceSplit? Split { get; init; }
+}
+
+/// <summary>Executor-internal attribution for one logical inference (which may be many graph runs).</summary>
+/// <param name="GraphRuns">How many <c>RunAsync</c> calls the operation took.</param>
+/// <param name="ExecutorMs">Summed executor-internal wall time.</param>
+/// <param name="ReadbackCount">Mid-graph GPU-to-host readbacks (each a round trip).</param>
+/// <param name="ReadbackMs">Wall time in those readbacks.</param>
+/// <param name="DrainCount">Command-buffer sync drains.</param>
+/// <param name="DrainMs">Wall time in those drains.</param>
+/// <param name="OutsideExecutorMs">Total minus executor time: mel, tokenizer, host glue.</param>
+/// <param name="MelMs">
+/// CPU log-mel STFT time. ⚠️ Broken out of <paramref name="OutsideExecutorMs"/> because it is a FIXED
+/// per-call cost: the audio is padded to a flat 30 s before the STFT runs, so a four-word turn pays exactly
+/// what a full half-minute does. That is precisely why endpointing shortened the recording without
+/// shortening the transcription.
+/// </param>
+public sealed record AiInferenceSplit(int GraphRuns, double ExecutorMs, int ReadbackCount, double ReadbackMs,
+    int DrainCount, double DrainMs, double OutsideExecutorMs, double MelMs)
+{
+    /// <summary>Executor time that is neither readback nor drain: dispatch, CPU work, allocation.</summary>
+    public double ResidualMs => ExecutorMs - ReadbackMs - DrainMs;
+}
 
 /// <summary>
 /// Speech-to-text for the AI server: Whisper on the same accelerator the chat and image engines use.
@@ -41,6 +72,17 @@ public sealed class AiSpeechEngine : IDisposable
     private readonly HttpClient _http;
     private readonly Accelerator _accelerator;
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    /// <summary>Serialises INFERENCE on the pipeline, which <see cref="_gate"/> (a LOAD gate) does not.</summary>
+    /// <remarks>
+    /// ⚠️ Same exposure as <c>AiVoiceEngine._inferGate</c>, and it arrived the same way: warming this model
+    /// in the background while the conversation runs lets the warm forward pass and a real transcription
+    /// execute CONCURRENTLY on one pipeline. <c>_gate</c> is released as soon as the model is resident, so
+    /// it has never covered inference - once loaded, <see cref="EnsureLoadedAsync"/> returns without
+    /// acquiring anything. A <c>SpeechRecognitionPipeline</c> owns device buffers and a KV cache; two
+    /// overlapping calls are unsound, not just slow.
+    /// </remarks>
+    private readonly SemaphoreSlim _inferGate = new(1, 1);
 
     private SpeechRecognitionPipeline? _pipeline;
     private InferenceSession? _encoder;
@@ -98,10 +140,110 @@ public sealed class AiSpeechEngine : IDisposable
 
         await EnsureLoadedAsync(ct).ConfigureAwait(false);
 
-        var started = DateTime.UtcNow;
-        var result = await _pipeline!.TranscribeAsync(samples, sampleRate).ConfigureAwait(false);
-        return new AiTranscription(result.Text ?? "", ModelName, (DateTime.UtcNow - started).TotalMilliseconds);
+        // ⚠️ CUMULATIVE, not LastRun*. A transcription is ONE encoder pass plus N decoder steps, and every
+        // LastRun* field is overwritten by the next RunAsync - so reading them afterwards reports the final
+        // decode step and makes a 13-second transcription look like a 40 ms one. That is a measurement that
+        // invites the wrong conclusion, which is worse than having none.
+        // One inference at a time - see _inferGate. The cumulative counters are static and per-process, so
+        // this gate is ALSO what makes them meaningful: two overlapping runs would interleave their
+        // readback and drain totals into one meaningless sum.
+        await _inferGate.WaitAsync(ct).ConfigureAwait(false);
+        double inferenceMs;
+        SpawnDev.ILGPU.ML.Preprocessing.TranscriptionResult result;
+        try
+        {
+            SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeReset();
+            var started = DateTime.UtcNow;
+            result = await _pipeline!.TranscribeAsync(samples, sampleRate).ConfigureAwait(false);
+            inferenceMs = (DateTime.UtcNow - started).TotalMilliseconds;
+        }
+        finally { _inferGate.Release(); }
+
+        // ── Where did the time go? ──
+        // Whisper pads its input to a FIXED 30 s (AudioPipelines: PadOrTrim to WhisperSampleRate * 30), so
+        // the encoder cost does not shrink when the utterance does - endpointing cannot make this number
+        // smaller and only this split says what would. MEASURED in the browser demo: 46.9 s for a 30 s
+        // buffer, 38.8 s for a 3.7 s one, then 13.6 s once a warm forward pass had compiled the kernels.
+        // The residual (total minus readback minus drain) is dispatch + CPU + allocation.
+        AiInferenceSplit? split = null;
+        try
+        {
+            var runs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeRunCount;
+            var execMs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeTotalMs;
+            var rbMs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeReadbackMs;
+            var rbN = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeReadbackCount;
+            var drainMs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainMs;
+            var drainN = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainCount;
+            split = new AiInferenceSplit(runs, execMs, rbN, rbMs, drainN, drainMs, inferenceMs - execMs, result.MelTimeMs);
+
+            var seconds = samples.Length / (double)sampleRate;
+            Console.WriteLine($"[AiSpeechEngine] {seconds:F2}s of audio in {inferenceMs:F0}ms "
+                + $"({(seconds > 0 ? inferenceMs / 1000.0 / seconds : 0):F1}x realtime) | "
+                + $"{runs} graph runs, executor {execMs:F0}ms | "
+                + $"readbacks {rbN} ({rbMs:F0}ms) | drains {drainN} ({drainMs:F0}ms) | "
+                + $"residual {split.ResidualMs:F0}ms (dispatch+CPU+alloc) | "
+                + $"outside the executor {split.OutsideExecutorMs:F0}ms, of which CPU mel STFT "
+                + $"{split.MelMs:F0}ms (FIXED - the audio is padded to 30s before the STFT, so this costs "
+                + "the same for four words as for half a minute)");
+        }
+        catch { /* a diagnostic must never fail a request */ }
+
+        return new AiTranscription(result.Text ?? "", ModelName, inferenceMs) { Split = split };
     }
+
+    /// <summary>
+    /// Load the model AND run one forward pass, so the first real request does not pay for either.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ Loading the bytes is not being ready. Every kernel in this graph is compiled on its FIRST
+    /// execution, not at load, so a "warm" that only downloads weights leaves the whole compile inside the
+    /// first transcription - where the user is sitting waiting for it. MEASURED in the demo: 38.8 s to
+    /// transcribe a 3.7 s utterance, against 46.9 s for a 30 s one. Whisper pads its input to a fixed 30 s
+    /// (AudioPipelines: PadOrTrim to WhisperSampleRate * 30), so shortening the recording could not have
+    /// accounted for that gap and the per-utterance cost is very nearly constant - which is exactly the
+    /// shape of a one-off compile plus a fixed-size graph.
+    /// </para>
+    /// <para>
+    /// One second of silence is enough: the encoder always sees the same padded 30 s tensor, so every
+    /// encoder kernel compiles regardless, and Whisper answers silence in a handful of decode steps.
+    /// </para>
+    /// <para>
+    /// ⚠️ The warm pass is TIMED and logged. If the first real transcription is still slow afterwards then
+    /// the cost is the graph itself rather than compilation, and that is a different problem needing
+    /// per-node attribution - not more warming. Printing the number is what makes those two separable
+    /// instead of a guess.
+    /// </para>
+    /// </remarks>
+    public async Task EnsureReadyAsync(CancellationToken ct = default)
+    {
+        await EnsureLoadedAsync(ct).ConfigureAwait(false);
+        if (_warmed) return;
+        _warmed = true;
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            // Under _inferGate, so a real transcription arriving mid-warm WAITS instead of racing it.
+            await _inferGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await _pipeline!.TranscribeAsync(new float[16000], 16000).ConfigureAwait(false);
+            }
+            finally { _inferGate.Release(); }
+            Console.WriteLine($"[AiSpeechEngine] warm forward pass: {clock.Elapsed.TotalSeconds:F1}s "
+                            + "(kernel compilation; a real transcription after this should be much faster - "
+                            + "if it is not, the cost is the graph, not the compile)");
+        }
+        catch (Exception ex)
+        {
+            // Never fatal: warming is an optimisation and the lazy path still works.
+            Console.WriteLine($"[AiSpeechEngine] warm pass failed ({ex.GetType().Name}: {ex.Message}); "
+                            + "the first real transcription will pay for compilation instead.");
+        }
+    }
+
+    private bool _warmed;
 
     private async Task EnsureLoadedAsync(CancellationToken ct)
     {

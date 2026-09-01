@@ -50,6 +50,20 @@ public sealed class AiVoiceEngine : IDisposable
     private readonly Accelerator _accelerator;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>Serialises INFERENCE on the pipeline, which <see cref="_gate"/> (a LOAD gate) does not.</summary>
+    /// <remarks>
+    /// ⚠️ MEASURED 2026-09-01: warming the voice in the background while the conversation ran let a warm
+    /// synthesis and a real reply execute CONCURRENTLY on one pipeline - a 4.0 s reply took <b>145.9 s</b>
+    /// (36x realtime) against 4.7x for a much longer one, because two syntheses were fighting for the GPU.
+    /// <para>
+    /// Speed is the visible symptom and the smaller half. A <c>ZipVoicePipeline</c> owns device buffers and
+    /// graph-capture state; two overlapping calls are not merely slow, they are unsound. <c>_gate</c> is
+    /// released as soon as the model is RESIDENT, so it has never covered this - once loaded,
+    /// <see cref="EnsureLoadedAsync"/> returns without acquiring anything at all.
+    /// </para>
+    /// </remarks>
+    private readonly SemaphoreSlim _inferGate = new(1, 1);
+
     private ZipVoicePipeline? _pipeline;
     private IlgpuZipVoiceGraphs? _graphs;
     private ZipVoiceTokenizer? _tokenizer;
@@ -128,11 +142,19 @@ public sealed class AiVoiceEngine : IDisposable
 
         text = TrimToSpeakableLength(text, maxSpokenCharacters);
 
-        var started = DateTime.UtcNow;
-        var result = await _pipeline!
-            .SpeakAsync(text, referenceText ?? "", referenceSamples, referenceSampleRate, _tokenizer!)
-            .ConfigureAwait(false);
-        var inferenceMs = (DateTime.UtcNow - started).TotalMilliseconds;
+        // One synthesis at a time - see _inferGate. A background warm pass counts as one.
+        await _inferGate.WaitAsync(ct).ConfigureAwait(false);
+        double inferenceMs;
+        SpawnDev.ILGPU.ML.Pipelines.ZipVoiceResult result;
+        try
+        {
+            var started = DateTime.UtcNow;
+            result = await _pipeline!
+                .SpeakAsync(text, referenceText ?? "", referenceSamples, referenceSampleRate, _tokenizer!)
+                .ConfigureAwait(false);
+            inferenceMs = (DateTime.UtcNow - started).TotalMilliseconds;
+        }
+        finally { _inferGate.Release(); }
 
         // ── Where did the time go? ──
         // Browser TTS is far slower than realtime while CUDA is faster than realtime, and the difference is
@@ -193,6 +215,64 @@ public sealed class AiVoiceEngine : IDisposable
                         + $"(cap={cap})");
         return spoken;
     }
+
+    /// <summary>
+    /// Load the model AND synthesise one throwaway line, so the first real reply pays for neither.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ Loading is not being ready - the same lesson as <c>AiSpeechEngine</c> and <c>AiVadEngine</c>.
+    /// Every kernel in these three graphs (text encoder, flow decoder, vocoder) compiles on its FIRST
+    /// EXECUTION, so a warm that only fetches weights leaves the entire compile inside the first spoken
+    /// reply - where the user is sitting in silence waiting for it, having already read the text answer.
+    /// </para>
+    /// <para>
+    /// ⚠️ The reference clip here is SYNTHETIC and its output is discarded. That is legitimate for a warm
+    /// pass and would not be for anything else: ZipVoice CLONES, so a synthetic reference produces a
+    /// meaningless voice. Nothing listens to it - the point is to execute every kernel once. A real
+    /// reference is required for every actual call, and <see cref="SpeakAsync"/> still refuses without one.
+    /// </para>
+    /// <para>
+    /// ⚠️ Best-effort, and it must stay that way. Warming is an optimisation; a failure here has to leave
+    /// <see cref="SpeakAsync"/> working exactly as before rather than taking the voice down with it.
+    /// </para>
+    /// </remarks>
+    public async Task EnsureReadyAsync(CancellationToken ct = default)
+    {
+        await EnsureLoadedAsync(ct).ConfigureAwait(false);
+        if (_warmed) return;
+        _warmed = true;
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            // A second of quiet, band-limited noise: enough of a signal for the reference encoder to run
+            // on, and short enough that the warm pass stays a warm pass.
+            const int rate = 16000;
+            var reference = new float[rate];
+            var rng = new Random(12345);
+            for (int i = 0; i < reference.Length; i++) reference[i] = (float)(rng.NextDouble() - 0.5) * 0.05f;
+
+            // Under _inferGate, so a real reply that arrives mid-warm WAITS instead of racing this one.
+            await _inferGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await _pipeline!.SpeakAsync("Hello.", "Hello.", reference, rate, _tokenizer!)
+                    .ConfigureAwait(false);
+            }
+            finally { _inferGate.Release(); }
+            Console.WriteLine($"[AiVoiceEngine] warm synthesis: {clock.Elapsed.TotalSeconds:F1}s "
+                            + "(kernel compilation; a real reply after this should be much faster - if it "
+                            + "is not, the cost is the graph, not the compile)");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AiVoiceEngine] warm synthesis failed ({ex.GetType().Name}: {ex.Message}); "
+                            + "the first real reply will pay for compilation instead.");
+        }
+    }
+
+    private bool _warmed;
 
     private async Task EnsureLoadedAsync(CancellationToken ct)
     {

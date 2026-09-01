@@ -61,6 +61,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
 
     private AiSpeechEngine? _speech;
     private AiVoiceEngine? _voice;
+    private AiVadEngine? _vad;
     private GpuResidency? _residency;
     private AiToolRegistry? _tools;
 
@@ -135,6 +136,9 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             // the LLM and SD-Turbo never co-reside (co-residence OOM'd the WebGPU device -> page crash).
             _speech = new AiSpeechEngine(_webTorrent, _http, _accelerator);
             _voice = new AiVoiceEngine(_webTorrent, _http, _accelerator);
+            // The endpointer. 643 KB, served from this app's own wwwroot rather than the hub, and the
+            // reason a hands-free turn now ends when you stop talking instead of when a 30 s timer expires.
+            _vad = new AiVadEngine(_http, _accelerator);
 
             // ⚠️ Per-kind residency is a hard rule here, so every kind must evict every OTHER kind - with
             // three kinds that is no longer a pair of hooks but a ring, and adding a fourth would be worse
@@ -171,11 +175,25 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
                 () => _speech!.EvictAsync());
             _residency.Register("voice", () => _voice!.IsLoaded, 450L * 1024 * 1024,
                 () => _voice!.EvictAsync());
+            // ⚠️ The endpointer is deliberately tiny in this table and that is the POINT, not an estimate
+            // fudge: it runs ~31 times a second for as long as the microphone is open, so it must never be
+            // the model something else evicts. A reload mid-utterance loses the turn being spoken.
+            _residency.Register("vad", () => _vad!.IsLoaded, 32L * 1024 * 1024,
+                () => _vad!.EvictAsync());
 
             _images.EvictOtherKind = () => _residency.EnsureRoomForAsync("image");
             _registry.EvictOtherKind = () => _residency.EnsureRoomForAsync("chat");
             _speech.EvictOtherKind = () => _residency.EnsureRoomForAsync("speech");
             _voice.EvictOtherKind = () => _residency.EnsureRoomForAsync("voice");
+            _vad.EvictOtherKind = () => _residency.EnsureRoomForAsync("vad");
+
+            // ⚠️ These were declared and never subscribed, so a cold model load was SILENT. ZipVoice pulls
+            // two int8 graphs, a token table and a 54 MB vocoder out of a remote archive; with nothing
+            // reporting stages, the hands-free loop simply stopped talking for minutes and there was no way
+            // to tell loading from hung from failed. A progress hook nobody subscribes to is worse than no
+            // hook - it reads as instrumentation that already exists.
+            _speech.OnLoadProgress = (stage, pct) => Console.WriteLine($"[AiSpeechEngine] {stage} {pct}%");
+            _voice.OnLoadProgress = (stage, pct) => Console.WriteLine($"[AiVoiceEngine] {stage} {pct}%");
 
             _tools = new AiToolRegistry();
             _tools.Register(new GenerateImageTool(_images, _tools));
@@ -185,7 +203,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             engine.Tools = _tools;
             _router = new AiApiRouter(engine)
             {
-                Images = _images, Tools = _tools, Speech = _speech, Voice = _voice,
+                Images = _images, Tools = _tools, Speech = _speech, Voice = _voice, Vad = _vad,
             };
         }
         finally { _initGate.Release(); }
@@ -197,6 +215,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
         if (_registry != null) await _registry.DisposeAsync().ConfigureAwait(false);
         _speech?.Dispose();
         _voice?.Dispose();
+        _vad?.Dispose();
         _accelerator?.Dispose();
     }
 

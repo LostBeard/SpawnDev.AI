@@ -36,6 +36,14 @@ public sealed class AiApiRouter
     /// <summary>Optional speech engine - enables /api/transcribe (speech to text).</summary>
     public AiSpeechEngine? Speech { get; set; }
 
+    /// <summary>Optional endpointer - enables /api/vad (where an utterance starts and stops).</summary>
+    /// <remarks>
+    /// Separate from <see cref="Speech"/> for the same reason <see cref="Voice"/> is: a caller that already
+    /// knows the bounds of its audio (a file, a push-to-talk button) needs the recogniser and not this,
+    /// while a hands-free loop needs this BEFORE it has anything to recognise.
+    /// </remarks>
+    public AiVadEngine? Vad { get; set; }
+
     /// <summary>Server version string reported by /api/version.</summary>
     public string Version { get; set; } = "0.1.0-spawndev";
 
@@ -65,6 +73,8 @@ public sealed class AiApiRouter
             case ("POST", "/v1/images/generations") when Images != null: await V1ImagesGenerations(Body(body), t); return true;
             case ("POST", "/mcp") when Tools != null: await Mcp(Body(body), t); return true;
             case ("POST", "/api/transcribe") when Speech != null: await ApiTranscribe(Body(body), t); return true;
+            case ("POST", "/api/vad") when Vad != null: await ApiVad(Body(body), t); return true;
+            case ("POST", "/api/warm"): await ApiWarm(Body(body), t); return true;
             case ("POST", "/api/speak") when Voice != null: await ApiSpeak(Body(body), t); return true;
             case ("GET", _) when Tools != null && path.StartsWith("/ai/artifacts/", StringComparison.Ordinal):
                 await GetArtifact(path["/ai/artifacts/".Length..], t); return true;
@@ -629,6 +639,21 @@ public sealed class AiApiRouter
                 text = result.Text,
                 model = result.Model,
                 inference_ms = result.InferenceMs,
+                // ⚠️ The engine runs in a shared worker, whose console is NOT the page console - so the
+                // split it prints there is invisible to the window, to DevTools on the page, and to the UI
+                // gate. Carrying it in the response is what makes it readable at all.
+                timing = result.Split == null ? null : new
+                {
+                    graph_runs = result.Split.GraphRuns,
+                    executor_ms = result.Split.ExecutorMs,
+                    readback_count = result.Split.ReadbackCount,
+                    readback_ms = result.Split.ReadbackMs,
+                    drain_count = result.Split.DrainCount,
+                    drain_ms = result.Split.DrainMs,
+                    residual_ms = result.Split.ResidualMs,
+                    outside_executor_ms = result.Split.OutsideExecutorMs,
+                    mel_ms = result.Split.MelMs,
+                },
             });
         }
         catch (Exception ex)
@@ -638,6 +663,135 @@ public sealed class AiApiRouter
             // ⚠️ Include the STACK. A bare "NullReferenceException: Arg_NullReferenceException" names nothing
             // - it cost a round trip of guessing before this was added. The frames are what identify the
             // failing call, and this runs in a worker whose exceptions are not otherwise visible.
+            await t.WriteJsonAsync(500, new
+            {
+                error = $"{ex.GetType().Name}: {ex.Message}",
+                detail = ex.ToString().Length > 2000 ? ex.ToString()[..2000] : ex.ToString(),
+            });
+        }
+    }
+
+    /// <summary>
+    /// POST /api/warm - make model kinds resident NOW. Body: <c>{ kinds: ["vad","speech","voice"] }</c>.
+    /// Responds <c>{ warmed: [...], failed: [{ kind, error }] }</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ WHY. A hands-free conversation loads three models, and lazily it loads each one INSIDE the turn
+    /// that needs it - so the user's first sentence is followed by a recogniser download, and the first
+    /// reply by a voice download. MEASURED in the demo: the first spoken reply cost <b>88.7 s</b>, nearly
+    /// all of it a cold ZipVoice load (two int8 graphs plus a 54 MB vocoder pulled out of a remote
+    /// archive), and it happened after the text answer was already on screen. The work is the same either
+    /// way; what changes is WHEN. Warming while the microphone is open spends it during the seconds the
+    /// user is talking anyway.
+    /// </para>
+    /// <para>
+    /// ⚠️ Partial success is REPORTED, not thrown. Warming is an optimisation - a kind that fails to warm
+    /// must still be attempted lazily by its own route later, and turning the conversation off because a
+    /// preload failed would be worse than the delay it avoids.
+    /// </para>
+    /// </remarks>
+    private async Task ApiWarm(JsonElement body, IAiServerTransport t)
+    {
+        var kinds = GetStringArray(body, "kinds") ?? System.Array.Empty<string>();
+        if (kinds.Length == 0) kinds = new[] { "vad", "speech", "voice" };
+
+        var warmed = new List<string>();
+        var failed = new List<object>();
+        foreach (var kind in kinds)
+        {
+            try
+            {
+                switch (kind.ToLowerInvariant())
+                {
+                    case "vad" when Vad != null: await Vad.EnsureReadyAsync(t.Aborted); warmed.Add("vad"); break;
+                    case "speech" when Speech != null: await Speech.EnsureReadyAsync(t.Aborted); warmed.Add("speech"); break;
+                    case "voice" when Voice != null: await Voice.EnsureReadyAsync(t.Aborted); warmed.Add("voice"); break;
+                    default: failed.Add(new { kind, error = "no such engine on this server" }); break;
+                }
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new { kind, error = $"{ex.GetType().Name}: {ex.Message}" });
+            }
+        }
+
+        await t.WriteJsonAsync(200, new { warmed = warmed.ToArray(), failed = failed.ToArray() });
+    }
+
+    /// <summary>
+    /// POST /api/vad - where an utterance starts and stops. Body:
+    /// <c>{ samples: number[], reset?: bool, flush?: bool }</c>, mono PCM at 16 kHz continuing the stream
+    /// fed so far. Responds
+    /// <c>{ speech_active, probability, spans: [{ start, length }], frame_ms, mean_frame_ms, model }</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ <b>Spans, not samples.</b> A closed utterance comes back as offsets into the CALLER'S stream, not
+    /// as audio. The caller already holds every sample it sent; returning a 20 s utterance as a JSON number
+    /// array would be 320,000 numbers to express what two integers say. This is the one audio route that
+    /// does not have the "wrong shape for bulk audio" caveat the others carry, and it is deliberate.
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>reset</c> is not cosmetic: the offsets are counted from the first sample after the last reset,
+    /// so a caller reopening its microphone must reset or it gets offsets pointing past its new buffer.
+    /// <c>flush</c> closes speech still in progress - without it, the last thing said before the microphone
+    /// closed is never emitted, because the detector waits for trailing silence it will now never see.
+    /// </para>
+    /// </remarks>
+    private async Task ApiVad(JsonElement body, IAiServerTransport t)
+    {
+        var reset = body.TryGetProperty("reset", out var rEl)
+                    && rEl.ValueKind == JsonValueKind.True;
+        var flush = body.TryGetProperty("flush", out var fEl)
+                    && fEl.ValueKind == JsonValueKind.True;
+
+        float[] samples = Array.Empty<float>();
+        if (body.TryGetProperty("samples", out var samplesEl) && samplesEl.ValueKind == JsonValueKind.Array)
+        {
+            samples = new float[samplesEl.GetArrayLength()];
+            var i = 0;
+            foreach (var v in samplesEl.EnumerateArray()) samples[i++] = (float)v.GetDouble();
+        }
+
+        try
+        {
+            // ⚠️ A reset LOADS the model if it is not resident yet, and that is the point: callers reset
+            // just before opening the microphone, so this is the one moment when paying for the load costs
+            // nobody anything. Leaving it lazy put the load on the first audio frame instead, with the
+            // microphone already running and audio queueing behind it - MEASURED at 17.6 s to endpoint a
+            // 4.0 s utterance.
+            if (reset)
+            {
+                await Vad!.EnsureReadyAsync(t.Aborted).ConfigureAwait(false);
+                await Vad!.ResetStreamAsync(t.Aborted).ConfigureAwait(false);
+            }
+
+            var update = samples.Length > 0
+                ? await Vad!.AcceptAsync(samples, t.Aborted).ConfigureAwait(false)
+                : new AiVadUpdate(false, Vad!.LastProbability, Array.Empty<AiSpeechSpan>(), 0);
+
+            if (flush)
+            {
+                var tail = await Vad!.FlushAsync(t.Aborted).ConfigureAwait(false);
+                if (tail.Spans.Count > 0)
+                    update = update with { Spans = update.Spans.Concat(tail.Spans).ToArray() };
+            }
+
+            await t.WriteJsonAsync(200, new
+            {
+                speech_active = update.SpeechActive,
+                probability = update.Probability,
+                spans = update.Spans.Select(s => new { start = s.StartSample, length = s.Length }).ToArray(),
+                frame_ms = update.FrameMs,
+                mean_frame_ms = Vad!.MeanFrameMs,
+                model = Vad!.ModelName,
+            });
+        }
+        catch (Exception ex)
+        {
+            // As /api/transcribe: report it with the STACK. A silent endpointer is indistinguishable from
+            // a quiet room, and the loop would wait forever on one.
             await t.WriteJsonAsync(500, new
             {
                 error = $"{ex.GetType().Name}: {ex.Message}",

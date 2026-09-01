@@ -151,11 +151,20 @@ public sealed class AiVoiceTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// ⚠️ This is the test the demo's hands-free button is actually backed by, and it exists because the
-    /// stage tests cannot cover it. Each stage passing says nothing about whether the transcript is
-    /// something the tokenizer can speak, or whether three model kinds can be used in one turn without
-    /// evicting each other. That last one is the reason a symmetric eviction ring was replaced by a budget:
-    /// with a ring this turn re-uploads every model, three times, and no conversation is possible.
+    /// ⚠️ <b>THIS IS NOT A TEST OF THE HANDS-FREE BUTTON, and this remark used to claim it was.</b> It
+    /// drives three server APIs in sequence on a fixture. It opens no microphone, does no endpointing, and
+    /// plays no audio - so it stayed green while the button a person clicks recorded a fixed 30 s of room
+    /// tone regardless of what was said, spent ~45 s transcribing it, and produced no sound. Every one of
+    /// those three defects lived in a part of the loop this file cannot reach. The UI gate is
+    /// <c>tools/drive-hands-free.cs</c>; if you are changing the hands-free loop, that is the one that has
+    /// to go green, and this one cannot substitute for it.
+    /// </para>
+    /// <para>
+    /// What it DOES prove, and it is worth keeping: the stages compose. Each stage passing alone says
+    /// nothing about whether a transcript is something the tokenizer can speak, or whether three model
+    /// kinds can be used in one turn without evicting each other. That last one is why a symmetric
+    /// eviction ring was replaced by a budget - with a ring this turn re-uploads every model, three times,
+    /// and no conversation is possible at any inference speed.
     /// </para>
     /// <para>
     /// ⚠️ Asserts on transcript CONTENT before answering. A recogniser handed a bad segment returns

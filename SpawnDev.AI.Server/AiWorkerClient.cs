@@ -129,10 +129,96 @@ public sealed class AiWorkerClient
         var json = await RequestJsonAsync("POST", "/api/transcribe", body);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
+
+        // ⚠️ Logged HERE, in the window scope, because this is where the page console is. The engine that
+        // produced these numbers lives in a shared worker whose console nothing on the page can see - so
+        // the split it prints there is invisible to DevTools and to the UI gate. Re-emitting it on this
+        // side is what turns it into a number anyone can actually read.
+        if (root.TryGetProperty("timing", out var tm) && tm.ValueKind == JsonValueKind.Object)
+        {
+            double D(string n) => tm.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0;
+            Console.WriteLine($"[transcribe] {D("graph_runs"):F0} graph runs, executor {D("executor_ms"):F0}ms | "
+                + $"readbacks {D("readback_count"):F0} ({D("readback_ms"):F0}ms) | "
+                + $"drains {D("drain_count"):F0} ({D("drain_ms"):F0}ms) | "
+                + $"residual {D("residual_ms"):F0}ms (dispatch+CPU+alloc) | "
+                + $"outside the executor {D("outside_executor_ms"):F0}ms, of which CPU mel STFT "
+                + $"{D("mel_ms"):F0}ms (FIXED - padded to 30s before the STFT)");
+        }
+
         return (
             root.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "",
             root.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "",
             root.TryGetProperty("inference_ms", out var ms) ? ms.GetDouble() : 0);
+    }
+
+    /// <summary>
+    /// Make model kinds resident now, so the first request that needs one does not pay for the load.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Never throws on a kind that failed to warm - warming is an optimisation and the lazy path still
+    /// works. Returns what warmed and what did not, so a caller can SAY so instead of silently waiting.
+    /// </remarks>
+    /// <param name="kinds">"vad", "speech", "voice". Empty warms all three.</param>
+    public async Task<(string[] Warmed, (string Kind, string Error)[] Failed)> WarmAsync(params string[] kinds)
+    {
+        var body = JsonSerializer.Serialize(new { kinds }, J);
+        var json = await RequestJsonAsync("POST", "/api/warm", body);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var warmed = root.TryGetProperty("warmed", out var w) && w.ValueKind == JsonValueKind.Array
+            ? w.EnumerateArray().Select(x => x.GetString() ?? "").ToArray()
+            : Array.Empty<string>();
+        var failed = root.TryGetProperty("failed", out var f) && f.ValueKind == JsonValueKind.Array
+            ? f.EnumerateArray()
+               .Select(x => (x.GetProperty("kind").GetString() ?? "",
+                             x.GetProperty("error").GetString() ?? ""))
+               .ToArray()
+            : Array.Empty<(string, string)>();
+        return (warmed, failed);
+    }
+
+    /// <summary>
+    /// Feed the endpointer the next slice of a live microphone stream and learn where utterances end.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ Returns SPANS - offsets into the caller's own stream - not audio. The caller holds the samples it
+    /// sent; handing a whole utterance back across the worker boundary as a JSON number array would put
+    /// six figures of numbers on the WASM heap to say what two integers say. Slice your own buffer.
+    /// </para>
+    /// <para>
+    /// ⚠️ Offsets are counted from the first sample after the last <paramref name="reset"/>. Reopening the
+    /// microphone without one yields offsets that point past the end of the new recording.
+    /// </para>
+    /// <para>
+    /// ⚠️ Silero's clock advances in whole 512-sample frames, so a span is frame-aligned and can name up to
+    /// 511 samples the caller has not appended yet. CLAMP the slice to your buffer length.
+    /// </para>
+    /// </remarks>
+    /// <param name="samples">Mono PCM at 16 kHz continuing the stream. May be empty when only resetting.</param>
+    /// <param name="reset">Start a new stream first (clears recurrent state and the sample clock).</param>
+    /// <param name="flush">Close out speech still in progress - the microphone is being stopped.</param>
+    public async Task<(bool SpeechActive, float Probability, (long Start, int Length)[] Spans,
+        double MeanFrameMs)> VadAsync(float[] samples, bool reset = false, bool flush = false)
+    {
+        var body = JsonSerializer.Serialize(new { samples, reset, flush }, J);
+        var json = await RequestJsonAsync("POST", "/api/vad", body);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("error", out var err))
+            throw new Exception(err.GetString() ?? "vad failed");
+
+        var spans = Array.Empty<(long, int)>();
+        if (root.TryGetProperty("spans", out var spansEl) && spansEl.ValueKind == JsonValueKind.Array)
+            spans = spansEl.EnumerateArray()
+                .Select(s => (s.GetProperty("start").GetInt64(), s.GetProperty("length").GetInt32()))
+                .ToArray();
+
+        return (
+            root.TryGetProperty("speech_active", out var a) && a.ValueKind == JsonValueKind.True,
+            root.TryGetProperty("probability", out var p) ? p.GetSingle() : 0f,
+            spans,
+            root.TryGetProperty("mean_frame_ms", out var mf) ? mf.GetDouble() : 0);
     }
 
     /// <summary>

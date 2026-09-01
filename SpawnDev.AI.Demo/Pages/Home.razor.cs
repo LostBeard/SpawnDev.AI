@@ -326,20 +326,52 @@ public partial class Home : IDisposable
     // Speak instead of typing: the microphone feeds Whisper in the AI worker and the transcript lands in
     // the composer, where it can be edited before sending rather than fired off blind.
     //
-    // Capture runs at the microphone's NATIVE rate (48 kHz on most hardware) and the whole utterance is
-    // converted ONCE at the end. Resampling each ~10 ms chunk instead would hand the filter no signal
-    // either side of a chunk boundary, stitching in a discontinuity 100 times a second. Converting once
-    // also cuts what crosses to the worker by 3x, which matters here: AiWorkerClient.TranscribeAsync
-    // JSON-encodes the samples, so 9 s at 48 kHz would be 432,000 numbers.
+    // Capture runs at the microphone's NATIVE rate (48 kHz on most hardware) and is converted to 16 kHz as
+    // it arrives, by a STREAMING resampler. Calling AudioPreprocessor.Resample per ~10 ms chunk instead
+    // would hand the filter no signal either side of a chunk boundary, stitching in a discontinuity 100
+    // times a second; StreamingResampler carries the tail across chunks and is gated to produce output
+    // bit-identical to a whole-buffer call (ILGPU.ML Streaming_MatchesWholeBufferResample).
+    //
+    // Converting on the way IN rather than once at the end is what makes live endpointing possible at all:
+    // the detector needs a continuous 16 kHz stream while the microphone is still open. It also cuts what
+    // crosses to the worker by 3x, which matters here - AiWorkerClient JSON-encodes samples, so 9 s at
+    // 48 kHz would be 432,000 numbers.
     //
     // ⚠️ Requires an ILGPU.ML whose AudioPreprocessor.Resample band-limits before decimating. Up to and
     // including 5.2.2 it was bare linear interpolation, which aliased 8-24 kHz back onto the speech and
     // made Whisper return fluent, confident, unrelated text.
     const int WhisperRate = 16000;
+
+    // ⚠️ This is a SAFETY CEILING now, not the way a turn ends. It used to be the ONLY way a turn ended:
+    // the loop recorded for a flat 30 s no matter what was said, so four words meant sitting through 26 s
+    // of silence, every turn, before anything happened. Silero decides the end now (VadOptions
+    // .MinSilenceDuration); this only bounds a microphone left open in a noisy room.
     const double MaxUtteranceSeconds = 30.0;
 
+    /// <summary>Audio kept behind the live edge while nothing is being said, as a lead-in guard.</summary>
+    /// <remarks>
+    /// The detector opens a segment slightly BEFORE the frame that crossed the threshold (VadOptions
+    /// .SpeechPad plus one frame), so the window cannot discard right up to the live edge or the first
+    /// consonant of every utterance is already gone when the span naming it arrives. Two seconds is far
+    /// more than the detector can reach back for and costs 128 KB.
+    /// </remarks>
+    const double SilentTailKeepSeconds = 2.0;
+
     MediaStreamCapture? _mic;
+
+    /// <summary>The canonical capture buffer: mono, 16 kHz, what the recogniser and the cloner both use.</summary>
     readonly List<float> _micSamples = new();
+
+    /// <summary>Absolute index, in the 16 kHz stream, of <c>_micSamples[0]</c>.</summary>
+    /// <remarks>
+    /// The endpointer answers in offsets from the start of the stream, and quiet audio is dropped from the
+    /// front of the buffer while nobody is talking - so a span cannot be indexed into the list directly.
+    /// Without this a hands-free session that waited a while before you spoke would slice the wrong audio,
+    /// which does not throw: it transcribes and CLONES A VOICE from the wrong seconds.
+    /// </remarks>
+    long _micBufferStart;
+
+    StreamingResampler? _micResampler;
     int _micRate = WhisperRate;
     bool _listening;
     double _listenSeconds;
@@ -365,9 +397,46 @@ public partial class Home : IDisposable
         _handsFree = !_handsFree;
         if (_handsFree)
         {
-            _status = "Hands-free on — listening. Say something.";
+            // ⚠️ Warm the three models BEFORE the first turn, and say so while it happens. Loaded lazily
+            // they load INSIDE the turn that needs them, so the user's first sentence is followed by a
+            // recogniser download and the first reply by a voice download - MEASURED at 88.7 s for that
+            // first spoken reply, with the text answer already on screen and no indication of why. The
+            // work is identical; only its position in the conversation changes.
+            //
+            // Warming is best-effort. A kind that fails here is still attempted lazily by its own route,
+            // so a preload failure must not end the conversation before it starts.
+            _status = "Getting ready — loading the endpointer, recogniser and voice…";
+            StateHasChanged();
+            // ⚠️ ONLY the endpointer is waited for. It is the one model needed before the microphone can
+            // usefully open, and it is by far the smallest (643 KB). Waiting for all three here would keep
+            // the microphone shut for minutes on a cold cache - trading "the first turn is slow" for "the
+            // button does nothing for a while", which is not an improvement.
+            string? warmNote = null;
+            try
+            {
+                var (_, failed) = await Ai.WarmAsync("vad");
+                if (failed.Length > 0)
+                    warmNote = $"{string.Join(", ", failed.Select(f => $"{f.Kind} ({f.Error})"))} did not "
+                             + "preload; it will be loaded when first needed.";
+            }
+            catch (Exception ex)
+            {
+                warmNote = $"Could not preload the endpointer ({ex.Message}); loading it as needed.";
+            }
+
+            // ⚠️ Do NOT overwrite a warning with the cheerful line. Reporting a problem and then erasing it
+            // one statement later is the same defect that hid every spoken-reply failure until now.
+            _status = warmNote == null
+                ? "Hands-free on — listening. Say something."
+                : $"Hands-free on — listening. {warmNote}";
+            if (warmNote != null) _messages.Add(new Msg { Role = "system", Text = warmNote });
             StateHasChanged();
             await StartListeningAsync();
+
+            // The recogniser and the voice load WHILE the user speaks their first sentence. That is the
+            // whole point: the work is unavoidable, its position in the conversation is not. Transcription
+            // cannot begin until they stop talking anyway, so these seconds are otherwise dead.
+            _ = WarmInBackgroundAsync();
         }
         else
         {
@@ -378,6 +447,49 @@ public partial class Home : IDisposable
         }
     }
 
+    /// <summary>
+    /// Load the recogniser and the voice while the user is talking.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Nothing may escape this method - it is fire-and-forget, and an unhandled exception on a runtime
+    /// callback EXITS the .NET WASM runtime and takes the page with it. A warm failure is reported and
+    /// otherwise ignored: the lazy path in each engine still works, so failing to PRELOAD must never end
+    /// a conversation that has just started.
+    /// </remarks>
+    async Task WarmInBackgroundAsync()
+    {
+        try
+        {
+            var (_, failed) = await Ai.WarmAsync("speech", "voice");
+            if (failed.Length == 0) return;
+            var note = $"{string.Join(", ", failed.Select(f => $"{f.Kind} ({f.Error})"))} did not preload; "
+                     + "it will be loaded when first needed.";
+            await InvokeAsync(() =>
+            {
+                _messages.Add(new Msg { Role = "system", Text = note });
+                StateHasChanged();
+            });
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                JS.LogError($"[hands-free] background warm failed: {ex.Message}");
+                await InvokeAsync(() =>
+                {
+                    _messages.Add(new Msg
+                    {
+                        Role = "system",
+                        Text = $"Could not preload the recogniser/voice ({ex.Message}); they will load when "
+                             + "first needed, which makes the first reply slower.",
+                    });
+                    StateHasChanged();
+                });
+            }
+            catch { /* nothing may escape */ }
+        }
+    }
+
     /// <summary>Speak one reply, then hand the microphone back.</summary>
     async Task SpeakReplyAsync(string text)
     {
@@ -385,15 +497,21 @@ public partial class Home : IDisposable
         {
             // Nothing to clone from. Say so rather than falling silent: a hands-free loop that stops
             // talking for no stated reason is indistinguishable from one that crashed.
-            _status = "Nothing to speak with — the voice is cloned from what you said, and I have no "
-                    + "audio for this turn.";
-            StateHasChanged();
+            SpeechFailed("Nothing to speak with — the voice is cloned from what you said, and I have no "
+                       + "audio for this turn.");
             return;
         }
 
         try
         {
-            _busyNote = "Speaking…";
+            // ⚠️ _speaking, not _busyNote. Speaking deliberately happens AFTER the turn's `finally`, so the
+            // composer is usable while it talks - which also means `_busy` is false and the in-progress
+            // bubble that renders `_busyNote` is not in the DOM at all. The note was being set into a
+            // element nobody displays, so the first spoken reply (a cold ZipVoice load: two int8 graphs,
+            // a token table and a 54 MB vocoder) showed the user a finished text answer and then nothing
+            // whatsoever for minutes. Indistinguishable from "it just doesn't speak".
+            _speaking = true;
+            _status = "Preparing the voice…";
             StateHasChanged();
 
             var (samples, rate, _, ms) = await Ai.SpeakAsync(text, _lastHeardText, _lastHeardSamples,
@@ -408,16 +526,41 @@ public partial class Home : IDisposable
         }
         catch (Exception ex)
         {
-            _status = $"Speaking failed: {ex.Message}";
+            SpeechFailed($"Speaking failed: {ex.Message}");
         }
         finally
         {
+            _speaking = false;
             _busyNote = "";
             StateHasChanged();
         }
 
         // Back to listening for the next turn - only now, with the speakers quiet.
         if (_handsFree && !_listening) await StartListeningAsync();
+    }
+
+    /// <summary>True while a reply is being synthesised or played.</summary>
+    bool _speaking;
+
+    /// <summary>
+    /// Record a failure to speak somewhere it will still be there a second later.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ THE REASON THIS IS NOT JUST <c>_status</c>. The hands-free loop goes straight back to listening
+    /// after a turn, and <see cref="StartListeningAsync"/> overwrites the status line with "Listening…" -
+    /// so a spoken reply that failed reported itself for a fraction of a second and then erased the
+    /// evidence. From the outside that is indistinguishable from an assistant that simply answers in text,
+    /// which is exactly how "it never speaks" went unexplained: the app WAS saying why, into a field it
+    /// then cleared. A chat bubble persists, and the console line survives for a gate to read.
+    /// </remarks>
+    void SpeechFailed(string message)
+    {
+        _status = message;
+        _messages.Add(new Msg { Role = "system", Text = message });
+        // JS.LogError, never Console.Error.WriteLine - the latter raises Blazor's error UI, which makes a
+        // gate report the whole turn FAILED even when everything else worked.
+        JS.LogError($"[hands-free] {message}");
+        StateHasChanged();
     }
 
     async Task ToggleMicAsync()
@@ -438,7 +581,29 @@ public partial class Home : IDisposable
         _mic.OnAudioError += OnMicError;
 
         lock (_micSamples) _micSamples.Clear();
+        lock (_vadQueue) _vadQueue.Clear();
+        _micBufferStart = 0;
+        _micResampler = null;
         _listenSeconds = 0;
+        _speechActive = false;
+        _speechProbability = 0;
+
+        // \u26a0\ufe0f Reset the endpointer's stream BEFORE the first sample of the new one. It answers in offsets
+        // counted from its own clock, so a clock carried over from the previous turn returns spans that
+        // point past the end of this recording - which does not throw, it slices the wrong audio.
+        // Skipped when the endpointer has already failed; the loop is being torn down in that case.
+        if (!_vadFailed)
+        {
+            try { await Ai.VadAsync(System.Array.Empty<float>(), reset: true); }
+            catch (Exception ex)
+            {
+                _vadFailed = true;
+                _status = $"Endpointing unavailable, so hands-free cannot tell when you stop talking: {ex.Message}";
+                _handsFree = false;
+                StateHasChanged();
+                return;
+            }
+        }
 
         if (!await _mic.StartMicrophoneAsync())
         {
@@ -448,23 +613,54 @@ public partial class Home : IDisposable
         }
 
         _listening = true;
-        _status = "Listening\u2026";
+        _status = _handsFree ? "Listening \u2014 say something, and stop when you're done." : "Listening\u2026";
         StateHasChanged();
     }
 
-    async Task StopListeningAsync()
+    /// <summary>
+    /// Stop capturing and transcribe what was said.
+    /// </summary>
+    /// <param name="spanStart">
+    /// Start of the utterance the endpointer closed, as an absolute offset in the 16 kHz stream. Null
+    /// transcribes the whole buffer, which is what the push-to-talk button wants: the user decided the
+    /// bounds by pressing stop.
+    /// </param>
+    /// <param name="spanLength">Length of that utterance in samples.</param>
+    async Task StopListeningAsync(long? spanStart = null, int? spanLength = null)
     {
         if (!_listening) return;
         _mic?.StopMicrophone();
         _listening = false;
 
-        float[] captured;
-        lock (_micSamples) captured = _micSamples.ToArray();
+        // Whatever the resampler still holds is the tail of the last word - take it before it is dropped.
+        if (_micResampler != null)
+        {
+            var tail = _micResampler.Flush();
+            if (tail.Length > 0) lock (_micSamples) _micSamples.AddRange(tail);
+            _micResampler = null;
+        }
 
-        if (captured.Length < _micRate / 2)
+        float[] captured;
+        lock (_micSamples)
+        {
+            if (spanStart is long s && spanLength is int n)
+            {
+                // \u26a0\ufe0f CLAMP. Silero's clock advances in whole 512-sample frames, so a span can name up to
+                // 511 samples past what has been appended, and quiet audio has been trimmed off the
+                // front - so neither end of the span can be trusted to sit inside the list.
+                int from = (int)Math.Max(0, s - _micBufferStart);
+                int to = (int)Math.Min(_micSamples.Count, from + (long)n);
+                captured = from < to ? _micSamples.GetRange(from, to - from).ToArray() : System.Array.Empty<float>();
+            }
+            else captured = _micSamples.ToArray();
+        }
+
+        if (captured.Length < WhisperRate / 2)
         {
             _status = "That was too short to transcribe.";
             StateHasChanged();
+            // Hands-free must go back to listening rather than ending the conversation on a cough.
+            if (_handsFree && !_vadFailed) await StartListeningAsync();
             return;
         }
 
@@ -473,9 +669,9 @@ public partial class Home : IDisposable
         StateHasChanged();
         try
         {
-            var samples = _micRate == WhisperRate
-                ? captured
-                : AudioPreprocessor.Resample(captured, _micRate, WhisperRate);
+            // Already 16 kHz: the stream was converted on the way in, by a resampler whose output is
+            // gated to equal a whole-buffer conversion exactly.
+            var samples = captured;
 
             var (text, _, ms) = await Ai.TranscribeAsync(samples, WhisperRate);
             text = (text ?? "").Trim();
@@ -489,7 +685,10 @@ public partial class Home : IDisposable
             else
             {
                 _input = string.IsNullOrWhiteSpace(_input) ? text : $"{_input.TrimEnd()} {text}";
-                _status = $"Transcribed {captured.Length / (double)_micRate:F1}s in {ms:F0} ms";
+                // ⚠️ WhisperRate, not _micRate: `captured` is the CONVERTED stream. Dividing 16 kHz
+                // samples by the microphone's native 48 kHz reports a 4.0 s utterance as 1.3 s, which
+                // reads as dropped audio and sends you hunting a capture bug that is not there.
+                _status = $"Transcribed {captured.Length / (double)WhisperRate:F1}s in {ms:F0} ms";
                 // Keep the resampled audio and its transcript: they are the voice reference for the reply.
                 // ⚠️ The 16 kHz version, not the raw capture - it is what the recogniser heard, so the
                 // transcript describes exactly these samples. Handing the cloner a different rendering of
@@ -512,22 +711,50 @@ public partial class Home : IDisposable
         // Hands-free sends what it heard instead of parking it in the composer. Typing mode deliberately
         // does NOT: a transcript you can read and correct before it goes is the safer default, and the
         // whole point of hands-free is that there is nobody at the keyboard to do that.
-        if (_handsFree && !string.IsNullOrWhiteSpace(_input)) await SendAsync();
+        if (!_handsFree) return;
+
+        if (!string.IsNullOrWhiteSpace(_input)) await SendAsync();
+        // ⚠️ Nothing to send - Whisper returned "[BLANK_AUDIO]" for a segment the detector opened, which a
+        // door or a cough will do. Go back to listening. Returning here instead left the conversation
+        // silently OVER, with the microphone shut and the button still reading "hands-free on".
+        else if (!_listening && !_vadFailed) await StartListeningAsync();
     }
 
     void OnMicAudio(float[] chunk, int rate)
     {
+        // The browser can hand over a different rate than it promised, and a resampler pinned to the wrong
+        // source rate produces confident, wrong audio rather than an error.
+        if (_micResampler == null || _micResampler.SourceRate != rate)
+            _micResampler = new StreamingResampler(rate, WhisperRate);
         _micRate = rate;
+
+        var converted = _micResampler.Process(chunk);
+        if (converted.Length == 0) return;   // the resampler is holding a partial kernel window
+
         double seconds;
         lock (_micSamples)
         {
-            _micSamples.AddRange(chunk);
-            seconds = _micSamples.Count / (double)rate;
+            _micSamples.AddRange(converted);
+            seconds = (_micBufferStart + _micSamples.Count) / (double)WhisperRate;
         }
 
-        if (seconds >= MaxUtteranceSeconds)
+        // Hand the same audio to the endpointer. Not awaited: this runs on the capture callback, and an
+        // unhandled exception on a runtime callback EXITS the .NET WASM runtime and takes the page with
+        // it - so the pump owns its own error handling and this only enqueues.
+        lock (_vadQueue) _vadQueue.Enqueue(converted);
+        PumpVad();
+
+        // The safety ceiling, not the endpoint. See MaxUtteranceSeconds.
+        //
+        // ⚠️ Only while SPEECH IS OPEN. `seconds` counts every sample since the microphone opened, and a
+        // hands-free microphone is meant to sit open indefinitely waiting for someone to talk - so an
+        // unconditional ceiling fires in a silent room and transcribes the two seconds of nothing that
+        // TrimQuietAudio has kept, roughly every 30 s, forever. Waiting quietly is correct behaviour, not a
+        // condition to recover from; the ceiling is here for a talker who never pauses (and the detector's
+        // own VadOptions.MaxSpeechDuration already covers that from the other side).
+        if (_speechActive && seconds >= MaxUtteranceSeconds)
         {
-            _ = InvokeAsync(StopListeningAsync);
+            _ = InvokeAsync(() => StopListeningAsync());
             return;
         }
 
@@ -536,6 +763,129 @@ public partial class Home : IDisposable
         {
             _listenSeconds = seconds;
             _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // ── Endpointing ───────────────────────────────────────────────────────────────────────────────────
+    // Silero in the worker decides when you have stopped talking. Everything below is the plumbing that
+    // keeps ONE request in flight at a time and turns the spans it returns into a slice of _micSamples.
+    //
+    // ⚠️ The worker holds the GPU, so the detector cannot run here. Audio goes ACROSS per batch and only
+    // (start, length) comes back - never the utterance's samples, which the window already has.
+    readonly Queue<float[]> _vadQueue = new();
+    Task? _vadPump;
+    bool _vadFailed;
+
+    /// <summary>Speech probability of the last frame, for the level meter.</summary>
+    float _speechProbability;
+
+    /// <summary>Whether the endpointer currently believes someone is talking.</summary>
+    bool _speechActive;
+
+    /// <summary>Mean ms per 512-sample frame in the worker. The realtime budget is 32 ms.</summary>
+    double _vadFrameMs;
+
+    /// <summary>Start one pump if none is running. Cheap and safe to call per chunk.</summary>
+    void PumpVad()
+    {
+        lock (_vadQueue)
+        {
+            if (_vadPump != null && !_vadPump.IsCompleted) return;
+            _vadPump = Task.Run(VadPumpAsync);
+        }
+    }
+
+    async Task VadPumpAsync()
+    {
+        // ⚠️ Nothing may escape this method - it is started from a capture callback.
+        try
+        {
+            while (_listening && !_vadFailed)
+            {
+                float[] batch;
+                lock (_vadQueue)
+                {
+                    if (_vadQueue.Count == 0) return;
+                    // Coalesce whatever piled up while the last request was in flight. One crossing with
+                    // 1600 numbers beats ten with 160, and falling behind is what a fixed timer looked
+                    // like from the outside.
+                    int total = 0;
+                    foreach (var q in _vadQueue) total += q.Length;
+                    batch = new float[total];
+                    int at = 0;
+                    while (_vadQueue.Count > 0)
+                    {
+                        var q = _vadQueue.Dequeue();
+                        System.Array.Copy(q, 0, batch, at, q.Length);
+                        at += q.Length;
+                    }
+                }
+
+                var (active, probability, spans, meanFrameMs) = await Ai.VadAsync(batch);
+                _speechActive = active;
+                _speechProbability = probability;
+                _vadFrameMs = meanFrameMs;
+
+                if (spans.Length > 0)
+                {
+                    // The turn is over. Take the first closed utterance and stop; anything the detector
+                    // emitted after it belongs to the next turn, which starts with a fresh stream anyway.
+                    var (start, length) = spans[0];
+                    await InvokeAsync(() => StopListeningAsync(start, length));
+                    return;
+                }
+
+                TrimQuietAudio();
+                // Show whether it can actually hear you, and what the endpointer costs. The realtime
+                // budget is 32 ms per 512-sample frame; above that the detector falls behind the
+                // microphone and the turn ends late, which looks exactly like the fixed timer this
+                // replaced. Printing the number is how that gets noticed instead of assumed.
+                // ⚠️ The PROBABILITY is shown, not just the on/off state, and it is the first thing to look
+                // at when someone says "it didn't hear me". A number that moves when you speak but never
+                // reaches VadOptions.Threshold is a gain/threshold problem; a number pinned at zero is a
+                // dead capture path. Those two look identical if all you print is "Listening…".
+                if (_listening)
+                    _status = _speechActive
+                        ? $"Hearing you… (speech {_speechProbability:F2}, {_vadFrameMs:F1} ms/frame)"
+                        : $"Listening… (speech {_speechProbability:F2}, {_vadFrameMs:F1} ms/frame)";
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            // ⚠️ Say it out loud and STOP the loop. An endpointer that has silently died is
+            // indistinguishable from a room nobody is talking in - the microphone would stay open until
+            // the safety ceiling and the user would conclude the feature is broken without ever being
+            // told what broke. Falling back to the fixed timer quietly would be the same defect again.
+            _vadFailed = true;
+            _status = $"Endpointing failed, so hands-free cannot tell when you stop talking: {ex.Message}";
+            _handsFree = false;
+            await InvokeAsync(async () =>
+            {
+                if (_listening) await StopListeningAsync();
+                StateHasChanged();
+            });
+        }
+    }
+
+    /// <summary>
+    /// Drop audio from the front of the buffer that no utterance can still need.
+    /// </summary>
+    /// <remarks>
+    /// A hands-free microphone stays open indefinitely waiting for someone to speak, so without this the
+    /// buffer grows for as long as the conversation lasts. Only quiet audio is dropped: while speech is
+    /// open the segment's start is not known yet, and that is bounded by VadOptions.MaxSpeechDuration.
+    /// </remarks>
+    void TrimQuietAudio()
+    {
+        if (_speechActive) return;
+        int keep = (int)(SilentTailKeepSeconds * WhisperRate);
+        lock (_micSamples)
+        {
+            int drop = _micSamples.Count - keep;
+            if (drop <= 0) return;
+            _micSamples.RemoveRange(0, drop);
+            _micBufferStart += drop;
         }
     }
 
