@@ -1,3 +1,4 @@
+using System.Linq;
 using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.Hub;
@@ -104,9 +105,14 @@ public sealed class AiVoiceEngine : IDisposable
     /// </param>
     /// <param name="referenceSamples">Mono PCM of the voice to clone.</param>
     /// <param name="referenceSampleRate">Sample rate of the reference.</param>
+    /// <param name="maxSpokenCharacters">
+    /// Optional per-call override of <see cref="MaxSpokenCharacters"/>. The default cap is a PRODUCT choice
+    /// (a spoken reply should be brief), not an engine limit, so a caller that genuinely wants a long
+    /// read-out can ask for one. Null or non-positive keeps the default.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     public async Task<AiSpeech> SpeakAsync(string text, string referenceText, float[] referenceSamples,
-        int referenceSampleRate, CancellationToken ct = default)
+        int referenceSampleRate, int? maxSpokenCharacters = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("nothing to say", nameof(text));
@@ -120,12 +126,72 @@ public sealed class AiVoiceEngine : IDisposable
 
         await EnsureLoadedAsync(ct).ConfigureAwait(false);
 
+        text = TrimToSpeakableLength(text, maxSpokenCharacters);
+
         var started = DateTime.UtcNow;
         var result = await _pipeline!
             .SpeakAsync(text, referenceText ?? "", referenceSamples, referenceSampleRate, _tokenizer!)
             .ConfigureAwait(false);
-        return new AiSpeech(result.Audio, result.SampleRate, ModelName,
-            (DateTime.UtcNow - started).TotalMilliseconds);
+        var inferenceMs = (DateTime.UtcNow - started).TotalMilliseconds;
+
+        // ── Where did the time go? ──
+        // Browser TTS is far slower than realtime while CUDA is faster than realtime, and the difference is
+        // ORCHESTRATION, not arithmetic - the same shape as the Silero VAD win (177.9 -> 7.81 ms/frame, from
+        // capture/replay plus driving readbacks to zero). Printing the executor's own split means the next
+        // person cuts the dominant term instead of guessing at one; readbacks in particular are a ~345 ms
+        // mapAsync round trip each on WebGPU, and LastRunReadbackNames NAMES the node that caused them.
+        try
+        {
+            var seconds = result.Audio.Length / (double)result.SampleRate;
+            var readbacks = SpawnDev.ILGPU.ML.Graph.GraphExecutor.LastRunReadbackCount;
+            Console.WriteLine($"[AiVoiceEngine] {seconds:F2}s of audio in {inferenceMs:F0}ms "
+                + $"({(seconds > 0 ? inferenceMs / 1000.0 / seconds : 0):F1}x realtime) | "
+                + $"readbacks {readbacks} ({SpawnDev.ILGPU.ML.Graph.GraphExecutor.LastRunReadbackMs:F0}ms) "
+                + $"syncs {SpawnDev.ILGPU.ML.Graph.GraphExecutor.LastRunSyncDrainCount} "
+                + $"({SpawnDev.ILGPU.ML.Graph.GraphExecutor.LastRunSyncDrainMs:F0}ms)"
+                + (readbacks > 0
+                    ? $" | last readback names: {string.Join(", ", SpawnDev.ILGPU.ML.Graph.GraphExecutor.LastRunReadbackNames.Take(5))}"
+                    : ""));
+        }
+        catch { /* a diagnostic must never fail a request */ }
+
+        return new AiSpeech(result.Audio, result.SampleRate, ModelName, inferenceMs);
+    }
+
+    /// <summary>
+    /// How many characters of a reply are spoken aloud. Default 320.
+    /// </summary>
+    /// <remarks>
+    /// A spoken reply is not a written one. Nobody wants a chat model's full paragraph read at them, and a
+    /// voice assistant that monologues is worse than one that is brief - so this cap is a product decision
+    /// first, and it would exist even if everything below it were free.
+    ///
+    /// ✅ The engine limit this ALSO used to hide is FIXED (ILGPU.ML 5.2.7-local.11, 2026-09-01). An
+    /// utterance past ZipVoice's precomputed [1999, 48] positional table - about 21 s of speech - takes a
+    /// different If branch that recomputes the table, and that branch used to read a buffer nobody had
+    /// written: a Slice under the If was resolved at COMPILE time from the branch the compiler could see, so
+    /// its window collapsed to empty and the operator was skipped entirely. Fixed and gated - lenscale x3
+    /// (1222 frames) and x4 (1504 frames) now match onnxruntime to 3.9E-4 and 2.1E-4.
+    ///
+    /// So this cap is now PURELY the product decision above. Raise it freely; long utterances synthesise
+    /// correctly.
+    /// </remarks>
+    public int MaxSpokenCharacters { get; set; } = 320;
+
+    /// <summary>Cut a reply at a sentence end near the cap, rather than mid-word.</summary>
+    private string TrimToSpeakableLength(string text, int? overrideCap)
+    {
+        var cap = overrideCap is > 0 ? overrideCap.Value : MaxSpokenCharacters;
+        if (text.Length <= cap) return text;
+
+        // Prefer the last sentence end inside the cap - a reply that stops mid-clause sounds broken, while
+        // one that stops a sentence early just sounds brief.
+        var window = text[..cap];
+        var cut = window.LastIndexOfAny(new[] { '.', '!', '?' });
+        var spoken = cut > cap / 3 ? window[..(cut + 1)] : window.TrimEnd();
+        Console.WriteLine($"[AiVoiceEngine] speaking {spoken.Length} of {text.Length} characters "
+                        + $"(cap={cap})");
+        return spoken;
     }
 
     private async Task EnsureLoadedAsync(CancellationToken ct)

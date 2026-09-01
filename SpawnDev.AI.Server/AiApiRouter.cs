@@ -696,7 +696,17 @@ public sealed class AiApiRouter
 
         try
         {
-            var result = await Voice!.SpeakAsync(text, referenceText, reference, sampleRate)
+            // Optional: a caller can ask for a longer read-out than the default brevity cap. Honoured
+            // because the cap is a product choice, not an engine limit (the long-utterance defect it used
+            // to hide was fixed in ILGPU.ML 5.2.7-local.11).
+            // ⚠️ ValueKind FIRST. TryGetInt32 THROWS on a non-number element instead of returning false, and
+            // the client serialises `max_spoken_characters: null` whenever no override is given - so the
+            // property EXISTS and is Null, and the "Try" name reads as safe when it is not. That 500'd every
+            // ordinary speak request the moment this field was added.
+            int? maxSpoken = body.TryGetProperty("max_spoken_characters", out var msEl)
+                && msEl.ValueKind == JsonValueKind.Number
+                && msEl.TryGetInt32(out var ms) && ms > 0 ? ms : null;
+            var result = await Voice!.SpeakAsync(text, referenceText, reference, sampleRate, maxSpoken)
                 .ConfigureAwait(false);
             await t.WriteJsonAsync(200, new
             {

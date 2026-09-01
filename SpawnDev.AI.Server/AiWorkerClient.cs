@@ -147,7 +147,8 @@ public sealed class AiWorkerClient
     /// Float32Array is the follow-up; this signature does not change when it lands.
     /// </remarks>
     public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs)> SpeakAsync(
-        string text, string referenceText, float[] referenceSamples, int referenceSampleRate)
+        string text, string referenceText, float[] referenceSamples, int referenceSampleRate,
+        int? maxSpokenCharacters = null)
     {
         var body = JsonSerializer.Serialize(new
         {
@@ -155,6 +156,7 @@ public sealed class AiWorkerClient
             reference_text = referenceText,
             reference_samples = referenceSamples,
             sample_rate = referenceSampleRate,
+            max_spoken_characters = maxSpokenCharacters,
         }, J);
         var json = await RequestJsonAsync("POST", "/api/speak", body);
         using var doc = JsonDocument.Parse(json);

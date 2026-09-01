@@ -84,6 +84,69 @@ public sealed class AiVoiceTests
     }
 
     /// <summary>
+    /// A reply LONGER than ZipVoice's precomputed positional table still synthesises correctly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ THE FIXTURE MUST CROSS THE BOUNDARY OR IT PROVES NOTHING. Past roughly 21 s of speech the decoder
+    /// takes a DIFFERENT If branch - one that recomputes the relative-position table instead of reading the
+    /// precomputed [1999, 48] constant - and until 2026-09-01 that branch read a buffer nobody had written:
+    /// a Slice under the If was resolved at COMPILE time from the branch the compiler could see, its window
+    /// collapsed to empty, and a zero-element output SKIPS its operator entirely. A pooled buffer holds the
+    /// previous tensor's plausible values, so the failure was audible-but-wrong speech rather than an error.
+    /// </para>
+    /// <para>
+    /// This is why the line below is long and why the cap is raised for this call: the demo's default
+    /// <c>MaxSpokenCharacters</c> of 320 exists to keep spoken replies brief, and it also meant the product
+    /// never reached the branch. A short fixture passes against the broken engine.
+    /// </para>
+    /// <para>
+    /// Asserts amplitude and a duration FLOOR - the point is that the long path produced a long, audible
+    /// utterance, not a truncated one that merely avoided crashing.
+    /// </para>
+    /// </remarks>
+    [AiTest(Heavy = true, Timeout = 1_800_000)]
+    public async Task SpeaksALongReplyPastThePositionalTable()
+    {
+        await _client.InitAsync();
+        var (reference, referenceRate) = await LoadFixtureAsync();
+
+        // ~700 characters: comfortably past the ~21 s branch boundary, and past the 320-char default cap.
+        const string line =
+            "Here is a longer answer, read aloud in full. The engine that produces this speech builds a "
+          + "relative position table for every utterance it generates. For short lines it reads a table "
+          + "that was computed ahead of time and stored inside the model. For longer lines that stored "
+          + "table is too small, so the model takes a different path and rebuilds the table from scratch "
+          + "while it is running. That second path is the one this sentence is here to exercise, because "
+          + "for a long time it quietly produced the wrong numbers and nobody could hear the difference "
+          + "until the speech had already been played out loud to somebody.";
+
+        var sw = Stopwatch.StartNew();
+        var (samples, rate, model, ms) = await _client.SpeakAsync(
+            line, KnownTranscript, reference, referenceRate, maxSpokenCharacters: 4000);
+        sw.Stop();
+
+        if (samples == null || samples.Length == 0)
+            throw new Exception("speak returned NO audio for the long line");
+
+        float peak = 0f;
+        double energy = 0;
+        foreach (var v in samples) { peak = MathF.Max(peak, MathF.Abs(v)); energy += (double)v * v; }
+        var rms = Math.Sqrt(energy / samples.Length);
+        var seconds = samples.Length / (double)rate;
+
+        Console.WriteLine($"[AiVoiceTests] LONG {model}: {seconds:F2}s @ {rate}Hz for {line.Length} chars "
+                        + $"in {ms:F0}ms (wall {sw.Elapsed.TotalSeconds:F1}s), peak {peak:F3} rms {rms:F4}");
+
+        if (peak < 0.01f || rms < 0.005)
+            throw new Exception($"the long reply is effectively SILENCE (peak {peak:F5}, rms {rms:F5})");
+        if (seconds < 21.0)
+            throw new Exception($"{seconds:F2}s for {line.Length} characters - too SHORT to have crossed the "
+                              + "recomputed-table boundary, so this run did not exercise the long path at "
+                              + "all. Check that the cap override reached the engine.");
+    }
+
+    /// <summary>
     /// The whole hands-free turn: hear it, answer it, speak the answer in the voice that asked.
     /// </summary>
     /// <remarks>
