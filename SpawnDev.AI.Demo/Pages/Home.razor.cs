@@ -103,6 +103,35 @@ public partial class Home : IDisposable
         string? spokenReply = null;
         _busyNote = _messages.Count(m => m.Role == "user") == 1
             ? "first message loads the model - downloads once, then cached" : "";
+        // ⚠️ A turn that has produced no token yet renders an EMPTY in-progress bubble. On a cold turn
+        // that state can last minutes (GGUF load + first-execution kernel compilation) and it is
+        // indistinguishable from a hung page - Captain reported exactly that: "transcribed fine then
+        // produced NO assistant reply in 15 minutes". The speak path already learned this lesson and grew
+        // a moving counter; the chat path never did. A number that MOVES is the whole difference between
+        // "slow" and "broken".
+        var turnStarted = DateTime.UtcNow;
+        DateTime? firstDeltaAt = null;
+        using var waitTicker = new CancellationTokenSource();
+        var waitTickerTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!waitTicker.IsCancellationRequested)
+                {
+                    await Task.Delay(500, waitTicker.Token);
+                    if (waitTicker.IsCancellationRequested) break;
+                    // Once tokens flow the streaming text is itself the progress indicator; the caption
+                    // only has a job while there is nothing else on screen.
+                    if (firstDeltaAt != null) break;
+                    var secs = (DateTime.UtcNow - turnStarted).TotalSeconds;
+                    _busyNote = $"waiting for the first token… {secs:F0}s"
+                              + (secs > 20 ? " (loading the model and compiling kernels)" : "");
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch (OperationCanceledException) { /* expected once a token arrives or the turn ends */ }
+            catch (Exception ex) { Console.WriteLine($"[HF-CHAT] ticker stopped: {ex.Message}"); }
+        });
         StateHasChanged();
         await ScrollToBottom();
 
@@ -128,6 +157,12 @@ public partial class Home : IDisposable
                 new AiGenerationOptions { MaxOutputTokens = _maxTokens, Strategy = "top_p", Temperature = _temperature, TopP = 0.9f, RepetitionPenalty = 1.15f },
                 onDelta: delta =>
                 {
+                    // ⚠️ TIME TO FIRST TOKEN is a SEPARATE measurement from decode rate, and conflating
+                    // them is what made last night's "0.4 tok/s" unexplainable: genClock starts before the
+                    // model is loaded, so a cold turn divides the token count by load + compile + decode
+                    // and reports a decode rate that was never measured. This model has run at 34 tok/s in
+                    // the browser; a number an order of magnitude off was describing a different quantity.
+                    firstDeltaAt ??= DateTime.UtcNow;
                     _streaming += delta; deltas++;
                     if (renderClock.ElapsedMilliseconds >= 100)
                     {
@@ -138,23 +173,38 @@ public partial class Home : IDisposable
                     }
                 });
             genClock.Stop();
+            waitTicker.Cancel();
+            try { await waitTickerTask; } catch { /* the ticker reports its own failures */ }
+
+            // Decode rate is measured from the FIRST TOKEN onward. Everything before it is load and
+            // kernel compilation, which is a real cost and is reported separately rather than smeared
+            // into a per-token number that then describes nothing.
+            double ttftSeconds = firstDeltaAt is { } t ? (t - turnStarted).TotalSeconds : 0;
+            double decodeSeconds = firstDeltaAt is { } f ? (DateTime.UtcNow - f).TotalSeconds : 0;
 
             var msg = new Msg
             {
                 Role = "assistant",
                 Ms = genClock.Elapsed.TotalMilliseconds,
-                TokPerSec = deltas > 1 ? deltas / genClock.Elapsed.TotalSeconds : 0,
+                TokPerSec = deltas > 1 && decodeSeconds > 0 ? deltas / decodeSeconds : 0,
                 Truncated = doneReason == "length",
             };
+            Console.WriteLine($"[HF-CHAT] {deltas} deltas: first token after {ttftSeconds:F1}s, "
+                            + $"then {msg.TokPerSec:F1} tok/s over {decodeSeconds:F1}s "
+                            + $"(total {genClock.Elapsed.TotalSeconds:F1}s)");
             msg.Text = await ResolveArtifactsAsync(_streaming, msg.Images);
             _messages.Add(msg);
-            _status = $"last response: {msg.Ms / 1000.0:F1}s · {msg.TokPerSec:F1} tok/s · model {_model}";
+            _status = $"last response: {msg.Ms / 1000.0:F1}s · {ttftSeconds:F1}s to first token · "
+                    + $"{msg.TokPerSec:F1} tok/s · model {_model}";
             await RefreshStorageAsync();
             spokenReply = msg.Text;
         }
         catch (Exception ex) { _messages.Add(new Msg { Role = "system", Text = $"Error: {ex.Message}" }); }
         finally
         {
+            // Belt and braces: the ticker is also cancelled on the success path, but an exception thrown
+            // before that leaves a background loop writing captions over the error message.
+            waitTicker.Cancel();
             _streaming = ""; _busy = false; _busyNote = "";
             StateHasChanged();
             await ScrollToBottom();

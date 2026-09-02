@@ -16,6 +16,19 @@ public sealed record AiSpeech(float[] Samples, int SampleRate, string Model, dou
 {
     /// <summary>Length of the generated audio in seconds.</summary>
     public double DurationSeconds => SampleRate > 0 ? (double)Samples.Length / SampleRate : 0;
+
+    /// <summary>Length of the reference clip as it was handed to the engine, in seconds.</summary>
+    public double ReferenceSeconds { get; init; }
+
+    /// <summary>Length of the reference clip after dead air was removed, in seconds.</summary>
+    /// <remarks>
+    /// ⚠️ The gap between this and <see cref="ReferenceSeconds"/> is the speaking-rate error that WOULD
+    /// have been cloned. ZipVoice derives frames-per-token from the reference and stretches every
+    /// generated syllable to match, so a reference that is half dead air used to clone as speech at half
+    /// speed - which is what made the hands-free demo unintelligible. Surfaced rather than merely fixed
+    /// because "the voice sounds slow" needs a number attached to it, not another round of guessing.
+    /// </remarks>
+    public double ReferenceSpeechSeconds { get; init; }
 }
 
 /// <summary>
@@ -166,6 +179,20 @@ public sealed class AiVoiceEngine : IDisposable
         {
             var seconds = result.Audio.Length / (double)result.SampleRate;
             var readbacks = SpawnDev.ILGPU.ML.Graph.GraphExecutor.LastRunReadbackCount;
+
+            // ⚠️ The REFERENCE line, and the first one to read when a reply sounds slow. ZipVoice derives
+            // frames-per-token from the reference clip, so dead air in it clones as slow speech - MEASURED
+            // at 1.94x for a reference with 4 s of silence added. `speech` is what survived the trim; if it
+            // is far below `ref`, the microphone handed over a span that was mostly not speech, and that is
+            // a capture/endpointing problem rather than a voice one.
+            if (result.ReferenceSeconds > 0)
+                Console.WriteLine($"[AiVoiceEngine] reference {result.ReferenceSeconds:F2}s -> speech "
+                    + $"{result.ReferenceSpeechSeconds:F2}s "
+                    + $"({result.ReferenceSpeechSeconds / result.ReferenceSeconds * 100:F0}% kept); "
+                    + $"spoke {seconds:F2}s for {text.Length} chars "
+                    + $"= {text.Length / Math.Max(seconds, 1e-6):F1} chars/s "
+                    + "(natural English is 14-16)");
+
             Console.WriteLine($"[AiVoiceEngine] {seconds:F2}s of audio in {inferenceMs:F0}ms "
                 + $"({(seconds > 0 ? inferenceMs / 1000.0 / seconds : 0):F1}x realtime) | "
                 + $"readbacks {readbacks} ({SpawnDev.ILGPU.ML.Graph.GraphExecutor.LastRunReadbackMs:F0}ms) "
@@ -177,7 +204,11 @@ public sealed class AiVoiceEngine : IDisposable
         }
         catch { /* a diagnostic must never fail a request */ }
 
-        return new AiSpeech(result.Audio, result.SampleRate, ModelName, inferenceMs);
+        return new AiSpeech(result.Audio, result.SampleRate, ModelName, inferenceMs)
+        {
+            ReferenceSeconds = result.ReferenceSeconds,
+            ReferenceSpeechSeconds = result.ReferenceSpeechSeconds,
+        };
     }
 
     /// <summary>
