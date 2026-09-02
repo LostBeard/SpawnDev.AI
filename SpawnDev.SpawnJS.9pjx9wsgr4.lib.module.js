@@ -1128,19 +1128,43 @@
         static import(src) {
             return import(src);
         }
-        // Normalizes any URL that lives under the app's _framework/ folder (or the app root itself) to the
-        // app root with a trailing slash: drops a trailing file name, then a trailing "_framework/" segment.
+        // The app-root normalizer, exposed so it is diagnosable and testable directly. The test suite
+        // drives THIS function rather than a copy of the logic, so the production path is what is covered.
+        static appRootFromLoadUrl(raw) {
+            return this.#appRootFromLoadUrl(raw);
+        }
+        // Normalizes a URL some runtime artifact was loaded from into the app root, with a trailing slash.
+        //
+        // Every boot artifact - the runtime entry (dotnet.js / dotnet.<fingerprint>.js) and every resource
+        // in the boot manifest (.wasm/.dll assemblies, ICU .dat/.blat, .pdb symbols) - lives in the app's
+        // framework folder, so the app root is that folder's PARENT. Anything else was loaded from the app
+        // root itself: a bundled entrypoint (main.classic.js / main.module.js) sits beside index.html, and
+        // that is what SpawnDev.SpawnJS.WebWorkers bundles before 2.1.9 reported here.
+        //
+        // The framework folder is identified by WHAT was loaded, never by what the folder is NAMED. It is
+        // "_framework" in a normal publish, but a published app may rename it - WebWorkers'
+        // SpawnJSWebWorkersFrameworkFolderName does exactly that, because a browser extension may not have
+        // a root folder starting with '_'. Matching the literal name returned the framework folder itself
+        // as the app root there, and every URL built on it (worker entrypoints above all) resolved one
+        // level too deep.
         static #appRootFromLoadUrl(raw) {
             if (typeof raw !== 'string' || raw.length === 0) return '';
             if (raw.startsWith('blob:')) return '';
             var url;
             try { url = new URL(raw, self?.location?.href); } catch (ex) { return ''; }
-            var path = url.href.replace(/[?#].*$/, '');
-            // strip a trailing file name (a last segment containing a dot), leaving a trailing slash
-            if (!path.endsWith('/')) path = path.substring(0, path.lastIndexOf('/') + 1);
-            // strip a trailing _framework/ so the base is the app root that main.* sits at
-            path = path.replace(/(^|\/)_framework\/$/, '$1');
-            return path;
+            var segments = url.pathname.split('/');   // leading '' from the root slash
+            var file = segments.pop();                // '' when the url already names a directory
+            // A boot artifact is one level below the app root, whatever its folder is called. Guarded on
+            // length so an artifact served from the origin root cannot walk above it.
+            if (file && this.#isBootArtifact(file) && segments.length > 1) segments.pop();
+            return url.origin + segments.join('/') + '/';
+        }
+        // True for the runtime entry and for boot-manifest resources - the files that only ever live in
+        // the app's framework folder. Deliberately does NOT match a bundled entrypoint (main.*.js), which
+        // sits at the app root.
+        static #isBootArtifact(fileName) {
+            return /^dotnet(\..+)?\.m?js$/i.test(fileName)
+                || /\.(wasm|dll|dat|blat|pdb)$/i.test(fileName);
         }
         static #findAppBaseUri(dotnet) {
             if (!dotnet) return null;
