@@ -1,4 +1,4 @@
-﻿@using SpawnDev.AI.Server
+@using SpawnDev.AI.Server
 @using SpawnDev.SpawnJS
 @inject AiWorkerClient Ai
 @inject SpawnJSRuntime JS
@@ -165,6 +165,26 @@
             <button class="primary" @onclick="DirectImageFromPromptAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))" title="Generate an image directly from your prompt (bypass the LLM)">🖼️</button>
             <button class="primary" @onclick="TestDirectImageAsync" disabled="@_busy" title="IMGTEST: direct SD-Turbo, fixed lighthouse prompt (bypass LLM)">🔬</button>
         </div>
+        @* Two bars, because "it is not hearing me" has two independent halves and one bar cannot
+           separate them. INPUT is the microphone level after conversion to 16 kHz - the signal actually
+           handed to the detector, not the device's raw level, so a rate conversion that destroys the
+           audio shows up here as a dead bar while the room is loud. SPEECH is what the detector makes of
+           it. Input moving with speech flat is a threshold or model problem; input flat is capture. *@
+        @if (_listening)
+        {
+            <div class="levels">
+                <div class="lvl-row">
+                    <span class="lvl-label">input</span>
+                    <div class="lvl-track"><div class="lvl-fill" style="width:@MicLevelPercent%"></div></div>
+                    <span class="lvl-num">@_micPeak.ToString("F3")</span>
+                </div>
+                <div class="lvl-row">
+                    <span class="lvl-label">speech</span>
+                    <div class="lvl-track"><div class="lvl-fill @(_speechActive ? "speaking" : "")" style="width:@((int)(_speechProbability * 100))%"></div></div>
+                    <span class="lvl-num">@_speechProbability.ToString("F2")</span>
+                </div>
+            </div>
+        }
         <footer class="sdai-ftr">
             <span>@_status</span>
             @if (!string.IsNullOrEmpty(_storageLine))
@@ -542,6 +562,16 @@
             font-size: .92rem;
             font-family: inherit;
         }
+
+    .levels { display: flex; flex-direction: column; gap: 3px; margin: 4px 0 0; }
+    .lvl-row { display: flex; align-items: center; gap: 6px; font-size: 11px; opacity: .85; }
+    .lvl-label { width: 44px; text-align: right; }
+    .lvl-track { flex: 1; height: 6px; background: rgba(127,127,127,.25); border-radius: 3px; overflow: hidden; }
+    /* No CSS transition on the fill: this is an instrument. A bar that eases toward its value is a bar
+       that lies about how loud you were a moment ago, and the whole reason it exists is to be believed. */
+    .lvl-fill { height: 100%; background: #4a9; border-radius: 3px; }
+    .lvl-fill.speaking { background: #e85; }
+    .lvl-num { width: 42px; font-variant-numeric: tabular-nums; }
 
     .sdai-ftr {
         font-size: .68rem;

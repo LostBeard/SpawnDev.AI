@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using SpawnDev.SpawnJS.JSObjects;
 using SpawnDev.AI;
@@ -514,8 +514,44 @@ public partial class Home : IDisposable
             _status = "Preparing the voice…";
             StateHasChanged();
 
+            // ⚠️ A STATIC string held for minutes is the same defect as no string at all. The comment above
+            // records that a finished answer followed by silence was "indistinguishable from 'it just
+            // doesn't speak'" - but a caption that never changes for two minutes is equally
+            // indistinguishable from a hung page, and Captain read it exactly that way on the first cold
+            // synthesis. A number that MOVES is the whole difference between "slow" and "broken", and it
+            // costs one timer. The elapsed count keeps running until the samples come back.
+            var speakStarted = DateTime.UtcNow;
+            using var speakTicker = new CancellationTokenSource();
+            var ticker = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!speakTicker.IsCancellationRequested)
+                    {
+                        await Task.Delay(500, speakTicker.Token);
+                        if (speakTicker.IsCancellationRequested) break;
+                        var secs = (DateTime.UtcNow - speakStarted).TotalSeconds;
+                        // Only ever overwrite our OWN caption. Clobbering a failure message that arrived
+                        // while this was ticking would hide it, which is the bug this file keeps re-learning.
+                        if (_speaking && _status.StartsWith("Preparing the voice"))
+                        {
+                            _status = $"Preparing the voice… {secs:F0}s" +
+                                      (secs > 20 ? " (first synthesis compiles kernels and loads the voice)" : "");
+                            await InvokeAsync(StateHasChanged);
+                        }
+                    }
+                }
+                catch (OperationCanceledException) { /* expected on completion */ }
+                catch (Exception ex) { Console.WriteLine($"[HF-SPEAK] ticker stopped: {ex.Message}"); }
+            });
+
             var (samples, rate, _, ms) = await Ai.SpeakAsync(text, _lastHeardText, _lastHeardSamples,
                 WhisperRate);
+            speakTicker.Cancel();
+            try { await ticker; } catch { /* already reported by the ticker itself */ }
+            Console.WriteLine($"[HF-SPEAK] synthesis returned after " +
+                              $"{(DateTime.UtcNow - speakStarted).TotalSeconds:F1}s ({ms:F0} ms reported), " +
+                              $"{samples.Length} samples @ {rate} Hz");
 
             _speaker ??= new AudioPlayback(JS);
             var seconds = await _speaker.PlayAsync(samples, rate);
@@ -587,6 +623,13 @@ public partial class Home : IDisposable
         _listenSeconds = 0;
         _speechActive = false;
         _speechProbability = 0;
+        _micChunks = 0;
+        _micRawPeak = 0; _micRawRms = 0; _micPeak = 0; _micRms = 0;
+        _vadBatches = 0;
+        _vadPeakProbability = 0;
+        _micTurnPeak = 0;
+        _micTurnRms = 0;
+        _micLoggedAt = DateTime.MinValue;
 
         // \u26a0\ufe0f Reset the endpointer's stream BEFORE the first sample of the new one. It answers in offsets
         // counted from its own clock, so a clock carried over from the previous turn returns spans that
@@ -725,11 +768,59 @@ public partial class Home : IDisposable
         // The browser can hand over a different rate than it promised, and a resampler pinned to the wrong
         // source rate produces confident, wrong audio rather than an error.
         if (_micResampler == null || _micResampler.SourceRate != rate)
+        {
             _micResampler = new StreamingResampler(rate, WhisperRate);
+            // Print the ratio once per device. 48000 -> 16000 is an exact 3:1 decimation; 44100 -> 16000
+            // is not, and a rate the resampler handles badly is invisible in every other number here.
+            Console.WriteLine($"[HF-MIC] capture opened: device {rate} Hz -> {WhisperRate} Hz " +
+                              $"(ratio {(double)rate / WhisperRate:F4}), first chunk {chunk.Length} samples");
+        }
         _micRate = rate;
+
+        // Level of the RAW chunk, before any conversion. No LINQ - it silently fails in WASM logging paths.
+        float rawPeak = 0f;
+        double rawSum = 0;
+        for (int i = 0; i < chunk.Length; i++)
+        {
+            var v = chunk[i];
+            var a = v < 0 ? -v : v;
+            if (a > rawPeak) rawPeak = a;
+            rawSum += (double)v * v;
+        }
+        _micRawPeak = rawPeak;
+        _micRawRms = chunk.Length > 0 ? (float)Math.Sqrt(rawSum / chunk.Length) : 0f;
+        if (_micRawPeak > _micTurnPeak) _micTurnPeak = _micRawPeak;
+        if (_micRawRms > _micTurnRms) _micTurnRms = _micRawRms;
+        _micChunks++;
+        _micChunkSamples = chunk.Length;
 
         var converted = _micResampler.Process(chunk);
         if (converted.Length == 0) return;   // the resampler is holding a partial kernel window
+
+        // Level AFTER conversion - this is the signal the detector is actually given.
+        float peak = 0f;
+        double sum = 0;
+        for (int i = 0; i < converted.Length; i++)
+        {
+            var v = converted[i];
+            var a = v < 0 ? -v : v;
+            if (a > peak) peak = a;
+            sum += (double)v * v;
+        }
+        _micPeak = peak;
+        _micRms = converted.Length > 0 ? (float)Math.Sqrt(sum / converted.Length) : 0f;
+
+        var now = DateTime.UtcNow;
+        if ((now - _micLoggedAt).TotalMilliseconds >= 1000)
+        {
+            _micLoggedAt = now;
+            Console.WriteLine($"[HF-MIC] chunks={_micChunks} in={_micChunkSamples}@{rate}Hz " +
+                              $"raw peak={_micRawPeak:F4} rms={_micRawRms:F4} | " +
+                              $"16k peak={_micPeak:F4} rms={_micRms:F4} out={converted.Length} | " +
+                              $"TURN MAX raw peak={_micTurnPeak:F4} rms={_micTurnRms:F4} | " +
+                              $"vad batches={_vadBatches} p={_speechProbability:F3} peakP={_vadPeakProbability:F3} " +
+                              $"active={_speechActive} {_vadFrameMs:F1}ms/frame");
+        }
 
         double seconds;
         lock (_micSamples)
@@ -785,6 +876,72 @@ public partial class Home : IDisposable
     /// <summary>Mean ms per 512-sample frame in the worker. The realtime budget is 32 ms.</summary>
     double _vadFrameMs;
 
+    // ── Capture instrumentation ───────────────────────────────────────────────────────────────────────
+    // WHY BOTH SIDES OF THE RESAMPLER ARE MEASURED. "The detector never reported speech" has three very
+    // different causes that look identical from the status line: nothing is reaching the page at all, the
+    // rate conversion is destroying it, or it arrives intact and simply never crosses VadOptions.Threshold.
+    // Peak/RMS taken BEFORE and AFTER StreamingResampler separates all three in one line: loud in and
+    // silent out is the resampler, silent in is capture, loud in and loud out with a low probability is
+    // the threshold. Logging only the VAD probability - which is what the status line does - cannot tell
+    // them apart, and that is exactly the hole this fell into.
+
+    /// <summary>Peak absolute sample of the last raw capture chunk, before rate conversion.</summary>
+    float _micRawPeak;
+
+    /// <summary>RMS of the last raw capture chunk, before rate conversion.</summary>
+    float _micRawRms;
+
+    /// <summary>Peak absolute sample after conversion to 16 kHz - what the detector actually sees.</summary>
+    float _micPeak;
+
+    /// <summary>RMS after conversion to 16 kHz, driving the on-screen level meter.</summary>
+    float _micRms;
+
+    /// <summary>Chunks seen since the microphone opened, so a dead callback is distinguishable from a quiet one.</summary>
+    int _micChunks;
+
+    /// <summary>Sample count of the last raw chunk, to show the device's cadence.</summary>
+    int _micChunkSamples;
+
+    /// <summary>Wall clock of the last capture-path console line, so it prints about once a second.</summary>
+    DateTime _micLoggedAt = DateTime.MinValue;
+
+    /// <summary>VAD batches completed since listening started.</summary>
+    int _vadBatches;
+
+    /// <summary>Microphone level as 0-100 for the meter.</summary>
+    /// <remarks>
+    /// SQRT-scaled, deliberately. Speech RMS sits around 0.02-0.15 while the scale runs to 1.0, so a
+    /// linear bar for normal talking is a bar that never visibly leaves zero - which is precisely the
+    /// reading ("it is not hearing me") this is here to disprove or confirm. 0.2 RMS is taken as a loud
+    /// talker and pinned to full scale.
+    /// </remarks>
+    int MicLevelPercent
+    {
+        get
+        {
+            if (_micRms <= 0) return 0;
+            var v = Math.Sqrt(_micRms / 0.2);
+            if (v > 1) v = 1;
+            return (int)(v * 100);
+        }
+    }
+
+    /// <summary>Highest speech probability seen this turn - the single most useful number after a miss.</summary>
+    float _vadPeakProbability;
+
+    // ⚠️ TURN maxima, not last-chunk values. _micRawPeak is the peak of ONE 10 ms chunk and the line is
+    // printed once a second, so comparing two of those across turns compares two arbitrary instants -
+    // which is exactly the wrong conclusion I drew from the first capture of this log. The detector's
+    // peakP is a running maximum, so the input side has to be one too or the two halves of "did it get
+    // quieter, or did the detector go deaf?" are not comparable at all.
+
+    /// <summary>Loudest raw sample seen since listening started.</summary>
+    float _micTurnPeak;
+
+    /// <summary>Loudest raw chunk RMS seen since listening started.</summary>
+    float _micTurnRms;
+
     /// <summary>Start one pump if none is running. Cheap and safe to call per chunk.</summary>
     void PumpVad()
     {
@@ -825,6 +982,15 @@ public partial class Home : IDisposable
                 _speechActive = active;
                 _speechProbability = probability;
                 _vadFrameMs = meanFrameMs;
+                _vadBatches++;
+                if (probability > _vadPeakProbability) _vadPeakProbability = probability;
+                // ⚠️ The PEAK probability of the turn is the number that settles a miss. An instantaneous
+                // reading sampled while nobody happens to be talking is 0.00 whether the detector is
+                // healthy or dead; the running maximum is not, and it is the difference between
+                // "never crossed the threshold" and "never saw a signal at all".
+                Console.WriteLine($"[HF-VAD] batch {_vadBatches}: {batch.Length} samples, p={probability:F3}, " +
+                                  $"peakP={_vadPeakProbability:F3}, active={active}, spans={spans.Length}, " +
+                                  $"{meanFrameMs:F1} ms/frame");
 
                 if (spans.Length > 0)
                 {

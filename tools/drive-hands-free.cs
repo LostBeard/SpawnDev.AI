@@ -27,7 +27,10 @@ var headed = !args.Contains("--headless");
 var profileDir = Path.Combine(Path.GetTempPath(), "spawndev-ai-handsfree-profile");
 Directory.CreateDirectory(profileDir);
 
-const string WavPath = "/test-audio/librivox-public-domain.wav";
+// WARNING - PAGE-RELATIVE, resolved against document.baseURI at fetch time. A ROOT-relative "/test-audio/..."
+// can only ever address a site served at the origin root, so this gate could not be pointed at the
+// GitHub Pages build (base /SpawnDev.AI/) - it 404d before the mic was ever faked.
+const string WavPath = "test-audio/librivox-public-domain.wav";
 // The clip is 4.0 s. Endpointing should close the turn within a second or so of it ending; the fixed
 // window this gate was written against ran to MaxUtteranceSeconds (30 s) no matter what was said.
 const double ClipSeconds = 4.0;
@@ -110,7 +113,7 @@ await page.AddInitScriptAsync(@"
     if (!constraints || !constraints.audio) return real(constraints);
     const ac = new AudioContext();
     if (ac.state === 'suspended') { try { await ac.resume(); } catch (e) {} }
-    const bytes = await (await fetch('" + WavPath + @"')).arrayBuffer();
+    const bytes = await (await fetch(new URL('" + WavPath + @"', document.baseURI))).arrayBuffer();
     const clip = await ac.decodeAudioData(bytes);
 
     // ⚠️ The clip is followed by REAL SILENCE IN THE SAME BUFFER, not by the source ending. A
