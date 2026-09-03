@@ -707,6 +707,17 @@ public sealed class AiApiRouter
                     case "vad" when Vad != null: await Vad.EnsureReadyAsync(t.Aborted); warmed.Add("vad"); break;
                     case "speech" when Speech != null: await Speech.EnsureReadyAsync(t.Aborted); warmed.Add("speech"); break;
                     case "voice" when Voice != null: await Voice.EnsureReadyAsync(t.Aborted); warmed.Add("voice"); break;
+                    // ⚠️ "chat" needs a MODEL, unlike the other three - each of those owns exactly one.
+                    // Body: { kinds: ["chat"], model: "..." }. Without a model there is nothing to warm and
+                    // saying so beats silently warming whatever happens to be resident.
+                    case "chat":
+                    {
+                        var model = GetString(body, "model");
+                        if (string.IsNullOrWhiteSpace(model))
+                            failed.Add(new { kind, error = "warming \"chat\" requires a \"model\" in the body" });
+                        else { await _engine.EnsureReadyAsync(model, t.Aborted); warmed.Add("chat"); }
+                        break;
+                    }
                     default: failed.Add(new { kind, error = "no such engine on this server" }); break;
                 }
             }

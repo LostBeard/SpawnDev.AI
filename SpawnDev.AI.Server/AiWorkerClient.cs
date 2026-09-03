@@ -158,10 +158,24 @@ public sealed class AiWorkerClient
     /// ⚠️ Never throws on a kind that failed to warm - warming is an optimisation and the lazy path still
     /// works. Returns what warmed and what did not, so a caller can SAY so instead of silently waiting.
     /// </remarks>
-    /// <param name="kinds">"vad", "speech", "voice". Empty warms all three.</param>
-    public async Task<(string[] Warmed, (string Kind, string Error)[] Failed)> WarmAsync(params string[] kinds)
+    /// <param name="kinds">"vad", "speech", "voice", "chat". Empty warms vad, speech and voice.</param>
+    public Task<(string[] Warmed, (string Kind, string Error)[] Failed)> WarmAsync(params string[] kinds)
+        => WarmAsync(kinds, null);
+
+    /// <summary>
+    /// Make model kinds resident now, naming the model for the kinds that need one.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ "chat" is the only kind that takes a model: the vad, speech and voice engines each own exactly
+    /// one model, while the chat engine serves whichever the user picked. Warming the chat model is what
+    /// removes the first-token wait from the turn - MEASURED at 22.9 s before it existed.
+    /// </remarks>
+    /// <param name="kinds">"vad", "speech", "voice", "chat". Empty warms vad, speech and voice.</param>
+    /// <param name="model">The chat model to warm; ignored by every other kind.</param>
+    public async Task<(string[] Warmed, (string Kind, string Error)[] Failed)> WarmAsync(
+        string[] kinds, string? model)
     {
-        var body = JsonSerializer.Serialize(new { kinds }, J);
+        var body = JsonSerializer.Serialize(new { kinds, model }, J);
         var json = await RequestJsonAsync("POST", "/api/warm", body);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;

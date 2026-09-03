@@ -510,7 +510,11 @@ public partial class Home : IDisposable
     {
         try
         {
-            var (_, failed) = await Ai.WarmAsync("speech", "voice");
+            // ⚠️ "chat" belongs here as much as the other two. It was missing, and the chat model
+            // therefore loaded and compiled INSIDE the turn: MEASURED 22.9 s waiting for the first token,
+            // after the user had finished speaking. The recogniser and the voice were already being warmed
+            // during the seconds the user is talking; the model that answers was not.
+            var (_, failed) = await Ai.WarmAsync(new[] { "speech", "voice", "chat" }, _model);
             if (failed.Length == 0) return;
             var note = $"{string.Join(", ", failed.Select(f => $"{f.Kind} ({f.Error})"))} did not preload; "
                      + "it will be loaded when first needed.";

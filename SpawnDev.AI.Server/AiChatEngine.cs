@@ -30,6 +30,54 @@ public sealed class AiChatEngine : IAiChatService
     /// <summary>The registry (model listing for protocol adapters).</summary>
     public ModelRegistry Registry => _registry;
 
+    private string? _warmedModel;
+
+    /// <summary>
+    /// Make <paramref name="model"/> resident AND compiled, by running a real short generation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ WHY THIS EXISTS. The recogniser and the voice are warmed while the user is talking; the chat
+    /// model was not warmed at all, so it loaded and compiled INSIDE the turn. MEASURED in the demo,
+    /// 2026-09-03: a hands-free turn waited <b>22.9 s for the first token</b> and the app's own status text
+    /// said why - "loading the model and compiling kernels". That is the whole first-token latency of a
+    /// conversation, spent after the user has finished speaking and is waiting.
+    /// </para>
+    /// <para>
+    /// ⚠️ LOADED IS NOT WARM - the lesson the VAD and the voice both taught. Kernels compile on FIRST
+    /// EXECUTION, not at load, so acquiring a lease and returning would move the download and leave the
+    /// compile exactly where it was. This runs a real generation through the real path.
+    /// </para>
+    /// <para>
+    /// ⚠️ Several tokens, not one. One token is a prefill plus a single decode step, and the WebGPU decode
+    /// capture needs repeated steps before it can record and replay - the same reason Silero needed several
+    /// warm frames rather than one. A single-token warm would leave the capture to happen in the user's
+    /// turn, which is the cost this is here to remove.
+    /// </para>
+    /// <para>
+    /// Idempotent per model: warming is keyed on the model that was warmed, so switching models re-warms
+    /// and repeat calls are free.
+    /// </para>
+    /// </remarks>
+    public async Task EnsureReadyAsync(string model, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(model)) throw new ArgumentException("No model to warm.", nameof(model));
+        if (_warmedModel == model) return;
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await ChatAsync(new AiChatRequest
+        {
+            Model = model,
+            Messages = new[] { new AiChatMessage("user", "Hi") },
+            Options = new AiGenerationOptions { MaxOutputTokens = 8, Strategy = "greedy" },
+        }, ct).ConfigureAwait(false);
+
+        _warmedModel = model;
+        PerfLog?.Invoke($"[AiChatEngine] warm decode of {model}: {clock.Elapsed.TotalSeconds:F1}s "
+                      + "(load + kernel compilation + decode capture; a real turn after this should reach "
+                      + "its first token quickly - if it does not, the cost is the graph, not the compile)");
+    }
+
     public Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(CancellationToken ct = default)
         => _registry.Provider.ListAsync(ct);
 
