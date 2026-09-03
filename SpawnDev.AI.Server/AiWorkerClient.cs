@@ -267,6 +267,21 @@ public sealed class AiWorkerClient
         var samples = new float[arr.GetArrayLength()];
         var i = 0;
         foreach (var v in arr.EnumerateArray()) samples[i++] = (float)v.GetDouble();
+
+        // Same reasoning as the transcribe split above: the voice engine runs in a shared worker whose
+        // console the page cannot see, so its numbers only become readable by being re-emitted here.
+        // The decoder split matters most - a large FIRST step is per-shape setup, a large remainder is the
+        // decoder itself, and capture status says whether a recorded plan was replaying at all.
+        {
+            double DS(string n) => root.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.Number
+                ? v.GetDouble() : 0;
+            var cap = root.TryGetProperty("capture_status", out var cs) ? cs.GetString() ?? "" : "";
+            if (DS("decoder_ms") > 0)
+                Console.WriteLine($"[speak] decoder {DS("decoder_ms"):F0}ms of {DS("inference_ms"):F0}ms "
+                    + $"(first Euler step {DS("decoder_first_step_ms"):F0}ms, rest "
+                    + $"{DS("decoder_ms") - DS("decoder_first_step_ms"):F0}ms) | capture: {cap}");
+        }
+
         return (
             samples,
             root.TryGetProperty("sample_rate", out var sr) ? sr.GetInt32() : 24000,

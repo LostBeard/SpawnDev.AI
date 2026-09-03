@@ -29,6 +29,26 @@ public sealed record AiSpeech(float[] Samples, int SampleRate, string Model, dou
     /// because "the voice sounds slow" needs a number attached to it, not another round of guessing.
     /// </remarks>
     public double ReferenceSpeechSeconds { get; init; }
+
+    /// <summary>Wall time in the flow-matching decoder, in ms - the stage that dominates a synthesis.</summary>
+    public double DecoderMs { get; init; }
+
+    /// <summary>Wall time of the decoder's FIRST Euler step alone, in ms.</summary>
+    /// <remarks>
+    /// ⚠️ All the Euler steps run at identical shapes, so per-shape setup lands entirely in step 1 and the
+    /// rest are steady state. Carried back to the page because these two numbers call for opposite work -
+    /// a large first step is setup to be amortised or avoided, a large remainder is the decoder itself -
+    /// and the engine runs in a SHARED WORKER whose console the window never sees.
+    /// </remarks>
+    public double DecoderFirstStepMs { get; init; }
+
+    /// <summary>WHY the decoder's dispatch-plan capture is or is not live.</summary>
+    /// <remarks>
+    /// ⚠️ MEASURED 2026-09-03: capture was refused for this graph on every backend and nothing anywhere
+    /// said so, while the decoder cost 8.4 s per Euler step. A boolean would not have helped - the reason
+    /// is what points at the fix.
+    /// </remarks>
+    public string CaptureStatus { get; init; } = "";
 }
 
 /// <summary>
@@ -208,6 +228,9 @@ public sealed class AiVoiceEngine : IDisposable
         {
             ReferenceSeconds = result.ReferenceSeconds,
             ReferenceSpeechSeconds = result.ReferenceSpeechSeconds,
+            DecoderMs = result.DecoderMs,
+            DecoderFirstStepMs = result.DecoderFirstStepMs,
+            CaptureStatus = result.DecoderCaptureStatus,
         };
     }
 
@@ -274,33 +297,31 @@ public sealed class AiVoiceEngine : IDisposable
         if (_warmed) return;
         _warmed = true;
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        try
-        {
-            // A second of quiet, band-limited noise: enough of a signal for the reference encoder to run
-            // on, and short enough that the warm pass stays a warm pass.
-            const int rate = 16000;
-            var reference = new float[rate];
-            var rng = new Random(12345);
-            for (int i = 0; i < reference.Length; i++) reference[i] = (float)(rng.NextDouble() - 0.5) * 0.05f;
-
-            // Under _inferGate, so a real reply that arrives mid-warm WAITS instead of racing this one.
-            await _inferGate.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                await _pipeline!.SpeakAsync("Hello.", "Hello.", reference, rate, _tokenizer!)
-                    .ConfigureAwait(false);
-            }
-            finally { _inferGate.Release(); }
-            Console.WriteLine($"[AiVoiceEngine] warm synthesis: {clock.Elapsed.TotalSeconds:F1}s "
-                            + "(kernel compilation; a real reply after this should be much faster - if it "
-                            + "is not, the cost is the graph, not the compile)");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[AiVoiceEngine] warm synthesis failed ({ex.GetType().Name}: {ex.Message}); "
-                            + "the first real reply will pay for compilation instead.");
-        }
+        // 🔴 DELIBERATELY LOAD-ONLY. This used to run a full warm synthesis of "Hello." and it was a bad
+        // trade - MEASURED, not assumed.
+        //
+        // Three renders on WebGPU 2026-09-03, in one process: 51.2 s for the first, 46.9 s for a DIFFERENT
+        // length, 36.3 s for a REPEAT of the first. So the decoder's steady-state cost is flat at ~8.4 s
+        // per Euler step no matter what has run before; a warm buys only the ~4 s of global kernel
+        // compilation (51.2 -> 46.9), and the larger ~7.5 s saving on the repeat is PER-SHAPE setup that a
+        // warm on some other sentence cannot provide, because this decoder's shape is the utterance length.
+        //
+        // Against that ~4 s, a warm synthesis costs ~50 s of GPU AND holds _inferGate, so a real reply that
+        // arrives during it simply queues. That is exactly what the hands-free baseline showed: synthesis
+        // "returned after 172.5 s" while the engine reported only 84 s of work - the other ~88 s was the
+        // turn waiting behind a warm that saved it four seconds.
+        //
+        // ⚠️ This is NOT the "loaded is not warm" lesson being forgotten - it is that lesson MEASURED for
+        // this engine and coming out the other way. The lesson holds for the VAD and the recogniser, where
+        // a first real frame paid a compile far larger than the warm. Here the compile is a rounding error
+        // next to the model download, and the download is what EnsureLoadedAsync above already did.
+        //
+        // Revisit if the decoder ever becomes capturable (see IlgpuZipVoiceGraphs.AllowControlFlowCapture):
+        // if a synthesis drops to a few seconds, a warm synthesis stops being a turn-blocking cost and the
+        // arithmetic changes.
+        Console.WriteLine($"[AiVoiceEngine] loaded and ready (no warm synthesis: MEASURED to save ~4s of "
+                        + "compile while costing ~50s of GPU that a real reply would queue behind)");
+        await Task.CompletedTask;
     }
 
     private bool _warmed;

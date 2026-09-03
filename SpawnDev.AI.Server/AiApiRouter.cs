@@ -880,6 +880,12 @@ public sealed class AiApiRouter
                 model = result.Model,
                 inference_ms = result.InferenceMs,
                 duration_seconds = result.DurationSeconds,
+                // ⚠️ Carried back because the engine runs in a SHARED WORKER, whose console is not the page
+                // console - a Console.WriteLine there is invisible to the window, to DevTools on the page,
+                // and to a Playwright gate. The transcribe route already does this for the same reason.
+                decoder_ms = result.DecoderMs,
+                decoder_first_step_ms = result.DecoderFirstStepMs,
+                capture_status = result.CaptureStatus,
             });
         }
         catch (Exception ex)
