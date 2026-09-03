@@ -144,6 +144,18 @@ public sealed class AiWorkerClient
                 + $"outside the executor {D("outside_executor_ms"):F0}ms, of which CPU mel STFT "
                 + $"{D("mel_ms"):F0}ms (padded to 30s before the STFT) | encoder capture: "
                 + (tm.TryGetProperty("encoder_capture", out var ec) ? ec.GetString() ?? "?" : "?"));
+            // The encoder/decoder split decides what is worth working on next and the totals above cannot
+            // give it: the encoder is one fixed-shape run that a recorded plan can serve forever, while
+            // each decode step's past-K/V is a position longer than the last.
+            Console.WriteLine($"[transcribe] encoder {D("encoder_ms"):F0}ms | prefill {D("prefill_ms"):F0}ms "
+                + $"| {D("decode_steps"):F0} decode steps {D("decode_steps_ms"):F0}ms "
+                + $"({(D("decode_steps") > 0 ? D("decode_steps_ms") / D("decode_steps") : 0):F0}ms each)");
+            // The decode step split. Three different fixes hide behind one per-step number: host setup (a
+            // GPU buffer allocated per token), the graph itself, and the argmax - which is one GPU-to-host
+            // round trip per token and cannot be avoided, only made cheap.
+            double n = Math.Max(1, D("decode_steps"));
+            Console.WriteLine($"[transcribe] per decode step: setup {D("decode_setup_ms") / n:F1}ms + "
+                + $"graph {D("decode_graph_ms") / n:F1}ms + argmax {D("decode_argmax_ms") / n:F1}ms");
         }
 
         return (

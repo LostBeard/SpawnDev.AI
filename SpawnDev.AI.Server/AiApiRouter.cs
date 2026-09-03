@@ -654,6 +654,13 @@ public sealed class AiApiRouter
                     outside_executor_ms = result.Split.OutsideExecutorMs,
                     mel_ms = result.Split.MelMs,
                     encoder_capture = result.Split.EncoderCaptureStatus,
+                    encoder_ms = result.Split.EncoderMs,
+                    prefill_ms = result.Split.PrefillMs,
+                    decode_steps_ms = result.Split.DecodeStepsMs,
+                    decode_steps = result.Split.DecodeSteps,
+                    decode_setup_ms = result.Split.DecodeSetupMs,
+                    decode_graph_ms = result.Split.DecodeGraphMs,
+                    decode_argmax_ms = result.Split.DecodeArgmaxMs,
                 },
             });
         }

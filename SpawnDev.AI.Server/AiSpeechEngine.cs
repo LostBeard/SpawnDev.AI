@@ -50,6 +50,20 @@ public sealed record AiInferenceSplit(int GraphRuns, double ExecutorMs, int Read
     /// did not help" from "capture never engaged" - which call for opposite work.
     /// </remarks>
     public string EncoderCaptureStatus { get; init; } = "";
+
+    /// <summary>Encoder / prefill / decode-steps split, in ms, plus the step count.</summary>
+    /// <remarks>
+    /// ⚠️ The encoder is ONE fixed-shape run and is capturable; each decode step grows its past-K/V by a
+    /// position, so no recorded plan is valid twice. They are different problems, so an executor total
+    /// across all runs cannot say which to work on next.
+    /// </remarks>
+    public double EncoderMs { get; init; }
+    public double PrefillMs { get; init; }
+    public double DecodeStepsMs { get; init; }
+    public int DecodeSteps { get; init; }
+    public double DecodeSetupMs { get; init; }
+    public double DecodeGraphMs { get; init; }
+    public double DecodeArgmaxMs { get; init; }
 }
 
 /// <summary>
@@ -184,7 +198,16 @@ public sealed class AiSpeechEngine : IDisposable
             var drainMs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainMs;
             var drainN = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainCount;
             split = new AiInferenceSplit(runs, execMs, rbN, rbMs, drainN, drainMs, inferenceMs - execMs, result.MelTimeMs)
-                { EncoderCaptureStatus = result.EncoderCaptureStatus };
+                {
+                    EncoderCaptureStatus = result.EncoderCaptureStatus,
+                    EncoderMs = result.EncoderMs,
+                    PrefillMs = result.PrefillMs,
+                    DecodeStepsMs = result.DecodeStepsMs,
+                    DecodeSteps = result.DecodeSteps,
+                    DecodeSetupMs = result.DecodeSetupMs,
+                    DecodeGraphMs = result.DecodeGraphMs,
+                    DecodeArgmaxMs = result.DecodeArgmaxMs,
+                };
 
             var seconds = samples.Length / (double)sampleRate;
             Console.WriteLine($"[AiSpeechEngine] {seconds:F2}s of audio in {inferenceMs:F0}ms "
