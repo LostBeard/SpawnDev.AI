@@ -653,6 +653,7 @@ public sealed class AiApiRouter
                     residual_ms = result.Split.ResidualMs,
                     outside_executor_ms = result.Split.OutsideExecutorMs,
                     mel_ms = result.Split.MelMs,
+                    encoder_capture = result.Split.EncoderCaptureStatus,
                 },
             });
         }

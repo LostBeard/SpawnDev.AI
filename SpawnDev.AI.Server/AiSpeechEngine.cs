@@ -41,6 +41,15 @@ public sealed record AiInferenceSplit(int GraphRuns, double ExecutorMs, int Read
 {
     /// <summary>Executor time that is neither readback nor drain: dispatch, CPU work, allocation.</summary>
     public double ResidualMs => ExecutorMs - ReadbackMs - DrainMs;
+
+    /// <summary>WHY the encoder's dispatch-plan capture is or is not live.</summary>
+    /// <remarks>
+    /// ⚠️ The residual above is exactly what a recorded plan removes, so a reading of it is uninterpretable
+    /// without knowing whether a plan was replaying. MEASURED 2026-09-03: transcription did not move after
+    /// the encoder capture was wired in, and with no status there was no way to tell "capture engaged and
+    /// did not help" from "capture never engaged" - which call for opposite work.
+    /// </remarks>
+    public string EncoderCaptureStatus { get; init; } = "";
 }
 
 /// <summary>
@@ -174,7 +183,8 @@ public sealed class AiSpeechEngine : IDisposable
             var rbN = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeReadbackCount;
             var drainMs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainMs;
             var drainN = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainCount;
-            split = new AiInferenceSplit(runs, execMs, rbN, rbMs, drainN, drainMs, inferenceMs - execMs, result.MelTimeMs);
+            split = new AiInferenceSplit(runs, execMs, rbN, rbMs, drainN, drainMs, inferenceMs - execMs, result.MelTimeMs)
+                { EncoderCaptureStatus = result.EncoderCaptureStatus };
 
             var seconds = samples.Length / (double)sampleRate;
             Console.WriteLine($"[AiSpeechEngine] {seconds:F2}s of audio in {inferenceMs:F0}ms "

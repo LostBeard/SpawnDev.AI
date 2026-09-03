@@ -142,7 +142,8 @@ public sealed class AiWorkerClient
                 + $"drains {D("drain_count"):F0} ({D("drain_ms"):F0}ms) | "
                 + $"residual {D("residual_ms"):F0}ms (dispatch+CPU+alloc) | "
                 + $"outside the executor {D("outside_executor_ms"):F0}ms, of which CPU mel STFT "
-                + $"{D("mel_ms"):F0}ms (FIXED - padded to 30s before the STFT)");
+                + $"{D("mel_ms"):F0}ms (padded to 30s before the STFT) | encoder capture: "
+                + (tm.TryGetProperty("encoder_capture", out var ec) ? ec.GetString() ?? "?" : "?"));
         }
 
         return (

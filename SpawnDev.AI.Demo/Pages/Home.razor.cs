@@ -514,7 +514,17 @@ public partial class Home : IDisposable
             // therefore loaded and compiled INSIDE the turn: MEASURED 22.9 s waiting for the first token,
             // after the user had finished speaking. The recogniser and the voice were already being warmed
             // during the seconds the user is talking; the model that answers was not.
-            var (_, failed) = await Ai.WarmAsync(new[] { "speech", "voice", "chat" }, _model);
+            // ⚠️ THE ORDER IS THE POINT, not just the contents. The server warms these SEQUENTIALLY on one
+            // GPU, so this list is a schedule: whatever is late in it may not be ready when the turn wants
+            // it, and whatever is early delays everything after it.
+            //
+            // A turn needs them in exactly this order - recognise what was said, generate the reply, then
+            // speak it. MEASURED 2026-09-03: with "voice" ahead of "chat", first-token latency got WORSE
+            // than warming nothing at all (22.9 s -> 28.0 s), because the chat warm sat behind the voice's
+            // model downloads and never finished in time; the turn then queued behind the warm it was
+            // waiting on. Voice goes last because it is both the biggest download and the last thing the
+            // turn needs.
+            var (_, failed) = await Ai.WarmAsync(new[] { "speech", "chat", "voice" }, _model);
             if (failed.Length == 0) return;
             var note = $"{string.Join(", ", failed.Select(f => $"{f.Kind} ({f.Error})"))} did not preload; "
                      + "it will be loaded when first needed.";
