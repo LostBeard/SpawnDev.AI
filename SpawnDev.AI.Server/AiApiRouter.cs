@@ -881,7 +881,27 @@ public sealed class AiApiRouter
             int? maxSpoken = body.TryGetProperty("max_spoken_characters", out var msEl)
                 && msEl.ValueKind == JsonValueKind.Number
                 && msEl.TryGetInt32(out var ms) && ms > 0 ? ms : null;
-            var result = await Voice!.SpeakAsync(text, referenceText, reference, sampleRate, maxSpoken)
+            // Hand the voice a recogniser. ZipVoice draws fresh noise per synthesis and some draws come
+            // out as fluent speech that is not the requested sentence at all - a defect invisible to
+            // amplitude, duration and every other check, and the direct cause of the "high pitch weird
+            // noises" the Captain reported on 2026-09-04 (read-back scored 0% word overlap, "[INAUDIBLE]").
+            // This router is the one place that holds BOTH engines, so it is where the loop closes.
+            // ⚠️ OFF BY DEFAULT, AND THE REASON MATTERS. This was wired in on 2026-09-04 because spoken
+            // replies came back garbled, on the theory that ZipVoice had drawn bad noise. It had not: the
+            // garbling was a SHAPE defect in ILGPU.ML (a compile-time output shape used as runtime truth),
+            // fixed in 5.2.9 - after which the same lines read back at 100%, verbatim, on the FIRST draw on
+            // both CUDA and WebGPU. Re-rolling is a mitigation for a cause that no longer exists, and it
+            // costs a full Whisper transcription per synthesis.
+            // It also currently trips a SEPARATE, pre-existing defect: transcribing inside a synthesis
+            // replays Whisper's captured encoder plan and raises "[Buffer (unlabeled)] used in submit while
+            // destroyed". That bug is real and open - it is NOT the reason this defaults off, and turning
+            // this on is the fastest way to reproduce it.
+            Func<float[], int, Task<string>>? readBack = !Voice!.VerifyByReadBack || Speech == null
+                ? null
+                : async (audio, rate) =>
+                    (await Speech.TranscribeAsync(audio, rate).ConfigureAwait(false)).Text ?? "";
+
+            var result = await Voice!.SpeakAsync(text, referenceText, reference, sampleRate, maxSpoken, readBack)
                 .ConfigureAwait(false);
             await t.WriteJsonAsync(200, new
             {

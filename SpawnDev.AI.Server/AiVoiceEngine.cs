@@ -158,8 +158,46 @@ public sealed class AiVoiceEngine : IDisposable
     /// read-out can ask for one. Null or non-positive keeps the default.
     /// </param>
     /// <param name="ct">Cancellation token.</param>
+    /// <summary>
+    /// Log the per-synthesis shape diagnostics (decoder <c>If</c> branch census, Slice compile-time
+    /// fallback count). Default off - this is debugging instrumentation, not operational logging.
+    /// </summary>
+    /// <remarks>
+    /// The census is what identified the ILGPU.ML shape defect fixed in 5.2.9: <c>else=0</c> on every
+    /// intelligible utterance and <c>else=24</c> on the first garbled one, which turned "the voice is
+    /// bad" into a specific branch. Kept for the next time a synthesis comes out wrong.
+    /// </remarks>
+    public bool VerboseLogging { get; set; }
+
+    /// <summary>
+    /// Speak, transcribe the result, and re-roll the noise when the words that come back are not the words
+    /// asked for. Default OFF - see the note at the call site in <c>AiApiRouter.ApiSpeak</c>.
+    /// </summary>
+    /// <remarks>
+    /// Flow matching can draw noise that yields fluent speech of the WRONG sentence, so this is a real
+    /// safeguard - but it costs a full transcription per synthesis, and the garbled replies that prompted
+    /// it on 2026-09-04 turned out to be an ILGPU.ML shape defect, fixed in 5.2.9. Left available and off.
+    /// </remarks>
+    public bool VerifyByReadBack { get; set; }
+
+    /// <param name="transcribe">
+    /// 🔴 A RECOGNISER, AND WHY SPEAKING NEEDS ONE. ZipVoice is a flow-matching model that starts from
+    /// fresh noise, and on some draws it produces confident, well-formed speech that is NOT the sentence
+    /// it was asked for. <c>ZipVoicePipeline.SpeakVerifiedAsync</c> documents its own measurement of this:
+    /// four seeds, three clean, one that transcribed as "Loner's call, Nanawa, Nenfer" - and the reference
+    /// implementation does the same. Nothing INSIDE the synthesiser can see it, because a garbled draw has
+    /// the same amplitude, the same duration and the same spectral character as a good one.
+    /// <para>
+    /// MEASURED 2026-09-04: the Captain heard a reply as "really odd sounding with high pitch weird
+    /// noises... all over the place in pitch and variable", and a read-back gate on the same path scored
+    /// <b>0% word overlap - Whisper returned "[INAUDIBLE]"</b> for a line whose peak, RMS and 17.9
+    /// chars/sec all looked perfectly healthy. Supply this and a garbled draw is caught and re-rolled;
+    /// leave it null and the engine ships whatever the first draw produced.
+    /// </para>
+    /// </param>
     public async Task<AiSpeech> SpeakAsync(string text, string referenceText, float[] referenceSamples,
-        int referenceSampleRate, int? maxSpokenCharacters = null, CancellationToken ct = default)
+        int referenceSampleRate, int? maxSpokenCharacters = null,
+        Func<float[], int, Task<string>>? transcribe = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("nothing to say", nameof(text));
@@ -182,10 +220,47 @@ public sealed class AiVoiceEngine : IDisposable
         try
         {
             var started = DateTime.UtcNow;
-            result = await _pipeline!
-                .SpeakAsync(text, referenceText ?? "", referenceSamples, referenceSampleRate, _tokenizer!)
-                .ConfigureAwait(false);
+            // 🔴 WHICH BRANCH DID THE DECODER TAKE? ZipVoice's relative positional encoding arrives
+            // through an If: the THEN branch reads a precomputed [1999, 48] table, the ELSE branch
+            // RECOMPUTES it. A relative table of 1999 rows spans 2N-1 for N = 1000 frames, so at
+            // 93.75 frames/sec (hop 256 @ 24 kHz) anything past ~10.7 s of TOTAL sequence - reference
+            // prompt included - must take the else path. MEASURED 2026-09-04: intelligibility is 100%
+            // at 6.58 s and 0% ("[MUSIC PLAYING]") at 8.82 s, and the 2026-09-04 branch census that
+            // recorded "then=21, else=0" was taken on a SHORT utterance, so the else branch's 254 nodes
+            // have never been shown to be correct. Censusing per synthesis is what turns that from a
+            // story into a fact.
+            SpawnDev.ILGPU.ML.Operators.IfOperator.ResetBranchCensus();
+            SpawnDev.ILGPU.ML.Graph.GraphExecutor.ResetSliceAttrFallbackDiagnostics();
+            if (transcribe != null)
+            {
+                // Speak it, listen to it, and re-roll the noise if the words that come back are not the
+                // words asked for. The best attempt is returned even when none passes the tolerance,
+                // because a flawed line is still better than silence.
+                var verified = await _pipeline!
+                    .SpeakVerifiedAsync(text, referenceText ?? "", referenceSamples, referenceSampleRate,
+                        _tokenizer!, transcribe)
+                    .ConfigureAwait(false);
+                result = verified.Speech;
+                // Say what the check concluded. A re-roll that silently happened is a cost nobody can
+                // account for, and a FAILED verification that silently shipped is the original defect.
+                Console.WriteLine($"[voice] read-back check: WER {verified.WordErrorRate:F2} "
+                    + $"({(verified.Passed ? "PASSED" : "FAILED - shipping the best of the attempts")}), "
+                    + $"heard \"{verified.Transcript}\"");
+            }
+            else
+            {
+                result = await _pipeline!
+                    .SpeakAsync(text, referenceText ?? "", referenceSamples, referenceSampleRate, _tokenizer!)
+                    .ConfigureAwait(false);
+            }
             inferenceMs = (DateTime.UtcNow - started).TotalMilliseconds;
+            if (VerboseLogging)
+                Console.WriteLine($"[voice] If census for this synthesis: "
+                    + $"then={SpawnDev.ILGPU.ML.Operators.IfOperator.ThenBranchCount} "
+                    + $"else={SpawnDev.ILGPU.ML.Operators.IfOperator.ElseBranchCount} "
+                    + $"| sliceAttrFallback={SpawnDev.ILGPU.ML.Graph.GraphExecutor.SliceAttrFallbackCount} "
+                    + $"({SpawnDev.ILGPU.ML.Graph.GraphExecutor.LastSliceAttrFallbackInfo ?? "none"}) "
+                    + $"| {result.Audio.Length / (double)result.SampleRate:F2}s of audio for {text.Length} chars");
         }
         finally { _inferGate.Release(); }
 

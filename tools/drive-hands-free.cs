@@ -142,17 +142,42 @@ await page.AddInitScriptAsync(@"
     // (Measured the difference: with the source ending, the demo's sample counter froze at 4.0s and the
     // fixed 30 s window never elapsed either, so the gate reported a 75 s hang that a real mic would not
     // have produced.)
-    const tailSeconds = 40;
-    const buffer = ac.createBuffer(1, clip.length + Math.floor(clip.sampleRate * tailSeconds), clip.sampleRate);
-    buffer.copyToChannel(clip.getChannelData(0), 0, 0);
-
-    const src = ac.createBufferSource();
-    src.__isFakeMic = true;
-    src.buffer = buffer;
-    src.loop = false;              // speak once, then a quiet room
+    // ⚠️ ROOM TONE IS A LOOPING SILENT SOURCE, and utterances are injected into it ON DEMAND.
+    //
+    // The previous shape - one buffer holding [clip + 40 s of zeros], played once - can only ever speak
+    // ONCE, so it could not test a second turn at all. And a second turn is where the Captain's report
+    // lives: "it listened but never stopped listening... the listen duration just kept climbing".
+    // Pre-baking a second clip at a fixed offset does not work either, because turn 1 takes ~55 s end to
+    // end and that delay is exactly what varies.
+    //
+    // So: a 1-second silent buffer on loop keeps the MediaStreamDestination fed forever (a source that
+    // ENDS stops feeding it, which is not what a microphone does - measured, it froze the demo's sample
+    // counter at 4.0 s), and window.__speakClip() connects a fresh clip source into the same destination
+    // whenever the gate wants the human to talk again.
     const dest = ac.createMediaStreamDestination();
-    src.connect(dest);
-    src.start();
+
+    const roomTone = ac.createBufferSource();
+    roomTone.__isFakeMic = true;
+    roomTone.buffer = ac.createBuffer(1, Math.floor(clip.sampleRate), clip.sampleRate); // 1 s of zeros
+    roomTone.loop = true;
+    roomTone.connect(dest);
+    roomTone.start();
+
+    window.__clipSeconds = clip.duration;
+    window.__spokenClips = 0;
+    window.__speakClip = () => {
+      const s = ac.createBufferSource();
+      s.__isFakeMic = true;          // ours, so the speaker tap does not count it as app output
+      s.buffer = clip;
+      s.connect(dest);
+      s.start();
+      window.__spokenClips++;
+      window.__lastClipAt = performance.now();
+      return window.__spokenClips;
+    };
+
+    // Turn 1 speaks immediately, exactly as before, so single-turn behaviour is unchanged.
+    window.__speakClip();
     window.__micStartedAt = performance.now();
     return dest.stream;
   };
@@ -249,6 +274,45 @@ try
     var tListen = DateTime.UtcNow;
     Console.WriteLine($"    microphone open at t={(tListen - t0).TotalSeconds:F1}s (warm-up done)");
 
+// ⚠️ MORE THAN ONE TURN, because a conversation is more than one turn and the second one is where the
+// Captain's report lives: "it listened but never stopped listening... the listen duration just kept
+// climbing", and "after it finished talking it did not start listening again". A gate that stops after
+// turn 1 reports HANDS-FREE VERIFIED on an app that cannot hold a conversation - which is exactly what
+// this gate did until 2026-09-04.
+var lastStatusOuter = "";
+int spokenBefore = 0, repliesBefore = 0;
+for (int turn = 1; turn <= turns; turn++)
+{
+    Console.WriteLine();
+    Console.WriteLine($"    ─── TURN {turn} of {turns} ───");
+
+    if (turn > 1)
+    {
+        // 🔴 THE TURN-2 PRECONDITION IS ITS OWN ASSERTION. Hands-free promises to resume listening once
+        // it has finished speaking; if the mic never reopens the conversation is over and no amount of
+        // waiting for a transcript will say why.
+        var resumeDeadline = DateTime.UtcNow.AddSeconds(90);
+        bool resumed = false;
+        while (DateTime.UtcNow < resumeDeadline)
+        {
+            if (await micOpen.CountAsync() > 0) { resumed = true; break; }
+            var st2 = await StatusAsync(page);
+            if (st2 != lastStatusOuter) { lastStatusOuter = st2; Console.WriteLine($"    [t={(DateTime.UtcNow - t0).TotalSeconds,6:F1}s] status: {st2}"); }
+            await Task.Delay(1000);
+        }
+        if (!resumed)
+        {
+            Fail($"hands-free did NOT resume listening for turn {turn} within 90 s of finishing turn {turn - 1} "
+               + $"- the loop stopped after one exchange (status: \"{await StatusAsync(page)}\")");
+            break;
+        }
+        Ok($"resumed listening for turn {turn}");
+        // Now the human talks again. Room tone has been flowing the whole time.
+        var spokenClips = await page.EvaluateAsync<int>("window.__speakClip()");
+        Console.WriteLine($"    [t={(DateTime.UtcNow - t0).TotalSeconds,6:F1}s] injected utterance #{spokenClips}");
+        tListen = DateTime.UtcNow;
+    }
+
     var listenDeadline = DateTime.UtcNow.AddSeconds(75);
     double listenedFor = -1;
     string lastMicText = "";
@@ -261,12 +325,12 @@ try
     }
 
     if (listenedFor < 0)
-        Fail($"the loop never stopped listening within 75 s (button last read \"{lastMicText}\")");
+        Fail($"turn {turn}: the loop never stopped listening within 75 s (button last read \"{lastMicText}\")");
     else if (listenedFor > ListenBudgetSeconds)
-        Fail($"listened {listenedFor:F1}s for a {ClipSeconds:F1}s utterance - budget is {ListenBudgetSeconds:F0}s. "
-           + "The turn is being closed by a fixed timer, not by hearing the talker stop.");
+        Fail($"turn {turn}: listened {listenedFor:F1}s for a {ClipSeconds:F1}s utterance - budget is "
+           + $"{ListenBudgetSeconds:F0}s. The turn is being closed by a fixed timer, not by hearing the talker stop.");
     else
-        Ok($"endpointed after {listenedFor:F1}s of a {ClipSeconds:F1}s utterance");
+        Ok($"turn {turn}: endpointed after {listenedFor:F1}s of a {ClipSeconds:F1}s utterance");
 
     // ── 2. TRANSCRIBE + ANSWER: an assistant bubble has to appear. ──
     // ⚠️ FINISHED assistant bubbles only. While the turn is in flight the page renders an extra
@@ -279,6 +343,14 @@ try
     var replyDeadline = DateTime.UtcNow.AddMinutes(15);
     string reply = "";
     var lastStatus = "";
+    // Turn N needs a NEW finished bubble, not the one turn N-1 left on the page.
+    while (DateTime.UtcNow < replyDeadline)
+    {
+        if (await assistant.CountAsync() <= repliesBefore) { await Task.Delay(500); }
+        else break;
+        var stw = await StatusAsync(page);
+        if (stw != lastStatus) { lastStatus = stw; NoteStatus(stw); Console.WriteLine($"    [t={(DateTime.UtcNow - t0).TotalSeconds,6:F1}s] status: {stw}"); }
+    }
     while (DateTime.UtcNow < replyDeadline)
     {
         // The status line names the phase (Transcribing… / Speaking… / an error). Echo every CHANGE, so a

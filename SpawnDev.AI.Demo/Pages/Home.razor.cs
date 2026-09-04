@@ -639,7 +639,7 @@ public partial class Home : IDisposable
         }
 
         // Back to listening for the next turn - only now, with the speakers quiet.
-        if (_handsFree && !_listening) await StartListeningAsync();
+        if (_handsFree && !_listening) await ResumeListeningAsync("after speaking the reply");
     }
 
     /// <summary>True while a reply is being synthesised or played.</summary>
@@ -670,6 +670,47 @@ public partial class Home : IDisposable
     {
         if (_listening) await StopListeningAsync();
         else await StartListeningAsync();
+    }
+
+    /// <summary>Resume listening for the next hands-free turn, and SAY SO when that cannot happen.</summary>
+    /// <remarks>
+    /// 🔴 <see cref="StartListeningAsync"/> opens with <c>if (_busy || _listening) return;</c>. That is
+    /// correct for a button press - a second click while transcribing should do nothing - and fatal for
+    /// the hands-free loop, where it is the ONLY thing standing between one turn and the next. A resume
+    /// that arrives while the previous turn is still winding down returns silently: the microphone never
+    /// reopens, no message is written anywhere, and the conversation is simply over with the 💬🔊 button
+    /// still lit.
+    /// <para>
+    /// MEASURED 2026-09-04: the Captain's session ended in exactly that state - "after it finished talking
+    /// it did not start listening again" - with the page showing a stale caption and no error. A silent
+    /// early return is indistinguishable from a feature that does not work.
+    /// </para>
+    /// <para>
+    /// So: give the previous turn a moment to settle, retry, and if listening still cannot start, report
+    /// it where it survives (status + a system bubble + the console), the same contract
+    /// <see cref="SpeechFailed"/> follows.
+    /// </para>
+    /// </remarks>
+    async Task ResumeListeningAsync(string why)
+    {
+        for (int attempt = 0; attempt < 15; attempt++)
+        {
+            if (!_handsFree || _vadFailed) return;   // deliberately off, or already reported elsewhere
+            if (_listening) return;                  // already back on
+            if (!_busy)
+            {
+                await StartListeningAsync();
+                if (_listening) return;
+            }
+            await Task.Delay(200);
+        }
+
+        var msg = $"Hands-free could not resume listening {why} "
+                + $"(busy={_busy}, listening={_listening}, vadFailed={_vadFailed}). Press 💬🔊 to restart.";
+        _status = msg;
+        _messages.Add(new Msg { Role = "system", Text = msg });
+        JS.LogError($"[hands-free] {msg}");
+        StateHasChanged();
     }
 
     async Task StartListeningAsync()
@@ -767,10 +808,49 @@ public partial class Home : IDisposable
 
         if (captured.Length < WhisperRate / 2)
         {
-            _status = "That was too short to transcribe.";
+            // 🔴 SAY WHY IT WAS SHORT. "That was too short to transcribe" is what a cough looks like AND
+            // what a span pointing outside the buffer looks like, and those have opposite fixes. MEASURED
+            // 2026-09-04: on the Captain's second hands-free turn the page sat on exactly this message with
+            // the microphone shut, and the message could not distinguish "you said nothing" from "the
+            // endpointer answered in a clock this buffer does not share".
+            //
+            // The two clocks: a span's `start` counts from the first sample fed to the detector since its
+            // last reset; `_micBufferStart` counts samples TrimQuietAudio has dropped off the front of our
+            // list. They agree only while every appended sample is also fed to the detector. Print both,
+            // plus what the clamp produced, so a real cough (from<to, just brief) is instantly separable
+            // from a desynchronised clock (from >= to, empty).
+            long spanS = spanStart is long ss ? ss : -1;
+            int spanN = spanLength is int nn ? nn : -1;
+            int micCount; long micStart;
+            lock (_micSamples) { micCount = _micSamples.Count; micStart = _micBufferStart; }
+            long fromDbg = spanS < 0 ? 0 : Math.Max(0, spanS - micStart);
+            long toDbg = spanS < 0 ? micCount : Math.Min(micCount, fromDbg + spanN);
+            bool outsideBuffer = spanS >= 0 && fromDbg >= toDbg;
+            Console.WriteLine($"[HF-SHORT] captured {captured.Length} samples (<{WhisperRate / 2} needed) | "
+                + $"span start={spanS} length={spanN} | _micBufferStart={micStart} _micSamples={micCount} | "
+                + $"clamp from={fromDbg} to={toDbg} | vadBatches={_vadBatches} "
+                + $"| handsFree={_handsFree} vadFailed={_vadFailed} busy={_busy} "
+                + $"=> {(_vadFailed ? "THE ENDPOINTER DIED - this stop is a consequence, see [HF-VAD-FAILED]"
+                        : outsideBuffer ? "SPAN POINTS OUTSIDE THE BUFFER - the detector's clock and this buffer disagree"
+                        : "genuinely brief audio")}");
+            // 🔴 DO NOT OVERWRITE A FAILURE MESSAGE WITH THE COSMETIC ONE.
+            // MEASURED 2026-09-04: the endpointer threw, its catch block wrote the real diagnosis
+            // ("Endpointing failed, so hands-free cannot tell when you stop talking: <ex>") and then
+            // called StopListeningAsync() to shut the microphone. This branch ran a moment later and
+            // replaced that sentence with "That was too short to transcribe." - so the Captain saw a
+            // cough message for a dead detector, hands-free silently off, and no way to tell the two
+            // apart. The turn had captured 800 samples because the detector died ~50 ms in, not
+            // because anybody coughed.
+            // The same rule the hands-free toggle already documents: reporting a problem and then
+            // erasing it one statement later is the defect, not the reporting.
+            if (!_vadFailed)
+                _status = outsideBuffer
+                    ? "The endpointer reported an utterance this recording does not contain "
+                      + $"(span {spanS}+{spanN}, buffer {micStart}..{micStart + micCount}). See [HF-SHORT] in the console."
+                    : "That was too short to transcribe.";
             StateHasChanged();
             // Hands-free must go back to listening rather than ending the conversation on a cough.
-            if (_handsFree && !_vadFailed) await StartListeningAsync();
+            if (_handsFree && !_vadFailed) await ResumeListeningAsync("after a too-short capture");
             return;
         }
 
@@ -827,7 +907,7 @@ public partial class Home : IDisposable
         // ⚠️ Nothing to send - Whisper returned "[BLANK_AUDIO]" for a segment the detector opened, which a
         // door or a cough will do. Go back to listening. Returning here instead left the conversation
         // silently OVER, with the microphone shut and the button still reading "hands-free on".
-        else if (!_listening && !_vadFailed) await StartListeningAsync();
+        else if (!_listening && !_vadFailed) await ResumeListeningAsync("after a blank transcript");
     }
 
     void OnMicAudio(float[] chunk, int rate)
@@ -1093,6 +1173,23 @@ public partial class Home : IDisposable
             _vadFailed = true;
             _status = $"Endpointing failed, so hands-free cannot tell when you stop talking: {ex.Message}";
             _handsFree = false;
+
+            // 🔴 PUT THE EXCEPTION SOMEWHERE IT CANNOT BE ERASED.
+            // MEASURED 2026-09-04: _status was the ONLY record of why hands-free died, and
+            // StopListeningAsync's "too short to transcribe" branch overwrote it microseconds later.
+            // The result was a conversation that ended itself, blamed the Captain's microphone, and
+            // threw away the only sentence naming the real cause. The console line and the system
+            // bubble both outlive _status; the bubble is what survives into a screenshot.
+            // Type AND stack, not just Message: "Object reference not set" names nothing on its own.
+            Console.WriteLine($"[HF-VAD-FAILED] batch {_vadBatches}: {ex.GetType().FullName}: {ex.Message}\n{ex.StackTrace}");
+            JS.LogError($"[hands-free] endpointer died on batch {_vadBatches}", ex.ToString());
+            _messages.Add(new Msg
+            {
+                Role = "system",
+                Text = $"Hands-free stopped: the endpointer failed on batch {_vadBatches} "
+                     + $"({ex.GetType().Name}: {ex.Message}). See [HF-VAD-FAILED] in the console."
+            });
+
             await InvokeAsync(async () =>
             {
                 if (_listening) await StopListeningAsync();

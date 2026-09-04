@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Diagnostics;
 using SpawnDev.AI.Server;
 
@@ -81,6 +82,129 @@ public sealed class AiVoiceTests
             throw new Exception($"{seconds:F2}s for a {line.Length}-character line - the duration prediction "
                               + "inside the encoder decides this, so a wild value means the encoder ran "
                               + "wrong rather than the vocoder");
+    }
+
+    /// <summary>
+    /// The speech we synthesise must be INTELLIGIBLE, established by reading it back.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 WHY THIS EXISTS. <see cref="SpeaksInTheReferenceVoice"/> asserts amplitude and duration, and
+    /// those are exactly the two properties that bad speech KEEPS. MEASURED 2026-09-04: the Captain
+    /// listened to a spoken reply and reported "I could understand a few words but it was really odd
+    /// sounding with high pitch weird noises... all over the place in pitch and variable". That audio had
+    /// a healthy peak, a healthy RMS and a duration of 12.31 s for 220 characters - 17.9 chars/sec, dead
+    /// centre of natural speech - so every existing assertion passed on it. A gate that cannot fail on the
+    /// defect the product actually has is not a gate.
+    /// </para>
+    /// <para>
+    /// THE ORACLE IS ALREADY IN THE PRODUCT. Whisper is right here, it is independent of ZipVoice, and it
+    /// answers the only question that matters about synthesised speech: can a listener make out the words?
+    /// Speak a known line, transcribe the RESULT, and compare. Warble, wandering pitch and vocoder noise
+    /// all destroy the read-back; a clean voice survives it. This is a round trip through two real models,
+    /// no fixture of expected samples to go stale, and it fails loudly on the exact complaint.
+    /// </para>
+    /// <para>
+    /// ⚠️ The floor is word OVERLAP, not equality. Whisper is allowed to mishear a word, punctuate
+    /// differently, or drop a filler - <c>drive-chat-voice.cs</c> uses a 70% overlap floor for the
+    /// microphone path for the same reason. Speech a person could follow clears this comfortably;
+    /// the audio described above does not come close.
+    /// </para>
+    /// </remarks>
+    [AiTest(Heavy = true, Timeout = 1_800_000)]
+    public async Task SpokenReplyIsIntelligibleWhenReadBack()
+    {
+        await _client.InitAsync();
+        var (reference, referenceRate) = await LoadFixtureAsync();
+
+        // Ordinary words, no proper nouns and no jargon: anything Whisper gets wrong here is the VOICE's
+        // fault, not the recogniser reaching for an unusual spelling.
+        //
+        // ⚠️ THREE LENGTHS, MEASURED TOGETHER, because length is a live suspect and one line cannot tell
+        // a broken voice from a length-dependent one. The first is the exact line ILGPU.ML's own
+        // Pipeline_ZipVoice_SpeaksInTheBrowser speaks, so a failure THERE indicts synthesis outright; the
+        // demo's real replies are capped at 320 characters, so the long one is the product's actual worst
+        // case, not a stress test. ZipVoice already has a documented, uninvestigated shape dependence
+        // (2026-09-04: one utterance rendering 2-3x faster than a shorter one on BOTH CUDA and OpenCL) and
+        // a history of long-utterance defects - a Slice under an If that collapsed to empty past ~21 s.
+        // Reporting the whole curve costs one extra synthesis and turns "the voice is bad" into a shape.
+        // MEASURED 2026-09-04 on WebGPU: 40 chars and 62 chars both read back cleanly, 123 chars came
+        // back "[INAUDIBLE]" at 0% (0/22). So this is not "the voice is bad" - synthesis FALLS OFF A
+        // CLIFF with length, and the demo's own MaxSpokenCharacters is 320, which puts every real spoken
+        // reply past the edge. These steps bracket the knee; the growth is one clause at a time so the
+        // words and the voice stay ordinary and only LENGTH varies.
+        string[] lines =
+        [
+            "Paint the sockets in the wall dull green.",
+            "The morning train was late again, so we walked along the river.",
+            "The morning train was late again, so we walked along the river and talked a while.",
+            "The morning train was late again, so we walked along the river and talked about the weather.",
+            "The morning train was late again, so we walked along the river and talked "
+                + "about the weather until the rain finally stopped.",
+        ];
+
+        // The WHOLE curve travels in the failure message, not just the failing rows. The test runner
+        // surfaces the exception, not the page console, so a summary that lists only failures throws away
+        // exactly the comparison that makes the number mean something.
+        var curve = new List<string>();
+        var failures = new List<string>();
+        foreach (var line in lines)
+        {
+            var sw = Stopwatch.StartNew();
+            var (samples, rate, model, ms) = await _client.SpeakAsync(line, KnownTranscript, reference, referenceRate);
+            sw.Stop();
+            if (samples == null || samples.Length == 0)
+                throw new Exception($"speak returned NO audio for a {line.Length}-character line");
+
+            // Straight back into Whisper. The pipeline resamples whatever rate it is handed to 16 kHz, so
+            // ZipVoice's 24 kHz output needs no conversion here - and converting it by hand would put OUR
+            // resampler inside the measurement of THEIR voice.
+            var (heard, _, transcribeMs) = await _client.TranscribeAsync(samples, rate);
+            heard = (heard ?? "").Trim();
+
+            var spokenWords = Words(line);
+            var matched = new List<string>(Words(heard));
+            int hits = 0;
+            foreach (var w in spokenWords) if (matched.Remove(w)) hits++;
+            var overlap = spokenWords.Count == 0 ? 0.0 : hits / (double)spokenWords.Count;
+            var seconds = samples.Length / (double)rate;
+
+            Console.WriteLine($"[AiVoiceTests] read-back {model}: {line.Length} chars -> {seconds:F2}s @ {rate}Hz "
+                            + $"({line.Length / seconds:F1} chars/sec), spoke {ms:F0}ms, transcribed {transcribeMs:F0}ms");
+            Console.WriteLine($"[AiVoiceTests]   said : {line}");
+            Console.WriteLine($"[AiVoiceTests]   heard: {heard}");
+            Console.WriteLine($"[AiVoiceTests]   word overlap {overlap:P0} ({hits}/{spokenWords.Count})");
+
+            curve.Add($"{line.Length,4} chars, {seconds,5:F2}s: {overlap,4:P0} ({hits}/{spokenWords.Count})"
+                    + $" heard \"{heard}\"");
+            if (overlap < 0.60)
+                failures.Add($"{line.Length} chars: {overlap:P0} ({hits}/{spokenWords.Count})");
+        }
+
+        Console.WriteLine("[AiVoiceTests] intelligibility vs length:"
+                        + string.Concat(curve.Select(c => "\n  " + c)));
+
+        if (failures.Count > 0)
+            throw new Exception(
+                $"the synthesised speech is not intelligible in {failures.Count} of {lines.Length} lengths "
+                + $"({string.Join("; ", failures)}). FULL CURVE:"
+                + string.Concat(curve.Select(c => "\n  * " + c))
+                + "\nAmplitude and duration can both be perfect while the voice is unusable - that is "
+                + "precisely what this test is here to catch.");
+    }
+
+    /// <summary>Lower-case alphabetic words, for comparing a spoken line with what came back.</summary>
+    private static List<string> Words(string s)
+    {
+        var outp = new List<string>();
+        var cur = new System.Text.StringBuilder();
+        foreach (var ch in s)
+        {
+            if (char.IsLetterOrDigit(ch)) cur.Append(char.ToLowerInvariant(ch));
+            else if (cur.Length > 0) { outp.Add(cur.ToString()); cur.Clear(); }
+        }
+        if (cur.Length > 0) outp.Add(cur.ToString());
+        return outp;
     }
 
     /// <summary>
