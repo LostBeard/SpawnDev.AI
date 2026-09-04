@@ -32,6 +32,12 @@ public sealed class AiWorkerClient
     /// (2026-07-04, same client/OPFS store works on the main thread and desktop).</summary>
     public bool PreferSharedWorker { get; set; } = true;
 
+    /// <summary>
+    /// Run the window-vs-worker cost benchmarks during <see cref="InitAsync"/>. Diagnostic; default OFF.
+    /// </summary>
+    /// <remarks>See <see cref="MeasureManagedGapAsync"/>. Turned on by <c>?bench=1</c> in the demo.</remarks>
+    public bool RunStartupBenchmarks { get; set; }
+
     /// <summary>Attach the worker (shared preferred, dedicated fallback) and warm the server.</summary>
     public async Task<string> InitAsync()
     {
@@ -59,10 +65,59 @@ public sealed class AiWorkerClient
             // compiled graph (enc 227 / dec 374) ran 357 ms/step in the browser page and 954 ms/step in
             // this worker, so the adapter is the first thing to rule in or out.
             Console.WriteLine($"[worker] {Status}");
+            // ⚠️ OFF unless asked for. These are diagnostics that cost a real user ~1.5 s of startup and tell
+            // them nothing; `?bench=1` is how tools/drive-worker-bench.cs turns them on.
+            if (RunStartupBenchmarks) await MeasureManagedGapAsync();
             Ready = true;
             return Status;
         }
         finally { _initGate.Release(); }
+    }
+
+    /// <summary>
+    /// Time the SAME pure-.NET workload in this window and in the worker, and print the ratio.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 The point of the exercise. MEASURED 2026-09-03: an identical compiled graph
+    /// (Whisper decode, enc 227 / dec 374 nodes) costs 972 ms/step hosted in the worker and 357 ms/step
+    /// hosted in the page. Graph, model and WebGPU adapter flags are all ruled out by measurement, and
+    /// per-node cost in this engine is dominated by .NET-side bookkeeping - so either the managed runtime
+    /// itself is slower in a worker, or the gap is in interop/contention. This settles which, without a GPU
+    /// anywhere in the loop: a ratio near 1 exonerates the runtime, a ratio near the observed 2.7 convicts it.
+    /// One warmup pass on each side first, because the jiterpreter's tier-up is exactly the thing under test
+    /// and a cold first pass would flatter whichever side ran second.
+    /// </remarks>
+    private async Task MeasureManagedGapAsync()
+    {
+        const int iterations = 400_000;
+        _ = ManagedBenchmark.Run(iterations / 4);                                     // window warmup
+        _ = await _worker!.Run<IAiWorkerApi, double>(s => s.BenchmarkManagedAsync(iterations / 4));  // worker warmup
+        var windowMs = ManagedBenchmark.Run(iterations);
+        var workerMs = await _worker!.Run<IAiWorkerApi, double>(s => s.BenchmarkManagedAsync(iterations));
+        Console.WriteLine($"[managed-bench] window {windowMs:F1} ms | worker {workerMs:F1} ms | "
+                        + $"worker/window {(windowMs > 0 ? workerMs / windowMs : 0):F2}x ({iterations} iters)");
+
+        // The interop half - the leg the managed benchmark cannot see.
+        const int crossings = 20_000;
+        _ = ManagedBenchmark.Interop(crossings / 10);
+        _ = await _worker!.Run<IAiWorkerApi, double>(s => s.BenchmarkInteropAsync(crossings / 10));
+        var winI = ManagedBenchmark.Interop(crossings);
+        var wrkI = await _worker!.Run<IAiWorkerApi, double>(s => s.BenchmarkInteropAsync(crossings));
+        Console.WriteLine($"[interop-bench] window {winI / crossings * 1000:F2} us/call | "
+                        + $"worker {wrkI / crossings * 1000:F2} us/call | "
+                        + $"worker/window {(winI > 0 ? wrkI / winI : 0):F2}x");
+
+        // The scheduler half. 2,000 round-trips is enough to separate a microtask (sub-microsecond) from a
+        // clamped timer (~1-4 ms) without making a diagnostic take longer than the thing it diagnoses.
+        foreach (var (mode, name) in new[] { (0, "Task.Yield"), (1, "Task.Delay(0)") })
+        {
+            const int yields = 2_000;
+            var winY = await ManagedBenchmark.YieldAsync(yields, mode);
+            var wrkY = await _worker!.Run<IAiWorkerApi, double>(s => s.BenchmarkYieldAsync(yields, mode));
+            Console.WriteLine($"[yield-bench] {name}: window {winY / yields * 1000:F1} us/yield | "
+                            + $"worker {wrkY / yields * 1000:F1} us/yield | "
+                            + $"worker/window {(winY > 0 ? wrkY / winY : 0):F2}x");
+        }
     }
 
     /// <summary>

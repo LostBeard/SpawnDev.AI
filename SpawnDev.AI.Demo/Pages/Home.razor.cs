@@ -54,6 +54,9 @@ public partial class Home : IDisposable
         var location = JS.Get<string>("location.href");
         if (location.Contains("worker=dedicated", StringComparison.OrdinalIgnoreCase))
             Ai.PreferSharedWorker = false;
+        // ?bench=1 runs the window-vs-worker cost benchmarks once, before anything is loaded.
+        if (location.Contains("bench=1", StringComparison.OrdinalIgnoreCase))
+            Ai.RunStartupBenchmarks = true;
         _status = Ai.PreferSharedWorker ? "Attaching shared worker, requesting WebGPU…" : "Attaching DEDICATED worker, requesting WebGPU…";
         StateHasChanged();
         try

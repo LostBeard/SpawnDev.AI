@@ -18,6 +18,50 @@ public interface IAiWorkerApi
     /// including the single frame of buffered responses - arrives through <paramref name="onFrame"/>
     /// as <see cref="AiWireFrame"/> JSON; the task completes after the terminal frame.</summary>
     Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame);
+
+    /// <summary>
+    /// Time a fixed, pure-.NET workload inside the worker. Diagnostic only - no GPU, no interop.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ WHY THIS EXISTS. The demo hosts the engine in a worker; PlaywrightMultiTest runs it in the page.
+    /// MEASURED 2026-09-03: the SAME compiled graph (Whisper decode, enc 227 / dec 374 nodes) costs 972 ms
+    /// per step in the worker and 357 ms in the page - 2.67x, with the graph, the model and the WebGPU
+    /// adapter flags all ruled out by measurement. Per-node cost in this engine is .NET-side bookkeeping,
+    /// so the open question is whether the .NET WASM runtime itself is simply slower in a worker (trace
+    /// JIT / jiterpreter warmup differing by scope would look exactly like this).
+    /// <para>
+    /// This runs the identical loop the caller can run on the window side, so the comparison isolates
+    /// managed execution speed from anything GPU. A ratio near 1 exonerates the runtime and points at
+    /// interop or contention; a ratio near 2.7 says the runtime IS the gap and no amount of graph work
+    /// will close it.
+    /// </para>
+    /// </remarks>
+    Task<double> BenchmarkManagedAsync(int iterations);
+
+    /// <summary>
+    /// Time N scheduler round-trips inside the worker. Diagnostic only.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ The companion to <see cref="BenchmarkManagedAsync"/>, and the one that can see what a tight
+    /// managed loop cannot. The executor awaits per node, and an await that actually yields lands on the
+    /// host's task queue. In a WINDOW that queue is driven by the page's event loop; in a WORKER it is
+    /// driven by the worker's, and a nested <c>setTimeout</c> is clamped there. The observed gap is
+    /// ~1 ms per node across 601 nodes - the shape of a per-yield timer clamp, not of slower arithmetic.
+    /// <para><paramref name="mode"/>: 0 = <c>Task.Yield</c> (queue microtask/continuation),
+    /// 1 = <c>Task.Delay(0)</c> (timer path).</para>
+    /// </remarks>
+    Task<double> BenchmarkYieldAsync(int iterations, int mode);
+
+    /// <summary>
+    /// Time N .NET-&gt;JS-&gt;.NET round trips inside the worker. Diagnostic only.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ The third leg of the triangulation. MEASURED 2026-09-03: managed execution is NOT the gap - the
+    /// worker ran the same pure-.NET workload at 0.89x the window's time, i.e. slightly FASTER. Whatever
+    /// costs ~1 ms per graph node in the worker and not in the page therefore leaves the managed heap, and
+    /// every dispatch this engine makes crosses to JS. This measures that crossing alone: no GPU, no await.
+    /// </remarks>
+    Task<double> BenchmarkInteropAsync(int iterations);
 }
 
 /// <summary>Configuration for the in-browser (worker) AI server - register in DI in ALL scopes
@@ -77,6 +121,18 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
         await EnsureInitializedAsync().ConfigureAwait(false);
         return $"ready | accelerator: {_accelerator!.Name} ({_accelerator.AcceleratorType}) | models: {_options.Models.Count}";
     }
+
+    /// <summary>Runs <see cref="ManagedBenchmark.Run"/> in the worker. See IAiWorkerApi for why.</summary>
+    public Task<double> BenchmarkManagedAsync(int iterations) =>
+        Task.FromResult(ManagedBenchmark.Run(iterations));
+
+    /// <summary>Runs <see cref="ManagedBenchmark.YieldAsync"/> in the worker. See IAiWorkerApi for why.</summary>
+    public Task<double> BenchmarkYieldAsync(int iterations, int mode) =>
+        ManagedBenchmark.YieldAsync(iterations, mode);
+
+    /// <summary>Runs <see cref="ManagedBenchmark.Interop"/> in the worker. See IAiWorkerApi for why.</summary>
+    public Task<double> BenchmarkInteropAsync(int iterations) =>
+        Task.FromResult(ManagedBenchmark.Interop(iterations));
 
     public async Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame)
     {
@@ -273,5 +329,74 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             if (!_terminal) { /* streamed responses end explicitly */ }
             _onFrame(new AiWireFrame { T = "end" }.ToJson());
         }
+    }
+}
+
+/// <summary>
+/// One fixed, allocation-light managed workload, run identically in the window and in the worker.
+/// </summary>
+/// <remarks>
+/// ⚠️ Deliberately shaped like the executor's per-node bookkeeping rather than like a math kernel:
+/// dictionary lookups, string hashing, small list churn and branchy integer work. A tight float loop
+/// would measure the jiterpreter's best case and tell us nothing about why a graph walk is slow.
+/// No GPU, no JS interop, no allocation spikes - just managed execution speed.
+/// </remarks>
+public static class ManagedBenchmark
+{
+    /// <summary>Run the workload and return elapsed milliseconds.</summary>
+    public static double Run(int iterations)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var map = new Dictionary<string, int>(StringComparer.Ordinal);
+        var names = new string[32];
+        for (int i = 0; i < names.Length; i++) names[i] = "node_output_" + i;
+        long acc = 0;
+        var shape = new int[4];
+        for (int it = 0; it < iterations; it++)
+        {
+            var name = names[it & 31];
+            map[name] = it;
+            if (map.TryGetValue(name, out var v)) acc += v;
+            // shape-interpretation-shaped work: small array maths plus a branch per element
+            shape[0] = 1; shape[1] = (it & 7) + 1; shape[2] = (it & 3) + 1; shape[3] = 64;
+            int count = 1;
+            for (int d = 0; d < shape.Length; d++) count *= shape[d] > 0 ? shape[d] : 1;
+            acc += count;
+            if ((it & 1023) == 0) map.Clear();
+        }
+        sw.Stop();
+        // Consume acc so nothing is optimised away.
+        if (acc == long.MinValue) Console.WriteLine("unreachable");
+        return sw.Elapsed.TotalMilliseconds;
+    }
+
+    /// <summary>N .NET-&gt;JS-&gt;.NET calls through SpawnJS; returns elapsed milliseconds.</summary>
+    /// <remarks>
+    /// <c>JSEquals</c> on one held reference is chosen because the JS side does almost nothing (<c>a === b</c>)
+    /// - anything measured here is the CROSSING, not the work. The reference is resolved once, outside the loop.
+    /// </remarks>
+    public static double Interop(int iterations)
+    {
+        var js = SpawnDev.SpawnJS.SpawnJSRuntime.Instance;
+        var g = js.GlobalThis!;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        int acc = 0;
+        for (int i = 0; i < iterations; i++) if (g.JSEquals(g, true)) acc++;
+        sw.Stop();
+        if (acc < 0) Console.WriteLine("unreachable");
+        return sw.Elapsed.TotalMilliseconds;
+    }
+
+    /// <summary>N scheduler round-trips; returns elapsed milliseconds. mode 0 = Yield, 1 = Delay(0).</summary>
+    public static async Task<double> YieldAsync(int iterations, int mode)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < iterations; i++)
+        {
+            if (mode == 0) await Task.Yield();
+            else await Task.Delay(0).ConfigureAwait(false);
+        }
+        sw.Stop();
+        return sw.Elapsed.TotalMilliseconds;
     }
 }

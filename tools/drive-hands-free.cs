@@ -41,15 +41,17 @@ await using var ctx = await pw.Chromium.LaunchPersistentContextAsync(profileDir,
 {
     Headless = !headed,
     Channel = "chrome",   // ⚠️ Playwright's bundled chromium exposes a SOFTWARE WebGPU adapter.
-    // ⚠️ THE WebGPU FLAGS ARE NOT OPTIONAL, and leaving them out made every number this gate has ever
-    // printed pessimistic. PlaywrightMultiTest launches Chrome with them; this gate did not, and the same
-    // COMPILED graph (Whisper decode step, enc 227 / dec 374 nodes) measured 357 ms/step under PMT and
-    // 954 ms/step here. Identical model, identical node counts, 2.67x apart - which is the signature of
-    // Dawn falling off its native D3D12 path, not of anything in the app.
+    // ⚠️ These match the flags PlaywrightMultiTest launches Chrome with, so a number measured here and a
+    // number measured there are comparable. "--disable-software-rasterizer" is the one that makes a wrong
+    // adapter FAIL rather than silently become CPU-software-rasterizer time (PMT's own comment records
+    // that trap costing every WebGPU number measured before it was found).
     //
-    // "--disable-software-rasterizer" is the one that makes a wrong adapter FAIL rather than silently
-    // become CPU-software-rasterizer time (PMT's own comment records that trap costing every WebGPU
-    // number measured before it was found).
+    // ⚠️ THEY ARE NOT THE EXPLANATION FOR THE PMT/demo GAP, and this comment used to claim they were.
+    // MEASURED 2026-09-03: adding them moved this gate's Whisper decode step from 954 ms to 972 ms - no
+    // change. The window-vs-worker theory that replaced it is ALSO disproven, by three benchmarks run in
+    // the same page load (AiWorkerClient.MeasureManagedGapAsync): managed execution 0.92x, JS crossings
+    // 1.09x, scheduler 0.58-1.00x - the worker is not slower at any of them. Keep the flags for
+    // comparability; do not keep either story.
     Args = new[]
     {
         "--use-fake-ui-for-media-stream",
