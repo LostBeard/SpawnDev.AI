@@ -19,6 +19,7 @@ dotnet run tools/<name>.cs -- [url]
 | `drive-ai-model.cs` · `drive-ai-coreside.cs` | Model selection / core-side paths. |
 | `check-webgpu-adapter.cs` | Which WebGPU adapter the browser actually gave us. |
 | `build-index.cs` | Site index generation. |
+| `serve-published.cs` | Serves a `dotnet publish` output statically with PMT's COOP/COEP headers - **the only correct way to measure the demo**, see below. |
 
 ## Two things that will cost you an hour otherwise
 
@@ -45,6 +46,44 @@ silence after the talker stops is the whole thing being tested. Put the silence 
 (clip + N seconds of zeros, `loop = false`). Measured with the source merely ending: the demo's sample
 counter froze at 4.0 s, even the 30 s fixed window never elapsed, and the gate reported a 75 s hang that a
 real microphone could not have produced.
+
+## 🔴 The thing that costs THREE DAYS otherwise: measure a PUBLISHED build
+
+**A performance number taken under `dotnet run` is not a number.** `dotnet run` starts WasmAppHost, which
+serves `bin/<cfg>/net10.0/wwwroot` - the BUILD output. PlaywrightMultiTest publishes. The two are not the
+same app.
+
+MEASURED 2026-09-04, same commit, same clip, same browser, only the build/serving path different:
+
+| | `dotnet run -c Release` | `dotnet publish -c Release` + static |
+|---|---|---|
+| transcribe | 11,099 ms | **3,669 ms** |
+| Whisper decode step | 947 ms | **328 ms** |
+| speak | 60,299 ms | **26,199 ms** |
+| warm-up to mic open | 12.2 s | **3.1 s** |
+
+⚠️ **`-c Release` is not enough** - the slow run was already Release. It is BUILD output vs PUBLISH
+output. Publish relinks and `wasm-opt -O2`s the runtime (the trees ship a different
+`dotnet.native.*.wasm`, 3,128,737 B vs 3,006,472 B), and **SpawnDev.ILGPU transpiles .NET IL into GPU
+shaders**, so the build configuration changes the generated WGSL as well as host-side speed.
+
+The "demo is 3.5x slower than PMT" gap was blamed on Chrome WebGPU flags, then on window-vs-worker
+execution, then on a stale NuGet package. It was this.
+
+```
+SpawnDev.AI.Demo/_buildRelease.bat                 # dotnet publish -c Release -o bin/PublishRelease
+dotnet run tools/serve-published.cs -- SpawnDev.AI.Demo/bin/PublishRelease/wwwroot 5299
+dotnet run tools/drive-hands-free.cs -- http://localhost:5299
+```
+
+The static server must send `Cross-Origin-Embedder-Policy: credentialless` and
+`Cross-Origin-Opener-Policy: same-origin` (SharedArrayBuffer), which is what PMT's `StaticFileServer`
+sets. `drive-hands-free.cs` now prints the runtime wasm it actually loaded, and shouts if pointed at
+:5199.
+
+⚠️ **A different port is a different ORIGIN, so OPFS starts EMPTY.** The first run on a new port pays
+every model download and compile again (chat first token 274 s on the cold origin). Warm it before
+reading any load-sensitive number.
 
 ## Useful flags
 

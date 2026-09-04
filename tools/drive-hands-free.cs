@@ -186,6 +186,38 @@ try
     await page.Locator(".composer textarea").WaitForAsync(new() { Timeout = 300_000 });
     Console.WriteLine("    app ready");
 
+    // 🔴 EVERY NUMBER THIS TOOL PRINTS CARRIES ITS BUILD PROVENANCE, because the build is worth 3.0x and
+    // was silently wrong for three days.
+    //
+    // MEASURED 2026-09-04, same commit and same clip: Whisper decode 947 ms/step under `dotnet run`
+    // (WasmAppHost, which serves bin/<cfg>/net10.0/wwwroot) against 328 ms/step from a `dotnet publish`
+    // build served statically. Transcribe 11,099 ms -> 3,669 ms. The demo/PMT gap that was blamed on Chrome
+    // flags, then on window-vs-worker, then on a stale NuGet package was THIS, the whole time - PMT
+    // publishes, and nobody compared how the two numbers were produced.
+    //
+    // ⚠️ `-c Release` does NOT make it right: the slow run was already Release. It is BUILD output vs
+    // PUBLISH output. Publish relinks and wasm-opts the runtime (the two trees ship a DIFFERENT
+    // dotnet.native.*.wasm, 3,128,737 B vs 3,006,472 B), and SpawnDev.ILGPU transpiles .NET IL into GPU
+    // shaders, so the build also changes the generated WGSL - not just host-side speed.
+    //
+    // So: name the runtime this page actually loaded. A number quoted without it is not comparable to
+    // anything.
+    try
+    {
+        var runtime = await page.EvaluateAsync<string>(@"() => {
+            const e = performance.getEntriesByType('resource')
+                .filter(r => /dotnet\.native\..*\.wasm$/.test(r.name))
+                .sort((a,b) => (b.transferSize||b.decodedBodySize||0) - (a.transferSize||a.decodedBodySize||0))[0];
+            return e ? (e.name.split('/').pop() + ' ' + (e.decodedBodySize || e.transferSize || 0) + ' B') : '(not observed)';
+        }");
+        Console.WriteLine($"    runtime: {runtime}");
+    }
+    catch { Console.WriteLine("    runtime: (could not read performance entries)"); }
+    if (url.Contains(":5199"))
+        Console.WriteLine("    🔴 THIS IS THE `dotnet run` DEV SERVER (WasmAppHost). Measured 3.0x SLOWER than a\n"
+                        + "       published build - do NOT quote these timings. Publish with\n"
+                        + "       SpawnDev.AI.Demo/_buildRelease.bat and serve bin/PublishRelease/wwwroot.");
+
     // A real user gesture, so the output AudioContext is allowed to make noise.
     await page.Locator(".composer textarea").ClickAsync();
 
