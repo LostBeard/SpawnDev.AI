@@ -13,7 +13,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.ILGPU" Version="5.2.8" />
+		<PackageReference Include="SpawnDev.ILGPU" Version="5.2.9-local.5" />
 	</ItemGroup>
 
 </Project>
