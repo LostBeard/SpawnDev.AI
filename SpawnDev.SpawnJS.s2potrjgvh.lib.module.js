@@ -230,7 +230,9 @@
         // JSImport 
         // double _spawnJSObjectNewArray();
         static spawnJSObjectNewArray() {
-            return SpawnJSInterop.spawnJSObjectHold([]);
+            var sjsId = SpawnJSInterop.spawnJSObjectHold([]);
+            if (SpawnJSInterop.verbose) console.log('spawnJSObjectNewArray', sjsId);
+            return sjsId;
         }
         // refreshes the method map by looking for any new methods and adds them
         // JSImport
@@ -282,15 +284,16 @@
         // int? SpawnJSObjectReleaseInt32Nullable(double sjsId);
         // double? SpawnJSObjectReleaseDoubleNullable(double sjsId);
         static spawnJSObjectRelease(sjsId) {
-            var ret = SpawnJSInterop.spawnJSObjects[sjsId];
+            var ret = SpawnJSInterop.spawnJSObjectGet(sjsId);
             delete SpawnJSInterop.spawnJSObjects[sjsId];
+            if (SpawnJSInterop.verbose) console.log('spawnJSObjectRelease. Count:', Object.keys(SpawnJSInterop.spawnJSObjects).length, 'Id:', sjsId);
             return ret;
         }
         // removes the object from the hold, JSON.stringifies it and returns it
         // JSImport
         // string SpawnJSObjectReleaseJson(double sjsId);
         static spawnJSObjectReleaseAsJson(sjsId) {
-            var ret = SpawnJSInterop.spawnJSObjects[sjsId];
+            var ret = SpawnJSInterop.spawnJSObjectGet(sjsId);
             delete SpawnJSInterop.spawnJSObjects[sjsId];
             return JSON.stringify(ret);
         }
@@ -298,6 +301,13 @@
         // JSImport
         // bool SpawnJSObjectHoldExists(double sjsId);
         static spawnJSObjectHoldExists(sjsId) {
+            switch (sjsId) {
+                case -1: return true;
+                case -2: return true;
+                case -3: return true;
+                case -4: return true;
+                case -5: return true;
+            }
             return sjsId in SpawnJSInterop.spawnJSObjects;
         }
         // returns string
@@ -533,12 +543,23 @@
                     var argsCnt = args.length;
                     // get a temporary hold of the args (released after we notify SpawnJSRuntime)
                     var argsId = SpawnJSInterop.spawnJSObjectHold(args);
-                    // notify SpawnJSRuntime with the argsId and the cnt
-                    handleCallback(callbackId, argsId, argsCnt);
-                    // release the args
-                    SpawnJSInterop.spawnJSObjectRelease(argsId);
-                    // if it was a 1 time use callback, release it
-                    if (once) delete SpawnJSInterop._callbacks[callbackIdPair];
+                    // ⚠️ try/finally, NOT straight-line. .Net deliberately does not release this slot
+                    // itself - that would cost an extra crossing per callback - so the ONLY release is
+                    // here. If handleCallback throws (any exception escaping the .Net handler crosses
+                    // back through here) a straight-line release is SKIPPED and the args array is
+                    // stranded in spawnJSObjects for the life of the page. Same for the `once` cleanup:
+                    // a one-shot callback that threw would never be removed and would keep firing.
+                    // MEASURED 2026-09-02: dumping the table mid-run in the ML demo showed ~30 stranded
+                    // empty arrays alongside the retained adapters.
+                    try {
+                        // notify SpawnJSRuntime with the argsId and the cnt
+                        handleCallback(callbackId, argsId, argsCnt);
+                    } finally {
+                        // release the args
+                        SpawnJSInterop.spawnJSObjectRelease(argsId);
+                        // if it was a 1 time use callback, release it
+                        if (once) delete SpawnJSInterop._callbacks[callbackIdPair];
+                    }
                     // return what is in index argsCnt (the designated place .Net will write to if there is a return value)
                     return args[argsCnt];
                 };
@@ -793,6 +814,7 @@
             if (objectToHold === SpawnJSInterop) return -5;
             var sjsId = ++SpawnJSInterop._sjsObjectIdNext;
             SpawnJSInterop.spawnJSObjects[sjsId] = objectToHold;
+            if (SpawnJSInterop.verbose) console.log('spawnJSObjectHold. Count:', Object.keys(SpawnJSInterop.spawnJSObjects).length, 'Id:', sjsId, 'Object:', objectToHold);
             return sjsId;
         }
         // get an object from the hold
