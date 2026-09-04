@@ -61,6 +61,8 @@ public sealed record AiInferenceSplit(int GraphRuns, double ExecutorMs, int Read
     public double PrefillMs { get; init; }
     public double DecodeStepsMs { get; init; }
     public int DecodeSteps { get; init; }
+    public int EncoderNodeCount { get; init; }
+    public int DecoderNodeCount { get; init; }
     public double DecodeSetupMs { get; init; }
     public double DecodeGraphMs { get; init; }
     public double DecodeArgmaxMs { get; init; }
@@ -204,6 +206,8 @@ public sealed class AiSpeechEngine : IDisposable
                     PrefillMs = result.PrefillMs,
                     DecodeStepsMs = result.DecodeStepsMs,
                     DecodeSteps = result.DecodeSteps,
+                    EncoderNodeCount = result.EncoderNodeCount,
+                    DecoderNodeCount = result.DecoderNodeCount,
                     DecodeSetupMs = result.DecodeSetupMs,
                     DecodeGraphMs = result.DecodeGraphMs,
                     DecodeArgmaxMs = result.DecodeArgmaxMs,

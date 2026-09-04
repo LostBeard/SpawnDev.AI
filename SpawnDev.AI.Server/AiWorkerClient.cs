@@ -53,6 +53,12 @@ public sealed class AiWorkerClient
                 }
             }
             Status = await _worker.Run<IAiWorkerApi, string>(s => s.GetStatusAsync());
+            // ⚠️ Which ADAPTER the worker actually got. A worker can be handed a different (or software)
+            // WebGPU adapter than the page, and that alone would explain a large per-dispatch gap - the
+            // same trap as Playwright chromium exposing SwiftShader. MEASURED 2026-09-03: an identical
+            // compiled graph (enc 227 / dec 374) ran 357 ms/step in the browser page and 954 ms/step in
+            // this worker, so the adapter is the first thing to rule in or out.
+            Console.WriteLine($"[worker] {Status}");
             Ready = true;
             return Status;
         }
@@ -148,6 +154,7 @@ public sealed class AiWorkerClient
             // give it: the encoder is one fixed-shape run that a recorded plan can serve forever, while
             // each decode step's past-K/V is a position longer than the last.
             Console.WriteLine($"[transcribe] encoder {D("encoder_ms"):F0}ms | prefill {D("prefill_ms"):F0}ms "
+                + $"| COMPILED nodes enc {D("encoder_nodes"):F0} / dec {D("decoder_nodes"):F0} "
                 + $"| {D("decode_steps"):F0} decode steps {D("decode_steps_ms"):F0}ms "
                 + $"({(D("decode_steps") > 0 ? D("decode_steps_ms") / D("decode_steps") : 0):F0}ms each)");
             // The decode step split. Three different fixes hide behind one per-step number: host setup (a

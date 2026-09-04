@@ -658,6 +658,8 @@ public sealed class AiApiRouter
                     prefill_ms = result.Split.PrefillMs,
                     decode_steps_ms = result.Split.DecodeStepsMs,
                     decode_steps = result.Split.DecodeSteps,
+                    encoder_nodes = result.Split.EncoderNodeCount,
+                    decoder_nodes = result.Split.DecoderNodeCount,
                     decode_setup_ms = result.Split.DecodeSetupMs,
                     decode_graph_ms = result.Split.DecodeGraphMs,
                     decode_argmax_ms = result.Split.DecodeArgmaxMs,

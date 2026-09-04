@@ -41,7 +41,24 @@ await using var ctx = await pw.Chromium.LaunchPersistentContextAsync(profileDir,
 {
     Headless = !headed,
     Channel = "chrome",   // ⚠️ Playwright's bundled chromium exposes a SOFTWARE WebGPU adapter.
-    Args = new[] { "--use-fake-ui-for-media-stream", "--autoplay-policy=no-user-gesture-required" },
+    // ⚠️ THE WebGPU FLAGS ARE NOT OPTIONAL, and leaving them out made every number this gate has ever
+    // printed pessimistic. PlaywrightMultiTest launches Chrome with them; this gate did not, and the same
+    // COMPILED graph (Whisper decode step, enc 227 / dec 374 nodes) measured 357 ms/step under PMT and
+    // 954 ms/step here. Identical model, identical node counts, 2.67x apart - which is the signature of
+    // Dawn falling off its native D3D12 path, not of anything in the app.
+    //
+    // "--disable-software-rasterizer" is the one that makes a wrong adapter FAIL rather than silently
+    // become CPU-software-rasterizer time (PMT's own comment records that trap costing every WebGPU
+    // number measured before it was found).
+    Args = new[]
+    {
+        "--use-fake-ui-for-media-stream",
+        "--autoplay-policy=no-user-gesture-required",
+        "--enable-unsafe-webgpu",
+        "--enable-features=WebGPUService,SkiaGraphite,FileSystemAccessPersistentPermission",
+        "--ignore-gpu-blocklist",
+        "--disable-software-rasterizer",
+    },
 });
 
 var page = await ctx.NewPageAsync();
