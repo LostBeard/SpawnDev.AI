@@ -323,7 +323,7 @@ public sealed class AiWorkerClient
     /// </remarks>
     public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs)> SpeakAsync(
         string text, string referenceText, float[] referenceSamples, int referenceSampleRate,
-        int? maxSpokenCharacters = null)
+        int? maxSpokenCharacters = null, int? noiseSeed = null)
     {
         var body = JsonSerializer.Serialize(new
         {
@@ -332,6 +332,7 @@ public sealed class AiWorkerClient
             reference_samples = referenceSamples,
             sample_rate = referenceSampleRate,
             max_spoken_characters = maxSpokenCharacters,
+            noise_seed = noiseSeed,
         }, J);
         var json = await RequestJsonAsync("POST", "/api/speak", body);
         using var doc = JsonDocument.Parse(json);

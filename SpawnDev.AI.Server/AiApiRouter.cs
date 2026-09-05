@@ -901,7 +901,15 @@ public sealed class AiApiRouter
                 : async (audio, rate) =>
                     (await Speech.TranscribeAsync(audio, rate).ConfigureAwait(false)).Text ?? "";
 
-            var result = await Voice!.SpeakAsync(text, referenceText, reference, sampleRate, maxSpoken, readBack)
+            // Optional pinned noise draw, so a caller can make a synthesis REPRODUCIBLE. Same ValueKind-first
+            // guard as max_spoken_characters above: TryGetInt32 THROWS on a non-number element rather than
+            // returning false, and clients serialise an absent value as null.
+            int? noiseSeed = body.TryGetProperty("noise_seed", out var nsEl)
+                && nsEl.ValueKind == JsonValueKind.Number
+                && nsEl.TryGetInt32(out var ns) ? ns : null;
+
+            var result = await Voice!.SpeakAsync(text, referenceText, reference, sampleRate, maxSpoken,
+                    readBack, noiseSeed)
                 .ConfigureAwait(false);
             await t.WriteJsonAsync(200, new
             {

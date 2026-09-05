@@ -195,9 +195,21 @@ public sealed class AiVoiceEngine : IDisposable
     /// leave it null and the engine ships whatever the first draw produced.
     /// </para>
     /// </param>
+    /// <param name="noiseSeed">
+    /// Pin the flow-matching noise draw, making this synthesis REPRODUCIBLE. Null (default) re-samples,
+    /// which is the shipping behaviour.
+    /// </param>
+    /// <remarks>
+    /// ⚠️ WITHOUT THIS, TWO RUNS ARE NOT COMPARABLE AND NEITHER ARE TWO BACKENDS. Zero-shot flow matching
+    /// starts from fresh noise every call, so the same line scores differently each time - MEASURED
+    /// 2026-09-04 on WebGPU, a 343-character line read back at 30%, 39% and 55% across three runs of the
+    /// identical fixture. Comparing WebGPU against CUDA, or a fix against its baseline, is meaningless
+    /// while that term is free. Pinning it is what turns "it sounds worse" into a difference with a cause.
+    /// </remarks>
     public async Task<AiSpeech> SpeakAsync(string text, string referenceText, float[] referenceSamples,
         int referenceSampleRate, int? maxSpokenCharacters = null,
-        Func<float[], int, Task<string>>? transcribe = null, CancellationToken ct = default)
+        Func<float[], int, Task<string>>? transcribe = null, int? noiseSeed = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("nothing to say", nameof(text));
@@ -229,6 +241,10 @@ public sealed class AiVoiceEngine : IDisposable
             // recorded "then=21, else=0" was taken on a SHORT utterance, so the else branch's 254 nodes
             // have never been shown to be correct. Censusing per synthesis is what turns that from a
             // story into a fact.
+
+            // Pin (or release) the noise draw for THIS call. See the noiseSeed parameter.
+            _pipeline!.NoiseSeed = noiseSeed;
+
             SpawnDev.ILGPU.ML.Operators.IfOperator.ResetBranchCensus();
             SpawnDev.ILGPU.ML.Graph.GraphExecutor.ResetSliceAttrFallbackDiagnostics();
             if (transcribe != null)

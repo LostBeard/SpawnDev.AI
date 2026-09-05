@@ -36,6 +36,9 @@ public sealed class AiVoiceTests
     /// </remarks>
     private const string Model = "qwen2.5:0.5b-instruct-q8_0";
 
+    /// <summary>Fixed flow-matching noise draw, so this gate is repeatable across runs and backends.</summary>
+    private const int NoiseSeed = 12345;
+
     /// <summary>New instance.</summary>
     public AiVoiceTests(AiWorkerClient client, HttpClient http)
     {
@@ -145,32 +148,24 @@ public sealed class AiVoiceTests
         // a wide spread in the browser would mean something different is happening on WebGPU.
         string[] lines =
         [
+            // THE EXACT SEQUENCE THAT FAILED. Output depends on EXECUTION HISTORY: 296 is clean
+            // (0b57ba1c..., 100%) when it runs first, and was corrupted (67% / 73%, two different
+            // hashes) when it followed 41/123/250. Every shrunken repro removed the history that
+            // causes it, which is why they all came out clean. Re-running the full sequence tests
+            // whether the CORRUPTION is itself reproducible - the precondition for bisecting it.
             "Paint the sockets in the wall dull green.",
-            "The morning train was late again, so we walked along the river and talked "
-                + "about the weather until the rain finally stopped.",
             "The morning train was late again, so we walked along the river and talked about the weather "
-                + "until the rain finally stopped and the sun came out over the water, warming the stones "
-                + "along the path where we sat and rested for a while before walking home.",
-            // 288 chars - the exact length of the Captain's third live turn, the one that came back
-            // "intermittently garbled" with varying volume.
+                + "until the rain finally stopped.",
             "The morning train was late again, so we walked along the river and talked about the weather "
-                + "until the rain finally stopped and the sun came out over the water, warming the stones "
-                + "along the path where we sat and rested for a while before walking slowly back home "
-                + "together in the quiet evening air.",
-            // 343 chars - past MaxSpokenCharacters, so the product's worst case and then some.
+                + "until the rain finally stopped and the sun came out over the water, warming the stones along the path where we sat and rested for a while before walking home.",
             "The morning train was late again, so we walked along the river and talked about the weather "
-                + "until the rain finally stopped and the sun came out over the water, warming the stones "
-                + "along the path where we sat and rested for a while before walking slowly back home "
-                + "together in the quiet evening air, tired and content after a long and useful day.",
-            // Second sample of each long length - see the note above.
+                + "until the rain finally stopped and the sun came out over the water, warming the stones along the path where we sat and rested for a while before walking slowly back home together in the quiet evening air.",
             "The morning train was late again, so we walked along the river and talked about the weather "
-                + "until the rain finally stopped and the sun came out over the water, warming the stones "
-                + "along the path where we sat and rested for a while before walking slowly back home "
-                + "together in the quiet evening air.",
+                + "until the rain finally stopped and the sun came out over the water, warming the stones along the path where we sat and rested for a while before walking slowly back home together in the quiet evening air, tired and content after a long and useful day.",
             "The morning train was late again, so we walked along the river and talked about the weather "
-                + "until the rain finally stopped and the sun came out over the water, warming the stones "
-                + "along the path where we sat and rested for a while before walking slowly back home "
-                + "together in the quiet evening air, tired and content after a long and useful day.",
+                + "until the rain finally stopped and the sun came out over the water, warming the stones along the path where we sat and rested for a while before walking slowly back home together in the quiet evening air.",
+            "The morning train was late again, so we walked along the river and talked about the weather "
+                + "until the rain finally stopped and the sun came out over the water, warming the stones along the path where we sat and rested for a while before walking slowly back home together in the quiet evening air, tired and content after a long and useful day.",
         ];
 
         // The WHOLE curve travels in the failure message, not just the failing rows. The test runner
@@ -181,7 +176,12 @@ public sealed class AiVoiceTests
         foreach (var line in lines)
         {
             var sw = Stopwatch.StartNew();
-            var (samples, rate, model, ms) = await _client.SpeakAsync(line, KnownTranscript, reference, referenceRate);
+            // PIN THE NOISE. Flow matching re-samples every call, so an unpinned score is a sample from a
+            // distribution, not a measurement: MEASURED 2026-09-04, the same 343-character line read back at
+            // 30%, 39% and 55% on three runs. A fixed seed makes this gate REPEATABLE and makes a
+            // WebGPU-vs-CUDA comparison mean something, since both then integrate the same noise.
+            var (samples, rate, model, ms) = await _client.SpeakAsync(
+                line, KnownTranscript, reference, referenceRate, noiseSeed: NoiseSeed);
             sw.Stop();
             if (samples == null || samples.Length == 0)
                 throw new Exception($"speak returned NO audio for a {line.Length}-character line");
@@ -198,6 +198,18 @@ public sealed class AiVoiceTests
             foreach (var w in spokenWords) if (matched.Remove(w)) hits++;
             var overlap = spokenWords.Count == 0 ? 0.0 : hits / (double)spokenWords.Count;
             var seconds = samples.Length / (double)rate;
+
+            // DETERMINISM CHECK. With noiseSeed pinned and identical text, two runs must produce
+            // BIT-IDENTICAL audio. If they do not, the backend is racing or reading uninitialised memory -
+            // a completely different bug class from "the arithmetic differs from CUDA", and word overlap is
+            // too coarse to tell them apart (different audio can score the same).
+            ulong h = 1469598103934665603UL;   // FNV-1a over the raw sample bits
+            foreach (var v in samples)
+            {
+                uint bits = (uint)BitConverter.SingleToInt32Bits(v);
+                for (int b = 0; b < 4; b++) { h ^= (byte)(bits >> (b * 8)); h *= 1099511628211UL; }
+            }
+            Console.WriteLine($"[AiVoiceTests]   audio fnv1a={h:x16} n={samples.Length} first={samples[0]:F6} last={samples[^1]:F6}");
 
             Console.WriteLine($"[AiVoiceTests] read-back {model}: {line.Length} chars -> {seconds:F2}s @ {rate}Hz "
                             + $"({line.Length / seconds:F1} chars/sec), spoke {ms:F0}ms, transcribed {transcribeMs:F0}ms");
