@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Diagnostics;
 using SpawnDev.AI.Server;
 
@@ -198,6 +198,53 @@ public sealed class AiVoiceTests
             foreach (var w in spokenWords) if (matched.Remove(w)) hits++;
             var overlap = spokenWords.Count == 0 ? 0.0 : hits / (double)spokenWords.Count;
             var seconds = samples.Length / (double)rate;
+
+            // 🔴 WHERE the words are lost, not just how many. A shortfall reads the same whether the voice
+            // degraded or the recogniser stopped early, and those are OPPOSITE conclusions - one is our
+            // bug, one is the oracle's limit. MEASURED 2026-09-05: the 343-character line read back 92%
+            // with the missing words being exactly the final clause, and the recogniser emitted
+            // end-of-transcript at 63 steps of a 444 cap. An early EOT is precisely what a DEGRADED TAIL
+            // produces, so that number alone decides nothing.
+            //
+            // Two things do decide it. Re-transcribing the last seconds ON THEIR OWN removes the decode
+            // length from the question entirely: clean tail = the audio is fine and the full-clip decode
+            // stopped early; garbled tail = the audio degrades and it is ours. Per-second RMS then tells
+            // "quiet" apart from "noise", which sound identical in a word count.
+            //
+            // ⚠️ Never let a shortfall be attributed to the recogniser without this. The Captain has heard
+            // this voice garble with his own ears; a word count that can be explained away is how a real
+            // defect gets talked out of existence.
+            const double TailSeconds = 6.0;
+            string tailHeard = "";
+            double tailOverlap = -1;
+            if (seconds > TailSeconds + 1.0)
+            {
+                int tailFrom = samples.Length - (int)(TailSeconds * rate);
+                var tail = samples[tailFrom..];
+                var (th, _, _) = await _client.TranscribeAsync(tail, rate);
+                tailHeard = (th ?? "").Trim();
+                // Score the tail against the LAST words of the line, proportional to its share of the clip.
+                var tailExpected = spokenWords.Skip(Math.Max(0,
+                    spokenWords.Count - (int)Math.Ceiling(spokenWords.Count * TailSeconds / seconds))).ToList();
+                var tailMatched = new List<string>(Words(tailHeard));
+                int tailHits = 0;
+                foreach (var w in tailExpected) if (tailMatched.Remove(w)) tailHits++;
+                tailOverlap = tailExpected.Count == 0 ? 0.0 : tailHits / (double)tailExpected.Count;
+                Console.WriteLine($"[AiVoiceTests]   TAIL {TailSeconds:F0}s alone: {tailOverlap:P0} "
+                                + $"({tailHits}/{tailExpected.Count}) heard \"{tailHeard}\"");
+            }
+
+            // Per-second RMS + peak. Silence, clipping and noise are three different failures that a word
+            // count cannot tell apart.
+            var rms = new List<string>();
+            for (int sec = 0; sec * rate < samples.Length; sec++)
+            {
+                int from = sec * rate, to = Math.Min(samples.Length, from + rate);
+                double sum = 0; float peak = 0;
+                for (int i = from; i < to; i++) { sum += samples[i] * (double)samples[i]; var a = Math.Abs(samples[i]); if (a > peak) peak = a; }
+                rms.Add($"{Math.Sqrt(sum / Math.Max(1, to - from)):F3}/{peak:F2}");
+            }
+            Console.WriteLine($"[AiVoiceTests]   rms/peak per second: {string.Join(" ", rms)}");
 
             // DETERMINISM CHECK. With noiseSeed pinned and identical text, two runs must produce
             // BIT-IDENTICAL audio. If they do not, the backend is racing or reading uninitialised memory -
