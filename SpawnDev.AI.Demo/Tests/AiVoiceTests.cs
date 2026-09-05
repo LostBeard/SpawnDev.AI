@@ -133,14 +133,44 @@ public sealed class AiVoiceTests
         // CLIFF with length, and the demo's own MaxSpokenCharacters is 320, which puts every real spoken
         // reply past the edge. These steps bracket the knee; the growth is one clause at a time so the
         // words and the voice stay ordinary and only LENGTH varies.
+        // 🔴 THE LONGEST LINE HERE MUST REACH MaxSpokenCharacters, WHICH IS 320.
+        // MEASURED 2026-09-04: this gate originally stopped at 123 characters and passed at 100%, while
+        // the Captain's third live turn spoke a 288-character reply that came back "intermittently
+        // garbled" with varying volume. A gate that stops short of the product's OWN cap cannot see the
+        // product's worst case - the cap is the contract, so the gate has to sit on it.
+        // ⚠️ THE LONG LINES ARE SAMPLED TWICE. ZipVoice draws fresh noise per synthesis and its own
+        // SpeakVerifiedAsync remarks document draws that come out as the wrong sentence, so ONE reading at
+        // a length cannot tell a systematic defect from an unlucky draw. MEASURED 2026-09-04: the same
+        // 343-character line scored 100/100/98% across three CUDA runs, so the spread there is small -
+        // a wide spread in the browser would mean something different is happening on WebGPU.
         string[] lines =
         [
             "Paint the sockets in the wall dull green.",
-            "The morning train was late again, so we walked along the river.",
-            "The morning train was late again, so we walked along the river and talked a while.",
-            "The morning train was late again, so we walked along the river and talked about the weather.",
             "The morning train was late again, so we walked along the river and talked "
                 + "about the weather until the rain finally stopped.",
+            "The morning train was late again, so we walked along the river and talked about the weather "
+                + "until the rain finally stopped and the sun came out over the water, warming the stones "
+                + "along the path where we sat and rested for a while before walking home.",
+            // 288 chars - the exact length of the Captain's third live turn, the one that came back
+            // "intermittently garbled" with varying volume.
+            "The morning train was late again, so we walked along the river and talked about the weather "
+                + "until the rain finally stopped and the sun came out over the water, warming the stones "
+                + "along the path where we sat and rested for a while before walking slowly back home "
+                + "together in the quiet evening air.",
+            // 343 chars - past MaxSpokenCharacters, so the product's worst case and then some.
+            "The morning train was late again, so we walked along the river and talked about the weather "
+                + "until the rain finally stopped and the sun came out over the water, warming the stones "
+                + "along the path where we sat and rested for a while before walking slowly back home "
+                + "together in the quiet evening air, tired and content after a long and useful day.",
+            // Second sample of each long length - see the note above.
+            "The morning train was late again, so we walked along the river and talked about the weather "
+                + "until the rain finally stopped and the sun came out over the water, warming the stones "
+                + "along the path where we sat and rested for a while before walking slowly back home "
+                + "together in the quiet evening air.",
+            "The morning train was late again, so we walked along the river and talked about the weather "
+                + "until the rain finally stopped and the sun came out over the water, warming the stones "
+                + "along the path where we sat and rested for a while before walking slowly back home "
+                + "together in the quiet evening air, tired and content after a long and useful day.",
         ];
 
         // The WHOLE curve travels in the failure message, not just the failing rows. The test runner
