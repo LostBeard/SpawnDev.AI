@@ -173,6 +173,7 @@ public sealed class AiVoiceTests
         // exactly the comparison that makes the number mean something.
         var curve = new List<string>();
         var failures = new List<string>();
+        var position = 1;   // 1-based row in the sequence above; part of each emitted audio filename
         foreach (var line in lines)
         {
             var sw = Stopwatch.StartNew();
@@ -257,6 +258,13 @@ public sealed class AiVoiceTests
                 for (int b = 0; b < 4; b++) { h ^= (byte)(bits >> (b * 8)); h *= 1099511628211UL; }
             }
             Console.WriteLine($"[AiVoiceTests]   audio fnv1a={h:x16} n={samples.Length} first={samples[0]:F6} last={samples[^1]:F6}");
+
+            // Ship the actual audio out (wav=1 only). The POSITION is in the name, not just the length:
+            // 296 and 343 are each spoken twice on purpose, and the whole point of this sequence is that
+            // the second reading used to differ from the first. Two files named by length alone would
+            // overwrite each other and destroy exactly the comparison worth listening to.
+            SpokenAudioDump.Emit($"voice-{position:00}-{line.Length:000}chars-{h:x16}", samples, rate);
+            position++;
 
             Console.WriteLine($"[AiVoiceTests] read-back {model}: {line.Length} chars -> {seconds:F2}s @ {rate}Hz "
                             + $"({line.Length / seconds:F1} chars/sec), spoke {ms:F0}ms, transcribed {transcribeMs:F0}ms");

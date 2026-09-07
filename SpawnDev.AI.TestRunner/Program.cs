@@ -14,6 +14,12 @@ using Microsoft.Playwright;
 //   dotnet run --project SpawnDev.AI.TestRunner -- --dedicated     dedicated worker, so its console reaches
 //                                                                 the window and model-load progress is
 //                                                                 VISIBLE (a shared worker's is not)
+//   dotnet run --project SpawnDev.AI.TestRunner -- --wav <dir>     write every synthesised utterance to
+//                                                                 <dir> as a playable .wav
+//
+// --wav exists because the voice gate could only ever MEASURE its audio (peak, RMS, word overlap, an FNV
+// hash) and never produce it, so nothing it reported could answer "does this sound right to a person".
+// The page base64s each utterance over the console (see SpokenAudioDump); this reassembles them.
 //
 // Exit code is the number of failed tests, so it is usable as a gate.
 //
@@ -29,6 +35,7 @@ var cold = false;
 var dedicated = false;
 var verbose = false;
 var externalUrl = "";
+var wavDir = "";
 for (var i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -40,10 +47,11 @@ for (var i = 0; i < args.Length; i++)
         case "--verbose": verbose = true; break;
         case "--url": externalUrl = ++i < args.Length ? args[i] : ""; break;
         case "--filter": filter = ++i < args.Length ? args[i] : ""; break;
+        case "--wav": wavDir = ++i < args.Length ? args[i] : ""; break;
         case "-h":
         case "--help":
             Console.WriteLine("usage: [filter] [--filter <text>] [--heavy] [--headed] [--verbose] "
-                            + "[--cold] [--dedicated] [--url <url>]");
+                            + "[--cold] [--dedicated] [--url <url>] [--wav <dir>]");
             return 0;
         default:
             if (!args[i].StartsWith("-")) filter = args[i];
@@ -80,7 +88,15 @@ try
     // A shared worker's console is invisible to page.Console, which makes a slow load look like a hang.
     if (dedicated) query += "&worker=dedicated";
     if (!string.IsNullOrEmpty(filter)) query += $"&filter={Uri.EscapeDataString(filter)}";
-    return await RunAsync(url.TrimEnd('/') + "/" + query, headed, verbose, heavy, cold);
+    // Only ask the page for audio when we have somewhere to put it - a synthesis is ~640 KB of base64.
+    if (!string.IsNullOrEmpty(wavDir))
+    {
+        wavDir = Path.GetFullPath(wavDir);
+        Directory.CreateDirectory(wavDir);
+        query += "&wav=1";
+        Console.WriteLine($"  --wav: writing utterances to {wavDir}");
+    }
+    return await RunAsync(url.TrimEnd('/') + "/" + query, headed, verbose, heavy, cold, wavDir);
 }
 finally
 {
@@ -129,7 +145,7 @@ static async Task<(Process?, string)> StartServerAsync(string demoProject)
     return (process, completed == urlFound.Task ? urlFound.Task.Result : "");
 }
 
-static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heavy, bool cold)
+static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heavy, bool cold, string wavDir)
 {
     using var playwright = await Playwright.CreateAsync();
     await using var context = await LaunchAsync(playwright, headed, cold);
@@ -137,14 +153,67 @@ static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heav
 
     var finished = new TaskCompletionSource<string>();
     var results = new List<string>();
+    // label -> (expected chunk count, sample rate, sample count, chunks BY INDEX). Keyed by label so two
+    // utterances interleaving on the console could never splice into one file, and slotted by index rather
+    // than appended so out-of-order delivery cannot scramble the audio. That matters more here than it
+    // looks: a scrambled WAV SOUNDS GARBLED, which is the exact thing this audio is being produced to
+    // judge - a harness artifact would be indistinguishable from the defect.
+    var wavParts = new Dictionary<string, (int Chunks, int Rate, int Samples, string?[] Data)>();
+    var wavFiles = new List<string>();
     page.Console += (_, msg) =>
     {
         var text = msg.Text;
         if (text.StartsWith("TEST: ")) results.Add(text[6..]);
         else if (text.StartsWith("RESULTS: ")) finished.TrySetResult(text[9..]);
         else if (text.StartsWith("READY: ")) Console.WriteLine($"  {text}");
+        else if (text.StartsWith("WAV-BEGIN: ")) WavBegin(text[11..]);
+        else if (text.StartsWith("WAV-DATA: ")) WavData(text[10..]);
+        else if (text.StartsWith("WAV-END: ")) WavEnd(text[9..].Trim());
         else if (verbose || msg.Type == "error") Console.WriteLine($"  [{msg.Type}] {text}");
     };
+
+    // label|rate|chunks|samples
+    void WavBegin(string payload)
+    {
+        var p = payload.Split('|');
+        if (p.Length < 4 || string.IsNullOrEmpty(wavDir)) return;
+        var chunks = int.Parse(p[2]);
+        wavParts[p[0]] = (chunks, int.Parse(p[1]), int.Parse(p[3]), new string?[chunks]);
+    }
+
+    // label|index|base64
+    void WavData(string payload)
+    {
+        var p = payload.Split('|', 3);
+        if (p.Length < 3 || !wavParts.TryGetValue(p[0], out var part)) return;
+        if (!int.TryParse(p[1], out var i) || i < 0 || i >= part.Data.Length) return;
+        part.Data[i] = p[2];
+    }
+
+    void WavEnd(string label)
+    {
+        if (!wavParts.Remove(label, out var part)) return;
+        // A short transfer means the console dropped lines. Say so rather than writing a truncated file
+        // that would sound clipped and get blamed on the synthesiser.
+        var received = 0;
+        foreach (var c in part.Data) if (c != null) received++;
+        if (received != part.Chunks)
+        {
+            Console.WriteLine($"  [warn] {label}: got {received} of {part.Chunks} audio chunks - not written");
+            return;
+        }
+        try
+        {
+            var path = Path.Combine(wavDir, label + ".wav");
+            File.WriteAllBytes(path, Convert.FromBase64String(string.Concat(part.Data)));
+            wavFiles.Add(path);
+            Console.WriteLine($"  wav: {path} ({part.Samples / (double)part.Rate:F2}s @ {part.Rate}Hz)");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  [warn] {label}: could not write audio - {ex.Message}");
+        }
+    }
     page.PageError += (_, err) => Console.WriteLine($"  [pageerror] {err}");
 
     Console.WriteLine($"running {url}");
@@ -172,6 +241,9 @@ static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heav
         Console.WriteLine($"  {parts[1],-4}  {parts[0]} ({parts[2]}ms)");
         if (parts.Length > 3 && !string.IsNullOrWhiteSpace(parts[3])) Console.WriteLine($"        {parts[3]}");
     }
+    if (wavFiles.Count > 0)
+        Console.WriteLine($"  {wavFiles.Count} utterance(s) written to {wavDir}");
+
     Console.WriteLine();
     if (completed != finished.Task)
     {

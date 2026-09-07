@@ -44,6 +44,10 @@ public static class AiTestSuiteRunner
     {
         IncludeHeavy = includeHeavy;
         ConfigureClientFromLocation(services);
+        // wav=1 makes the voice tests ship their synthesised audio out over the console so the runner can
+        // write playable files. Off by default - see SpokenAudioDump.
+        SpokenAudioDump.Enabled = SaveAudioFromLocation();
+        if (SpokenAudioDump.Enabled) Console.WriteLine("[AiTestSuiteRunner] wav=1 - emitting spoken audio");
         int passed = 0, failed = 0, skipped = 0;
         var tests = Discover(filter);
 
@@ -176,6 +180,9 @@ public static class AiTestSuiteRunner
 
     /// <summary>True when the query string asks for a test run at all.</summary>
     public static bool RequestedFromLocation() => QueryValue("tests") is "1" or "true";
+
+    /// <summary>True when the query string asks the voice tests to emit their audio (<c>wav=1</c>).</summary>
+    public static bool SaveAudioFromLocation() => QueryValue("wav") is "1" or "true";
 
     private static string? QueryValue(string key)
     {

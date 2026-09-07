@@ -83,4 +83,44 @@ internal static class WavFixture
 
         return (mono, sampleRate);
     }
+
+    /// <summary>
+    /// Encode mono float samples in [-1, 1] as a 16-bit PCM WAV.
+    /// </summary>
+    /// <remarks>
+    /// The inverse of <see cref="Decode"/>, and here for the same reason it is: the voice gate could
+    /// measure the audio (peak, RMS, word overlap, an FNV hash) but could not PRODUCE it, so no human had
+    /// ever heard what the gate was scoring. Word overlap says "changed enough to still transcribe"; it
+    /// cannot say "sounds right". 16-bit PCM because every player opens it without a codec.
+    /// Samples are CLAMPED, not scaled - a normalise here would hide exactly the clipping worth hearing.
+    /// </remarks>
+    internal static byte[] Encode(float[] samples, int sampleRate)
+    {
+        var dataBytes = samples.Length * 2;
+        var wav = new byte[44 + dataBytes];
+        var ascii = System.Text.Encoding.ASCII;
+
+        ascii.GetBytes("RIFF").CopyTo(wav, 0);
+        BitConverter.GetBytes(36 + dataBytes).CopyTo(wav, 4);
+        ascii.GetBytes("WAVE").CopyTo(wav, 8);
+        ascii.GetBytes("fmt ").CopyTo(wav, 12);
+        BitConverter.GetBytes(16).CopyTo(wav, 16);             // PCM fmt chunk size
+        BitConverter.GetBytes((ushort)1).CopyTo(wav, 20);      // format = PCM
+        BitConverter.GetBytes((ushort)1).CopyTo(wav, 22);      // channels = mono
+        BitConverter.GetBytes(sampleRate).CopyTo(wav, 24);
+        BitConverter.GetBytes(sampleRate * 2).CopyTo(wav, 28); // byte rate
+        BitConverter.GetBytes((ushort)2).CopyTo(wav, 32);      // block align
+        BitConverter.GetBytes((ushort)16).CopyTo(wav, 34);     // bits per sample
+        ascii.GetBytes("data").CopyTo(wav, 36);
+        BitConverter.GetBytes(dataBytes).CopyTo(wav, 40);
+
+        for (var i = 0; i < samples.Length; i++)
+        {
+            var v = samples[i];
+            if (v > 1f) v = 1f;
+            else if (v < -1f) v = -1f;
+            BitConverter.GetBytes((short)(v * 32767f)).CopyTo(wav, 44 + i * 2);
+        }
+        return wav;
+    }
 }
