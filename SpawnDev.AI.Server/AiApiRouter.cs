@@ -924,6 +924,9 @@ public sealed class AiApiRouter
                 decoder_ms = result.DecoderMs,
                 decoder_first_step_ms = result.DecoderFirstStepMs,
                 capture_status = result.CaptureStatus,
+                // What the engine ACTUALLY said, after MaxSpokenCharacters. A caller that scores a
+                // read-back against its own request measures the cap, not the voice - see AiSpeech.SpokenText.
+                spoken_text = result.SpokenText,
             });
         }
         catch (Exception ex)

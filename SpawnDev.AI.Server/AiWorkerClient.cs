@@ -321,7 +321,8 @@ public sealed class AiWorkerClient
     /// is what works over both transports today and is the wrong shape for audio. A transferred
     /// Float32Array is the follow-up; this signature does not change when it lands.
     /// </remarks>
-    public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs)> SpeakAsync(
+    public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
+        SpeakAsync(
         string text, string referenceText, float[] referenceSamples, int referenceSampleRate,
         int? maxSpokenCharacters = null, int? noiseSeed = null)
     {
@@ -362,7 +363,10 @@ public sealed class AiWorkerClient
             samples,
             root.TryGetProperty("sample_rate", out var sr) ? sr.GetInt32() : 24000,
             root.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "",
-            root.TryGetProperty("inference_ms", out var ms) ? ms.GetDouble() : 0);
+            root.TryGetProperty("inference_ms", out var ms) ? ms.GetDouble() : 0,
+            // ⚠️ Falls back to the REQUEST, not to "", so an older worker that does not send this field
+            // leaves a caller scoring exactly what it scored before rather than against an empty string.
+            root.TryGetProperty("spoken_text", out var st) ? st.GetString() ?? text : text);
     }
 
     public async Task<string> ChatStreamAsync(string model, IReadOnlyList<AiChatMessage> messages,

@@ -63,7 +63,7 @@ public sealed class AiVoiceTests
 
         const string line = "Hello. This is SpawnDev AI, speaking with your own voice.";
         var sw = Stopwatch.StartNew();
-        var (samples, rate, model, ms) = await _client.SpeakAsync(line, KnownTranscript, reference, referenceRate);
+        var (samples, rate, model, ms, _) = await _client.SpeakAsync(line, KnownTranscript, reference, referenceRate);
         sw.Stop();
 
         if (samples == null || samples.Length == 0)
@@ -181,7 +181,7 @@ public sealed class AiVoiceTests
             // distribution, not a measurement: MEASURED 2026-09-04, the same 343-character line read back at
             // 30%, 39% and 55% on three runs. A fixed seed makes this gate REPEATABLE and makes a
             // WebGPU-vs-CUDA comparison mean something, since both then integrate the same noise.
-            var (samples, rate, model, ms) = await _client.SpeakAsync(
+            var (samples, rate, model, ms, spokenText) = await _client.SpeakAsync(
                 line, KnownTranscript, reference, referenceRate, noiseSeed: NoiseSeed);
             sw.Stop();
             if (samples == null || samples.Length == 0)
@@ -193,7 +193,20 @@ public sealed class AiVoiceTests
             var (heard, _, transcribeMs) = await _client.TranscribeAsync(samples, rate);
             heard = (heard ?? "").Trim();
 
-            var spokenWords = Words(line);
+            // 🔴 SCORE AGAINST WHAT THE ENGINE SPOKE, NEVER AGAINST WHAT WE ASKED FOR.
+            // MaxSpokenCharacters is 320 and the longest line here is 343 BY DESIGN - the whole point is to
+            // sit on the cap. So for that row the engine renders 320 characters, exactly as specified, and
+            // the 23 it drops are 5 whole words. Scoring the transcript against the 343-character request
+            // therefore reports 59/64 = 92% for a PERFECT render, and the 6-second tail below reports
+            // 12/17 = 71% for the same reason.
+            //
+            // ⚠️ THAT IS EXACTLY WHAT HAPPENED, 2026-09-06. Both numbers were recorded as "real residual
+            // degradation at the end of the longest utterances" and carried into a handoff as the top open
+            // item, while `[AiVoiceEngine] speaking 320 of 343 characters (cap=320)` sat in the same log,
+            // one line above the score. Whisper had returned the spoken text VERBATIM. A gate that cannot
+            // pass on correct behaviour is as broken as one that cannot fail on a defect, and it costs more,
+            // because a phantom sends people hunting a bug that is not there.
+            var spokenWords = Words(spokenText);
             var matched = new List<string>(Words(heard));
             int hits = 0;
             foreach (var w in spokenWords) if (matched.Remove(w)) hits++;
@@ -202,10 +215,17 @@ public sealed class AiVoiceTests
 
             // 🔴 WHERE the words are lost, not just how many. A shortfall reads the same whether the voice
             // degraded or the recogniser stopped early, and those are OPPOSITE conclusions - one is our
-            // bug, one is the oracle's limit. MEASURED 2026-09-05: the 343-character line read back 92%
-            // with the missing words being exactly the final clause, and the recogniser emitted
-            // end-of-transcript at 63 steps of a 444 cap. An early EOT is precisely what a DEGRADED TAIL
-            // produces, so that number alone decides nothing.
+            // bug, one is the oracle's limit.
+            //
+            // ✅ RESOLVED 2026-09-08, and worth keeping written down because the reasoning below was sound
+            // and still reached the wrong answer. MEASURED 2026-09-05: the 343-character line read back 92%
+            // "with the missing words being exactly the final clause", and the recogniser emitted
+            // end-of-transcript early - which is what a degraded tail produces, so this instrument was
+            // built to tell the two apart. It could not, because there was a THIRD explanation neither
+            // reading covered: the final clause was never spoken at all. MaxSpokenCharacters had removed
+            // it before synthesis. Both scores are now taken against the spoken text, so they measure the
+            // voice; this instrument stays, because a genuinely degraded tail is still a live failure mode
+            // and separating it from an early EOT still needs it.
             //
             // Two things do decide it. Re-transcribing the last seconds ON THEIR OWN removes the decode
             // length from the question entirely: clean tail = the audio is fine and the full-clip decode
@@ -231,6 +251,13 @@ public sealed class AiVoiceTests
                 int tailHits = 0;
                 foreach (var w in tailExpected) if (tailMatched.Remove(w)) tailHits++;
                 tailOverlap = tailExpected.Count == 0 ? 0.0 : tailHits / (double)tailExpected.Count;
+                // ⚠️ READ THIS NUMBER COMPARATIVELY, NEVER AS AN ABSOLUTE. The window opens six seconds
+                // from the end, which lands MID-WORD, and `tailExpected` is a proportional estimate
+                // (words x 6s / duration) rather than a count of what is really in there - so the leading
+                // word or two are clipped away and score as misses even on a perfect render. MEASURED
+                // 2026-09-08, every row scoring 100% on the full clip: 250 chars -> 94%, 296 -> 88%,
+                // 320 -> 81%. The signal is whether the tail transcription REACHES THE FINAL WORD, which
+                // all of those do. A genuinely degraded tail loses the END, not the beginning.
                 Console.WriteLine($"[AiVoiceTests]   TAIL {TailSeconds:F0}s alone: {tailOverlap:P0} "
                                 + $"({tailHits}/{tailExpected.Count}) heard \"{tailHeard}\"");
             }
@@ -266,16 +293,24 @@ public sealed class AiVoiceTests
             SpokenAudioDump.Emit($"voice-{position:00}-{line.Length:000}chars-{h:x16}", samples, rate);
             position++;
 
-            Console.WriteLine($"[AiVoiceTests] read-back {model}: {line.Length} chars -> {seconds:F2}s @ {rate}Hz "
-                            + $"({line.Length / seconds:F1} chars/sec), spoke {ms:F0}ms, transcribed {transcribeMs:F0}ms");
-            Console.WriteLine($"[AiVoiceTests]   said : {line}");
+            // The rate is per SPOKEN character - dividing the request by the duration reported 14.9 chars/s
+            // for the capped row while the engine was speaking a perfectly ordinary 13.9, which made the
+            // one honest row on the page look like the outlier.
+            Console.WriteLine($"[AiVoiceTests] read-back {model}: {spokenText.Length} spoken of {line.Length} "
+                            + $"chars -> {seconds:F2}s @ {rate}Hz "
+                            + $"({spokenText.Length / seconds:F1} chars/sec), spoke {ms:F0}ms, "
+                            + $"transcribed {transcribeMs:F0}ms");
+            if (spokenText.Length != line.Length)
+                Console.WriteLine($"[AiVoiceTests]   ⚠️ brevity cap removed {line.Length - spokenText.Length} "
+                                + $"characters - scoring against the {spokenText.Length} that were spoken");
+            Console.WriteLine($"[AiVoiceTests]   said : {spokenText}");
             Console.WriteLine($"[AiVoiceTests]   heard: {heard}");
             Console.WriteLine($"[AiVoiceTests]   word overlap {overlap:P0} ({hits}/{spokenWords.Count})");
 
-            curve.Add($"{line.Length,4} chars, {seconds,5:F2}s: {overlap,4:P0} ({hits}/{spokenWords.Count})"
-                    + $" heard \"{heard}\"");
+            curve.Add($"{spokenText.Length,4} spoken chars, {seconds,5:F2}s: {overlap,4:P0} "
+                    + $"({hits}/{spokenWords.Count}) heard \"{heard}\"");
             if (overlap < 0.60)
-                failures.Add($"{line.Length} chars: {overlap:P0} ({hits}/{spokenWords.Count})");
+                failures.Add($"{spokenText.Length} spoken chars: {overlap:P0} ({hits}/{spokenWords.Count})");
         }
 
         Console.WriteLine("[AiVoiceTests] intelligibility vs length:"
@@ -343,8 +378,14 @@ public sealed class AiVoiceTests
           + "until the speech had already been played out loud to somebody.";
 
         var sw = Stopwatch.StartNew();
-        var (samples, rate, model, ms) = await _client.SpeakAsync(
+        var (samples, rate, model, ms, spoken) = await _client.SpeakAsync(
             line, KnownTranscript, reference, referenceRate, maxSpokenCharacters: 4000);
+        // The 4000 cap is here so the WHOLE line is spoken - the branch under test is reached by LENGTH,
+        // so a silently shortened line would quietly stop exercising it. Assert that, do not assume it.
+        if (spoken.Length != line.Length)
+            throw new Exception($"only {spoken.Length} of {line.Length} characters were spoken despite "
+                              + "maxSpokenCharacters: 4000 - this test reaches the recomputed-table branch "
+                              + "by LENGTH, so a shortened line stops testing anything.");
         sw.Stop();
 
         if (samples == null || samples.Length == 0)
@@ -431,7 +472,7 @@ public sealed class AiVoiceTests
 
         // 3. SPEAK IT BACK, in the voice that asked
         sw.Restart();
-        (float[] samples, int rate, _, double ttsMs) = await _client.SpeakAsync(reply, heardText, heard, heardRate);
+        (float[] samples, int rate, _, double ttsMs, _) = await _client.SpeakAsync(reply, heardText, heard, heardRate);
         if (samples == null || samples.Length == 0)
             throw new Exception("the loop produced no reply audio");
 

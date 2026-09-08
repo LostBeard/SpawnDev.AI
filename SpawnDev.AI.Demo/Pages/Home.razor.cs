@@ -612,8 +612,14 @@ public partial class Home : IDisposable
                 catch (Exception ex) { Console.WriteLine($"[HF-SPEAK] ticker stopped: {ex.Message}"); }
             });
 
-            var (samples, rate, _, ms) = await Ai.SpeakAsync(text, _lastHeardText, _lastHeardSamples,
-                WhisperRate);
+            var (samples, rate, _, ms, spokenText) = await Ai.SpeakAsync(text, _lastHeardText,
+                _lastHeardSamples, WhisperRate);
+            // Say so when the brevity cap shortened the reply. The page shows the FULL text while the voice
+            // reads part of it, and without this line that gap is invisible - the reply just sounds like it
+            // stops early, which is indistinguishable from the voice breaking down at length.
+            if (spokenText.Length < text.Length)
+                Console.WriteLine($"[HF-SPEAK] brevity cap: spoke {spokenText.Length} of {text.Length} "
+                                + "characters");
             speakTicker.Cancel();
             try { await ticker; } catch { /* already reported by the ticker itself */ }
             Console.WriteLine($"[HF-SPEAK] synthesis returned after " +

@@ -49,6 +49,26 @@ public sealed record AiSpeech(float[] Samples, int SampleRate, string Model, dou
     /// is what points at the fix.
     /// </remarks>
     public string CaptureStatus { get; init; } = "";
+
+    /// <summary>The text that was actually rendered, after <see cref="AiVoiceEngine.MaxSpokenCharacters"/>.</summary>
+    /// <remarks>
+    /// 🔴 THE ONLY HONEST THING TO SCORE A READ-BACK AGAINST. <see cref="AiVoiceEngine.MaxSpokenCharacters"/>
+    /// is a product decision that cuts the request before synthesis, so the caller's string and the spoken
+    /// string are DIFFERENT whenever a reply is long - and a transcript compared against the request then
+    /// reports a shortfall the voice did not cause.
+    ///
+    /// ⚠️ MEASURED 2026-09-06, and it cost a day: the voice gate scored a 343-character line at 92% and its
+    /// last-6-seconds instrument at 71%, and both numbers were written up as "real residual degradation at
+    /// the end of the longest utterances". The engine had spoken 320 of those characters, exactly as
+    /// designed, and had SAID SO one line above in the same log. The 5 words missing from the transcript are
+    /// precisely the 5 words the cap removed - 64 - 5 = 59 = the 92%, and 17 - 5 = 12 = the 71%. ZipVoice
+    /// rendered every word it was given, verbatim.
+    ///
+    /// A caller reconstructing this by re-applying the cap itself would be a second copy of
+    /// <see cref="AiVoiceEngine.TrimToSpeakableLength"/> that can drift from the one that ran. The engine
+    /// knows what it spoke; it returns it.
+    /// </remarks>
+    public string SpokenText { get; init; } = "";
 }
 
 /// <summary>
@@ -322,6 +342,8 @@ public sealed class AiVoiceEngine : IDisposable
             DecoderMs = result.DecoderMs,
             DecoderFirstStepMs = result.DecoderFirstStepMs,
             CaptureStatus = result.DecoderCaptureStatus,
+            // `text` is post-trim by this point - see the SpeakAsync body. This is what the vocoder rendered.
+            SpokenText = text,
         };
     }
 
@@ -355,7 +377,28 @@ public sealed class AiVoiceEngine : IDisposable
         // one that stops a sentence early just sounds brief.
         var window = text[..cap];
         var cut = window.LastIndexOfAny(new[] { '.', '!', '?' });
-        var spoken = cut > cap / 3 ? window[..(cut + 1)] : window.TrimEnd();
+        string spoken;
+        if (cut > cap / 3)
+        {
+            spoken = window[..(cut + 1)];
+        }
+        else if (char.IsWhiteSpace(text[cap]))
+        {
+            // The cap landed exactly on a word boundary - the whole window is whole words. (`text[cap]` is
+            // in range: this method returned already if `text.Length <= cap`.)
+            spoken = window.TrimEnd();
+        }
+        else
+        {
+            // No sentence end to cut at and the cap fell INSIDE a word. Back up to the last word boundary:
+            // the summary above has always promised "rather than mid-word", and a raw `text[..cap]` never
+            // delivered it - it stops wherever the character count stops, which for one long sentence is
+            // usually mid-word. Half a word is heard as a mispronunciation, and manufacturing one is the
+            // last thing a brevity cap should do. A single word longer than two thirds of the cap has no
+            // boundary worth using, so that keeps the raw window.
+            var lastSpace = window.LastIndexOf(' ');
+            spoken = (lastSpace > cap / 3 ? window[..lastSpace] : window).TrimEnd();
+        }
         Console.WriteLine($"[AiVoiceEngine] speaking {spoken.Length} of {text.Length} characters "
                         + $"(cap={cap})");
         return spoken;
