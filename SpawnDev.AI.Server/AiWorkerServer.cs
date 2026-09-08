@@ -16,8 +16,15 @@ public interface IAiWorkerApi
 
     /// <summary>Route one protocol request (same method/path/body as HTTP). Every response frame -
     /// including the single frame of buffered responses - arrives through <paramref name="onFrame"/>
-    /// as <see cref="AiWireFrame"/> JSON; the task completes after the terminal frame.</summary>
-    Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame);
+    /// as <see cref="AiWireFrame"/> JSON; the task completes after the terminal frame.
+    /// <para>
+    /// <paramref name="ct"/> is marshalled across the worker boundary by SpawnJS.WebWorkers and becomes
+    /// the request's <see cref="IAiServerTransport.Aborted"/>, so cancelling it in the window stops an
+    /// in-flight generation in the worker. Do not remove it: without a token PARAMETER there is nothing
+    /// for the dispatcher to register a <c>cancelToken</c> message against.
+    /// </para></summary>
+    Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Time a fixed, pure-.NET workload inside the worker. Diagnostic only - no GPU, no interop.
@@ -134,9 +141,10 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     public Task<double> BenchmarkInteropAsync(int iterations) =>
         Task.FromResult(ManagedBenchmark.Interop(iterations));
 
-    public async Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame)
+    public async Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame,
+        CancellationToken ct = default)
     {
-        var transport = new FrameTransport(onFrame);
+        var transport = new FrameTransport(onFrame, ct);
         try
         {
             await EnsureInitializedAsync().ConfigureAwait(false);
@@ -281,10 +289,33 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     {
         private static readonly JsonSerializerOptions J = new(JsonSerializerDefaults.Web);
         private readonly Action<string> _onFrame;
+        private readonly CancellationToken _aborted;
         private bool _terminal;
-        public FrameTransport(Action<string> onFrame) => _onFrame = onFrame;
+        public FrameTransport(Action<string> onFrame, CancellationToken aborted)
+        {
+            _onFrame = onFrame;
+            _aborted = aborted;
+        }
 
-        public CancellationToken Aborted => CancellationToken.None; // worker requests aren't socket-bound; cancellation lands later via client-side abort frames
+        /// <summary>
+        /// The caller's token, marshalled across the worker boundary by SpawnJS.WebWorkers.
+        /// </summary>
+        /// <remarks>
+        /// ⚠️ This was hardcoded to <see cref="CancellationToken.None"/>, with a note saying
+        /// cancellation would "land later via client-side abort frames". It never did, and no abort
+        /// frame was needed: <c>ServiceCallDispatcher</c> already marshals a <see cref="CancellationToken"/>
+        /// PARAMETER - the caller side sends a token id and registers a callback that posts a
+        /// <c>cancelToken</c> message, and the worker side rebuilds it into a real
+        /// <c>CancellationTokenSource</c>. That message is separate from the in-flight call, so it is
+        /// delivered while the request is still running.
+        /// <para>
+        /// While it returned None, all 27 <c>t.Aborted</c> call sites in <c>AiApiRouter</c> were inert on
+        /// the browser worker path - which is the path the DEMO uses. The desktop host passes
+        /// <c>HttpContext.RequestAborted</c>, so cancellation read as working everywhere and could not
+        /// fire in the one place a stalled generation is actually seen.
+        /// </para>
+        /// </remarks>
+        public CancellationToken Aborted => _aborted;
 
         public Task WriteJsonAsync(int statusCode, object payload)
         {

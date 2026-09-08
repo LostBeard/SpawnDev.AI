@@ -125,11 +125,16 @@ public sealed class AiWorkerClient
     /// <paramref name="onFrame"/> receives every <see cref="AiWireFrame"/>; returns after the
     /// terminal frame. Most callers want <see cref="RequestJsonAsync"/> or <see cref="ChatStreamAsync"/>.
     /// </summary>
-    public async Task SendAsync(string method, string path, string? bodyJson, Action<AiWireFrame> onFrame)
+    public async Task SendAsync(string method, string path, string? bodyJson, Action<AiWireFrame> onFrame,
+        CancellationToken ct = default)
     {
         if (_worker == null) await InitAsync();
+        // ⚠️ Pass `ct` as a real PARAMETER, never close over it. ServiceCallDispatcher marshals a
+        // CancellationToken argument by sending a token id and registering a callback that posts a
+        // separate `cancelToken` message to the worker; a captured token is invisible to it and cancels
+        // nothing on the far side.
         await _worker!.Run<IAiWorkerApi>(s => s.HandleRequestAsync(method, path, bodyJson,
-            new Action<string>(frameJson => onFrame(AiWireFrame.FromJson(frameJson)))));
+            new Action<string>(frameJson => onFrame(AiWireFrame.FromJson(frameJson))), ct));
     }
 
     /// <summary>Buffered JSON request: returns the response body, throws on protocol error status.</summary>
@@ -369,8 +374,25 @@ public sealed class AiWorkerClient
             root.TryGetProperty("spoken_text", out var st) ? st.GetString() ?? text : text);
     }
 
+    /// <summary>
+    /// Streams a chat completion from the worker. Returns the DONE REASON, not the reply - the text
+    /// arrives through <paramref name="onDelta"/>.
+    /// </summary>
+    /// <param name="ct">Cancels the generation IN THE WORKER, not just the local await: the token is
+    /// marshalled across the boundary and becomes the request's <c>IAiServerTransport.Aborted</c>.
+    /// <para>
+    /// Cancelling does NOT throw. The generator stops and returns what it produced, so every delta
+    /// already delivered stays valid and this call completes normally.
+    /// </para>
+    /// <para>
+    /// ⚠️ The returned done reason will be <c>"stop"</c>, NOT a distinct cancelled value:
+    /// <c>AiStopKind.Cancelled</c> exists and is set, but <c>AiApiRouter.OllamaDone</c> maps everything
+    /// except <c>Length</c> to <c>"stop"</c>, because this is the Ollama-compatible surface and inventing
+    /// a done reason real Ollama never sends would break drop-in clients. A caller that cancelled already
+    /// knows it did - treat your OWN token as the signal, do not try to read cancellation off the wire.
+    /// </para></param>
     public async Task<string> ChatStreamAsync(string model, IReadOnlyList<AiChatMessage> messages,
-        AiGenerationOptions? options = null, Action<string>? onDelta = null)
+        AiGenerationOptions? options = null, Action<string>? onDelta = null, CancellationToken ct = default)
     {
         options ??= new AiGenerationOptions();
         var body = JsonSerializer.Serialize(new
@@ -390,7 +412,7 @@ public sealed class AiWorkerClient
         }, J);
 
         string doneReason = "stop"; string? error = null;
-        await SendAsync("POST", "/api/chat", body, f =>
+        await SendAsync("POST", "/api/chat", body, ct: ct, onFrame: f =>
         {
             switch (f.T)
             {

@@ -35,6 +35,93 @@ public sealed class AiChatTests
     /// <param name="client">The window-side client the UI itself uses.</param>
     public AiChatTests(AiWorkerClient client) => _client = client;
 
+    /// <summary>
+    /// Cancelling the token passed to <see cref="AiWorkerClient.ChatStreamAsync"/> stops decoding INSIDE
+    /// THE WORKER, not just the window's await.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE BUG THIS GATES. <c>AiWorkerServer.FrameTransport.Aborted</c> returned
+    /// <c>CancellationToken.None</c>, so all 27 <c>t.Aborted</c> call sites in <c>AiApiRouter</c> were
+    /// inert on the browser worker path - the path the DEMO uses. The desktop host passes
+    /// <c>HttpContext.RequestAborted</c>, so cancellation read as working and could not fire in the one
+    /// place a stalled turn is actually seen. A stalled generation could only be waited out or reloaded.
+    /// <para>
+    /// ⚠️ IT RUNS AN UNCANCELLED CONTROL FIRST, and that is the point. "The cancelled run produced few
+    /// deltas" proves nothing on its own - a model that hits EOS after ten tokens satisfies it perfectly,
+    /// and the test would pass with cancellation completely broken. The control establishes what this
+    /// prompt produces when nothing stops it; the assertion is the RATIO. If the control itself comes back
+    /// short, the fixture can no longer demonstrate the property and this fails loudly instead of going
+    /// quietly green.
+    /// </para>
+    /// <para>
+    /// Red-checked 2026-09-08 by restoring <c>Aborted =&gt; CancellationToken.None</c>: see the commit
+    /// message for the measured before/after delta counts.
+    /// </para>
+    /// </remarks>
+    [AiTest(Heavy = true, Timeout = 900_000)]
+    public async Task StopCancelsGenerationInsideTheWorker()
+    {
+        await _client.InitAsync();
+        var messages = new List<AiChatMessage> { new("user", LongPrompt) };
+
+        // CONTROL: the same prompt, same options, nothing cancelling it.
+        var controlDeltas = 0;
+        var controlText = new System.Text.StringBuilder();
+        await _client.ChatStreamAsync(Model, messages, Long(), d => { controlDeltas++; controlText.Append(d); });
+
+        // The fixture must be capable of violating the property. If the model stops on its own well before
+        // the cap, an early stop is indistinguishable from a natural finish and this test has no teeth.
+        const int cancelAfter = 8;
+        if (controlDeltas < cancelAfter * 4)
+            throw new Exception(
+                $"FIXTURE TOO WEAK: the uncancelled control produced only {controlDeltas} deltas "
+              + $"(need >= {cancelAfter * 4} for an early stop to be distinguishable from EOS). "
+              + $"Model={Model}. Control text: {Clip(controlText.ToString())}");
+
+        // CANCELLED: identical request, stopped a few tokens in.
+        var cts = new CancellationTokenSource();
+        var cancelledDeltas = 0;
+        var cancelledAt = -1;
+        var cancelledText = new System.Text.StringBuilder();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var doneReason = await _client.ChatStreamAsync(Model, messages, Long(),
+            d =>
+            {
+                cancelledDeltas++;
+                cancelledText.Append(d);
+                if (cancelledDeltas == cancelAfter) { cancelledAt = cancelledDeltas; cts.Cancel(); }
+            },
+            ct: cts.Token);
+        sw.Stop();
+        cts.Dispose();
+
+        // Did we actually get far enough to cancel? Without this the next assertion could pass because
+        // generation failed outright, which is not the property under test.
+        if (cancelledAt < 0)
+            throw new Exception(
+                $"never reached the cancel point: only {cancelledDeltas} deltas arrived "
+              + $"(expected at least {cancelAfter}), so nothing was cancelled. doneReason={doneReason}");
+
+        // THE ASSERTION. Cancelling must curtail generation, judged against the control rather than an
+        // absolute number. A handful of tokens may still be in flight when the cancel message lands.
+        if (cancelledDeltas >= controlDeltas / 2)
+            throw new Exception(
+                $"cancellation did NOT stop the worker: cancelled at delta {cancelledAt} but still received "
+              + $"{cancelledDeltas} deltas, against an uncancelled control of {controlDeltas} "
+              + $"(required < {controlDeltas / 2}). The token is not reaching "
+              + $"IAiServerTransport.Aborted - check AiWorkerServer.FrameTransport and that "
+              + $"IAiWorkerApi.HandleRequestAsync still takes a CancellationToken PARAMETER "
+              + $"(a captured token is invisible to ServiceCallDispatcher's marshaller). "
+              + $"elapsed={sw.Elapsed.TotalSeconds:F1}s doneReason={doneReason}");
+
+        // A stopped turn KEEPS what it produced - that is why StopGeneration only cancels and lets the
+        // normal completion path run.
+        if (cancelledText.Length == 0)
+            throw new Exception(
+                $"cancelled generation discarded its partial text ({cancelledDeltas} deltas arrived). "
+              + "A stopped turn must keep the reply so far.");
+    }
+
     /// <summary>One turn answers with non-empty text.</summary>
     [AiTest(Heavy = true, Timeout = 900_000)]
     public async Task SingleTurnProducesText()
@@ -453,6 +540,21 @@ public sealed class AiChatTests
 
     /// <summary>Keep replies short so a multi-turn run is about the CONVERSATION, not generation length.</summary>
     private static AiGenerationOptions Short() => new() { MaxOutputTokens = 64, Temperature = 0f, Seed = 1234 };
+
+    /// <summary>Deterministic, and long enough that stopping it early is visible.</summary>
+    private static AiGenerationOptions Long() => new() { MaxOutputTokens = 200, Temperature = 0f, Seed = 1234 };
+
+    /// <summary>A prompt whose natural answer is long, so an early stop is distinguishable from EOS.</summary>
+    /// <remarks>
+    /// ⚠️ Do not "simplify" this into an enumeration task. It was
+    /// <c>"Count from 1 to 100. Write one number per line."</c> and qwen2.5:0.5b answered with the single
+    /// token <c>100</c> - 3 deltas, measured 2026-09-08. A cancelled run would have looked identical to
+    /// that, so the test would have passed with cancellation completely broken. A small instruct model
+    /// generates length for open-ended PROSE, not for instructions it can satisfy tersely.
+    /// </remarks>
+    private const string LongPrompt =
+        "Write a detailed story about a lighthouse keeper during a great storm. "
+      + "Describe the setting, the keeper, the sea, and what happens over the course of the night.";
 
     /// <summary>Rough token estimate (~4 chars/token) - for error messages, not for control flow.</summary>
     private static int ApproxTokens(List<AiChatMessage> messages)

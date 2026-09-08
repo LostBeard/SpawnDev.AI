@@ -12,6 +12,25 @@ namespace SpawnDev.AI.Demo.Pages;
 public partial class Home : IDisposable
 {
     bool _ready, _starting, _busy;
+
+    /// <summary>
+    /// Cancels the in-flight generation. Non-null exactly while a turn is generating, which is what the
+    /// Stop button binds its enabled state to.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ This token reaches the WORKER. <c>AiWorkerClient.ChatStreamAsync</c> passes it as a real
+    /// parameter, SpawnJS.WebWorkers marshals it, and it becomes the request's
+    /// <c>IAiServerTransport.Aborted</c> - so pressing Stop halts decoding rather than just abandoning a
+    /// local await while the worker keeps burning the GPU. Before 2026-09-08 the worker transport
+    /// hardcoded <c>Aborted</c> to <c>CancellationToken.None</c>, so a stalled turn could only be waited
+    /// out or reloaded.
+    /// </remarks>
+    CancellationTokenSource? _generationCts;
+
+    /// <summary>True when the user stopped the current turn, so it can be labelled instead of read as a
+    /// natural finish. The wire cannot tell us: the Ollama surface reports a cancelled generation as
+    /// <c>done_reason "stop"</c> (see AiWorkerClient.ChatStreamAsync).</summary>
+    bool _stoppedByUser;
     string _status = "", _busyNote = "";
     string _model = "qwen2.5:0.5b-instruct-q8_0";
     string _imageModel = "sd-turbo";
@@ -41,6 +60,9 @@ public partial class Home : IDisposable
         public string Text = "";
         public List<ChatImage> Images = new();
         public double Ms; public double TokPerSec; public bool Truncated;
+        /// <summary>The user pressed Stop during this turn, so the text is deliberately partial.
+        /// Distinct from <see cref="Truncated"/>, which is the model hitting the output-token cap.</summary>
+        public bool Stopped;
     }
     readonly List<Msg> _messages = new();
     string _input = "", _streaming = "";
@@ -87,6 +109,22 @@ public partial class Home : IDisposable
     async Task OnKeyDown(KeyboardEventArgs e)
     { if (e.Key == "Enter" && !e.ShiftKey) await SendAsync(); }
 
+    /// <summary>
+    /// Stops the in-flight generation. Safe to press at any time - a no-op when nothing is generating.
+    /// </summary>
+    /// <remarks>
+    /// The turn does NOT throw or unwind: the generator returns what it has produced, so the partial
+    /// reply is kept and rendered with a "stopped" marker. That is why this only cancels and lets
+    /// <see cref="SendAsync"/>'s normal completion path run.
+    /// </remarks>
+    void StopGeneration()
+    {
+        if (_generationCts is not { IsCancellationRequested: false } cts) return;
+        _stoppedByUser = true;
+        _busyNote = "stopping…";
+        cts.Cancel();
+    }
+
     async Task SendAsync()
     {
         if (_busy || string.IsNullOrWhiteSpace(_input)) return;
@@ -103,6 +141,8 @@ public partial class Home : IDisposable
 
         _messages.Add(new Msg { Role = "user", Text = text });
         _busy = true; _streaming = "";
+        _stoppedByUser = false;
+        _generationCts = new CancellationTokenSource();
         string? spokenReply = null;
         _busyNote = _messages.Count(m => m.Role == "user") == 1
             ? "first message loads the model - downloads once, then cached" : "";
@@ -174,7 +214,8 @@ public partial class Home : IDisposable
                         if (doScroll) scrollClock.Restart();
                         InvokeAsync(async () => { StateHasChanged(); if (doScroll) await ScrollToBottom(); });
                     }
-                });
+                },
+                ct: _generationCts.Token);
             genClock.Stop();
             waitTicker.Cancel();
             try { await waitTickerTask; } catch { /* the ticker reports its own failures */ }
@@ -191,6 +232,9 @@ public partial class Home : IDisposable
                 Ms = genClock.Elapsed.TotalMilliseconds,
                 TokPerSec = deltas > 1 && decodeSeconds > 0 ? deltas / decodeSeconds : 0,
                 Truncated = doneReason == "length",
+                // ⚠️ Read from OUR flag, not from doneReason: a cancelled generation comes back as
+                // "stop" on the Ollama-compatible surface, so the wire cannot distinguish it.
+                Stopped = _stoppedByUser,
             };
             Console.WriteLine($"[HF-CHAT] {deltas} deltas: first token after {ttftSeconds:F1}s, "
                             + $"then {msg.TokPerSec:F1} tok/s over {decodeSeconds:F1}s "
@@ -208,6 +252,8 @@ public partial class Home : IDisposable
             // Belt and braces: the ticker is also cancelled on the success path, but an exception thrown
             // before that leaves a background loop writing captions over the error message.
             waitTicker.Cancel();
+            _generationCts?.Dispose();
+            _generationCts = null;
             _streaming = ""; _busy = false; _busyNote = "";
             StateHasChanged();
             await ScrollToBottom();
