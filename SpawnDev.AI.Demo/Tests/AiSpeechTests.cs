@@ -133,6 +133,91 @@ public sealed class AiSpeechTests
     /// second transcript would point at state left behind by the first decode - the same class of defect
     /// that made LFM2's per-step cache answer one prompt two ways.
     /// </remarks>
+    /// <summary>
+    /// The transcript must survive the quiet margin the ENDPOINTER actually leaves on an utterance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THE PRODUCT NEVER HANDS WHISPER A TIGHTLY CROPPED CLIP. What reaches the recogniser in hands-free
+    /// is whatever span Silero closed, and that span is not the utterance - it carries `SpeechPad` at the
+    /// front and however long the endpointer took to decide at the back. Every other transcription test in
+    /// this file feeds the bare 4.0 s fixture, so the ONE audio shape the product actually produces was
+    /// never covered.
+    /// </para>
+    /// <para>
+    /// ⚠️ MEASURED 2026-09-08, tools/drive-hands-free.cs --turns 4, injecting the IDENTICAL clip each turn.
+    /// The span the endpointer closed, and the word overlap that followed:
+    /// 3.98 s -> 88%, 4.88 s -> 50%, 4.49 s -> 62%, 4.75 s -> 38%. The clocks were NOT drifting
+    /// (`span start=672`, `_micBufferStart=0`, every turn) - only the span LENGTH varied, and
+    /// intelligibility fell with it. RepeatedTranscriptionIsStable already proves the recogniser returns the
+    /// same text for the same samples, so the audio is what differs. This test asks the question that
+    /// isolates: does the quiet margin ALONE do this?
+    /// </para>
+    /// <para>
+    /// ⚠️ The padding is low-level noise at the level a real microphone's room tone actually sits at
+    /// (peak ~0.005, measured on the capture path), NOT digital zero. Zeros are not what a microphone
+    /// produces and a recogniser can treat the two very differently - the same trap
+    /// tools/probe-fake-mic.cs was written for.
+    /// </para>
+    /// </remarks>
+    [AiTest(Heavy = true, Timeout = 900_000)]
+    public async Task TranscriptionSurvivesTheEndpointersQuietMargin()
+    {
+        await _client.InitAsync();
+        var (samples, sampleRate) = await LoadFixtureAsync();
+
+        // Deterministic room tone, so a failure is reproducible rather than a draw.
+        var rng = new Random(20260908);
+        float[] Quiet(int n)
+        {
+            var q = new float[n];
+            for (int i = 0; i < n; i++) q[i] = (float)((rng.NextDouble() * 2 - 1) * 0.005);
+            return q;
+        }
+        float[] Pad(double leadSeconds, double tailSeconds)
+        {
+            var lead = Quiet((int)(leadSeconds * sampleRate));
+            var tail = Quiet((int)(tailSeconds * sampleRate));
+            var outp = new float[lead.Length + samples.Length + tail.Length];
+            Array.Copy(lead, 0, outp, 0, lead.Length);
+            Array.Copy(samples, 0, outp, lead.Length, samples.Length);
+            Array.Copy(tail, 0, outp, lead.Length + samples.Length, tail.Length);
+            return outp;
+        }
+
+        // The BARE clip is the control. Without it a failure below cannot be told from a bad fixture or a
+        // bad model - and its WER is the number every padded variant is judged against.
+        var (bare, _, _) = await _client.TranscribeAsync(samples, sampleRate);
+        var bareWer = WordErrorRate(KnownTranscript, bare ?? "");
+        Console.WriteLine($"[AiSpeechTests] margin 0.00s+0.00s (control): WER {bareWer:P1} -> '{bare}'");
+
+        var failures = new List<string>();
+        // Spans seen in the wild: a tight close, and the 0.5-0.9 s of trailing quiet turns 2+ produced.
+        foreach (var (lead, tail) in new[] { (0.0, 0.5), (0.0, 0.9), (0.04, 0.9), (0.5, 0.9) })
+        {
+            var padded = Pad(lead, tail);
+            var (text, _, ms) = await _client.TranscribeAsync(padded, sampleRate);
+            var wer = WordErrorRate(KnownTranscript, text ?? "");
+            var heard = Words(text ?? "");
+            var missing = new[] { "recordings", "public", "domain" }.Where(w => !heard.Contains(w)).ToArray();
+            Console.WriteLine($"[AiSpeechTests] margin {lead:F2}s+{tail:F2}s "
+                            + $"({padded.Length / (double)sampleRate:F2}s total, {ms:F0}ms): "
+                            + $"WER {wer:P1}{(missing.Length > 0 ? $" MISSING {string.Join(",", missing)}" : "")} "
+                            + $"-> '{text}'");
+            if (wer > 0.40 || missing.Length > 0)
+                failures.Add($"{lead:F2}s+{tail:F2}s: WER {wer:P1}"
+                           + (missing.Length > 0 ? $", missing {string.Join(",", missing)}" : "")
+                           + $", heard '{text}'");
+        }
+
+        if (failures.Count > 0)
+            throw new Exception(
+                $"quiet margin alone destroys the transcript in {failures.Count} of 4 shapes, while the "
+              + $"SAME clip untouched scores WER {bareWer:P1}. This is the audio the hands-free endpointer "
+              + "actually hands over, so this is what the product hears: "
+              + string.Join(" | ", failures));
+    }
+
     [AiTest(Heavy = true, Timeout = 900_000)]
     public async Task RepeatedTranscriptionIsStable()
     {

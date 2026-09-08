@@ -798,6 +798,28 @@ public partial class Home : IDisposable
         }
 
         float[] captured;
+        // 🔴 PRINT BOTH CLOCKS ON EVERY CAPTURE, not only when the result is too short to use.
+        //
+        // The detector answers in offsets counted from the first sample it was fed since its reset;
+        // `_micBufferStart` counts what TrimQuietAudio has dropped off the front of our list. They agree
+        // only while every appended sample is also fed to the detector, and when they drift the slice is
+        // still a plausible length - it is simply the WRONG AUDIO, which reads as a recogniser that has
+        // got worse rather than as a bookkeeping bug.
+        //
+        // ⚠️ MEASURED 2026-09-08 with tools/drive-hands-free.cs --turns 4, injecting the IDENTICAL 4.0 s
+        // clip every turn: captured 4.0s / 4.1s / 4.6s / 4.9s and word overlap 88% / 75% / 62% / 50% -
+        // monotonic in lockstep, so the window and the utterance are drifting apart per turn. The
+        // too-short diagnostic could never see it because the capture is never too short. This line is
+        // what makes the drift visible.
+        long dbgSpanS = spanStart is long sd ? sd : -1;
+        int dbgSpanN = spanLength is int nd ? nd : -1;
+        int dbgCount; long dbgStart;
+        lock (_micSamples) { dbgCount = _micSamples.Count; dbgStart = _micBufferStart; }
+        Console.WriteLine($"[HF-CAPTURE] span start={dbgSpanS} length={dbgSpanN} "
+            + $"({(dbgSpanN > 0 ? dbgSpanN / (double)WhisperRate : 0):F2}s) | _micBufferStart={dbgStart} "
+            + $"_micSamples={dbgCount} (buffer covers {dbgStart}..{dbgStart + dbgCount}) | "
+            + $"clamp from={(dbgSpanS < 0 ? 0 : Math.Max(0, dbgSpanS - dbgStart))} "
+            + $"| vadBatches={_vadBatches}");
         lock (_micSamples)
         {
             if (spanStart is long s && spanLength is int n)
@@ -810,6 +832,29 @@ public partial class Home : IDisposable
                 captured = from < to ? _micSamples.GetRange(from, to - from).ToArray() : System.Array.Empty<float>();
             }
             else captured = _micSamples.ToArray();
+        }
+
+        // ⚠️ PROFILE THE SLICE, not just its bounds. A length and an offset cannot tell "the clip is in
+        // there, cleanly" from "the clip is in there, mangled" - and those have completely different fixes.
+        // Per-second peak/RMS is the same instrument the voice gate uses, and it separates leading quiet,
+        // a truncated utterance and a level problem at a glance.
+        if (captured.Length > 0)
+        {
+            var prof = new System.Text.StringBuilder();
+            for (int sec = 0; sec * WhisperRate < captured.Length; sec++)
+            {
+                int from2 = sec * WhisperRate, to2 = Math.Min(captured.Length, from2 + WhisperRate);
+                double sum2 = 0; float pk = 0;
+                for (int i = from2; i < to2; i++)
+                {
+                    var v = captured[i]; var a = v < 0 ? -v : v;
+                    if (a > pk) pk = a;
+                    sum2 += (double)v * v;
+                }
+                prof.Append($"{Math.Sqrt(sum2 / Math.Max(1, to2 - from2)):F3}/{pk:F2} ");
+            }
+            Console.WriteLine($"[HF-CAPTURE] captured {captured.Length} samples "
+                + $"({captured.Length / (double)WhisperRate:F2}s) rms/peak per second: {prof}");
         }
 
         if (captured.Length < WhisperRate / 2)

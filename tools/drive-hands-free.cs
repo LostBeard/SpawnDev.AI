@@ -188,8 +188,18 @@ await page.AddInitScriptAsync(@"
       return window.__spokenClips;
     };
 
-    // Turn 1 speaks immediately, exactly as before, so single-turn behaviour is unchanged.
-    window.__speakClip();
+    // 🔴 ONLY THE FIRST MIC OPEN SPEAKS BY ITSELF. The app calls getUserMedia AGAIN on every turn
+    // (StartListeningAsync -> StartMicrophoneAsync), so this body runs once per turn - and when the
+    // multi-turn loop was added it began injecting the clip EXPLICITLY as well. Turns 2+ therefore got
+    // TWO overlapping copies of the same utterance, a few hundred ms apart, summed into one stream.
+    //
+    // ⚠️ MEASURED 2026-09-08, and it looked exactly like a product defect: the app captured the clip at
+    // peak 0.89 on turn 1 and at FULL SCALE 1.00 on turns 2 and 3 (clipping), word overlap fell from 88%
+    // to 38-62%, and the endpointer held each later utterance 0.5-0.9 s longer - because two offset copies
+    // of a sentence really are longer and louder than one. Every one of those symptoms was this line.
+    // The transcripts read like a failing recogniser - all the knowledge that we are in the way to Maine -
+    // which is what summed, clipped speech sounds like.
+    if (!window.__micOpened) { window.__micOpened = true; window.__speakClip(); }
     window.__micStartedAt = performance.now();
     return dest.stream;
   };
@@ -299,6 +309,10 @@ int spokenBefore = 0, repliesBefore = 0;
 // baseline below has to be counted against the SAME selector the wait uses - two selectors for one job is
 // how turn 2 ends up asserting against turn 1's bubble.
 var assistant = page.Locator(".msg.assistant:not(:has(span.caret)):not(.speaking)");
+// The TRANSCRIPT bubble. `<div class="msg @msg.Role">` renders the user turn, so this is what the app
+// believes it heard - and the clip it heard has a KNOWN transcript, which makes mishearing checkable.
+var userMsg = page.Locator(".msg.user");
+int usersBefore = 0;
 for (int turn = 1; turn <= turns; turn++)
 {
     // 🔴 BASELINE THIS TURN BEFORE IT STARTS. Every "did it reply / did it speak" check below is a
@@ -307,6 +321,7 @@ for (int turn = 1; turn <= turns; turn++)
     // a conversation it never observed. These two ints are what make each turn assert about ITSELF.
     repliesBefore = await assistant.CountAsync();
     spokenBefore = await page.EvaluateAsync<int>("window.__spoken.length");
+    usersBefore = await userMsg.CountAsync();
     Console.WriteLine();
     Console.WriteLine($"    ─── TURN {turn} of {turns} ───");
 
@@ -386,6 +401,34 @@ for (int turn = 1; turn <= turns; turn++)
 
     if (reply.Length == 0) Fail("no assistant reply arrived in 15 minutes");
     else Ok($"assistant replied at t={repliedAt:F1}s: \"{Trunc(reply, 90)}\"");
+
+    // ── 2a. WHAT DID IT HEAR? ──────────────────────────────────────────────────────────────────────
+    // ⚠️ THE GATE HAD NO OPINION ON THIS, AND MISHEARING IS WHAT A PERSON ACTUALLY NOTICES. Every check
+    // above is satisfied by a turn that heard something completely different: a bubble appeared, a reply
+    // appeared, a sound came out. The clip is the same known 4.0 s recording every turn, so its transcript
+    // is a fixed reference and a turn that wanders off it is a defect with a name.
+    //
+    // Same floor and the same shape as tools/drive-chat-voice.cs, deliberately: whisper-tiny renders
+    // "LibriVox" as "legal box", which is a model limit and not a pipeline defect, so this is content words
+    // plus a 70% word-overlap floor rather than an exact string.
+    if (await userMsg.CountAsync() > usersBefore)
+    {
+        var heard = (await userMsg.Last.InnerTextAsync()).Trim();
+        var norm = System.Text.RegularExpressions.Regex.Replace(heard.ToLowerInvariant(), @"[^a-z0-9 ]", " ");
+        norm = System.Text.RegularExpressions.Regex.Replace(norm, @"\s+", " ").Trim();
+        var refWords = "all librivox recordings are in the public domain".Split(' ');
+        var got = norm.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+        var overlap = refWords.Count(w => got.Contains(w)) / (double)refWords.Length;
+        if (overlap < 0.70)
+            Fail($"turn {turn}: MISHEARD the clip - {overlap:P0} word overlap (floor 70%). heard: "
+               + $"\"{Trunc(heard, 120)}\"");
+        else
+            Ok($"turn {turn}: heard it at {overlap:P0} overlap: \"{Trunc(heard, 90)}\"");
+    }
+    else
+    {
+        Fail($"turn {turn}: no transcript bubble appeared, so nothing was heard to reply to");
+    }
 
     // ── 3. SPEAK: did the page actually make a sound? ──
     // ⚠️ This is the assertion the suite had no equivalent of. A status line reading "Spoke 4.3s" is the
