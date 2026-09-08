@@ -35,6 +35,14 @@ const string WavPath = "test-audio/librivox-public-domain.wav";
 // window this gate was written against ran to MaxUtteranceSeconds (30 s) no matter what was said.
 const double ClipSeconds = 4.0;
 const double ListenBudgetSeconds = 12.0;
+// How many exchanges to drive. TWO is the floor, not a luxury: turn 1 exercises a cold pipeline and
+// turn 2 is where the Captain's report lives - resuming the mic after speaking, and endpointing a
+// second time. `--turns N` raises it.
+var turns = 2;
+{
+    var ti = Array.IndexOf(args, "--turns");
+    if (ti >= 0 && ti + 1 < args.Length && int.TryParse(args[ti + 1], out var tv) && tv > 0) turns = tv;
+}
 
 using var pw = await Playwright.CreateAsync();
 await using var ctx = await pw.Chromium.LaunchPersistentContextAsync(profileDir, new()
@@ -146,7 +154,11 @@ await page.AddInitScriptAsync(@"
     //
     // The previous shape - one buffer holding [clip + 40 s of zeros], played once - can only ever speak
     // ONCE, so it could not test a second turn at all. And a second turn is where the Captain's report
-    // lives: "it listened but never stopped listening... the listen duration just kept climbing".
+    // lives: ""it listened but never stopped listening... the listen duration just kept climbing"".
+    // (Doubled quotes above are the C# verbatim-string escape. This whole JS block is ONE verbatim
+    // literal opened by at-quote on the AddInitScriptAsync line, so a single bare quote character
+    // anywhere in it - even inside a JS comment - ENDS the literal and the file stops compiling.
+    // That is exactly what happened in 602882a on 2026-09-04, and this gate could not run for four days.)
     // Pre-baking a second clip at a fixed offset does not work either, because turn 1 takes ~55 s end to
     // end and that delay is exactly what varies.
     //
@@ -281,8 +293,20 @@ try
 // this gate did until 2026-09-04.
 var lastStatusOuter = "";
 int spokenBefore = 0, repliesBefore = 0;
+// ⚠️ FINISHED assistant bubbles only. While a turn is in flight the page renders an extra `.msg.assistant`
+// placeholder carrying a blinking caret and the phase note, so a bare `.msg.assistant` matches
+// "Transcribing…" and reports a reply that has not happened. Declared ONCE, out here, because the per-turn
+// baseline below has to be counted against the SAME selector the wait uses - two selectors for one job is
+// how turn 2 ends up asserting against turn 1's bubble.
+var assistant = page.Locator(".msg.assistant:not(:has(span.caret)):not(.speaking)");
 for (int turn = 1; turn <= turns; turn++)
 {
+    // 🔴 BASELINE THIS TURN BEFORE IT STARTS. Every "did it reply / did it speak" check below is a
+    // COUNT, and turn 1's reply and turn 1's audio are both still on the page when turn 2 begins - so
+    // an absolute check (`count > 0`) passes turn 2 instantly on turn 1's evidence and the gate reports
+    // a conversation it never observed. These two ints are what make each turn assert about ITSELF.
+    repliesBefore = await assistant.CountAsync();
+    spokenBefore = await page.EvaluateAsync<int>("window.__spoken.length");
     Console.WriteLine();
     Console.WriteLine($"    ─── TURN {turn} of {turns} ───");
 
@@ -333,13 +357,7 @@ for (int turn = 1; turn <= turns; turn++)
         Ok($"turn {turn}: endpointed after {listenedFor:F1}s of a {ClipSeconds:F1}s utterance");
 
     // ── 2. TRANSCRIBE + ANSWER: an assistant bubble has to appear. ──
-    // ⚠️ FINISHED assistant bubbles only. While the turn is in flight the page renders an extra
-    // `.msg.assistant` placeholder carrying a blinking caret and the phase note, so a bare `.msg.assistant`
-    // matches "Transcribing…" and reports a reply that has not happened.
-    // ⚠️ FINISHED assistant bubbles only: NOT the in-flight one (blinking caret + phase note) and NOT the
-    // speaking one. Both are `.msg.assistant`, so a looser selector reports "Transcribing…" or
-    // "🔊 Preparing the voice…" as the model's reply.
-    var assistant = page.Locator(".msg.assistant:not(:has(span.caret)):not(.speaking)");
+    // The `assistant` locator is declared once above the loop - see the baseline note there.
     var replyDeadline = DateTime.UtcNow.AddMinutes(15);
     string reply = "";
     var lastStatus = "";
@@ -357,7 +375,7 @@ for (int turn = 1; turn <= turns; turn++)
         // long wait shows what it is waiting ON rather than only how long it waited.
         var st = await StatusAsync(page);
         if (st != lastStatus) { lastStatus = st; NoteStatus(st); Console.WriteLine($"    [t={(DateTime.UtcNow - t0).TotalSeconds,6:F1}s] status: {st}"); }
-        if (await assistant.CountAsync() > 0)
+        if (await assistant.CountAsync() > repliesBefore)
         {
             reply = (await assistant.Last.InnerTextAsync()).Trim();
             if (reply.Length > 0) break;
@@ -381,14 +399,14 @@ for (int turn = 1; turn <= turns; turn++)
     while (DateTime.UtcNow < speakDeadline)
     {
         spokenCount = await page.EvaluateAsync<int>("window.__spoken.length");
-        if (spokenCount > 0) break;
+        if (spokenCount > spokenBefore) break;
         var st = await StatusAsync(page);
         if (st != lastStatus) { lastStatus = st; NoteStatus(st); Console.WriteLine($"    [t={(DateTime.UtcNow - t0).TotalSeconds,6:F1}s] status: {st}"); }
         await Task.Delay(2000);
     }
     var spokeAt = (DateTime.UtcNow - t0).TotalSeconds;
 
-    if (spokenCount == 0)
+    if (spokenCount <= spokenBefore)
     {
         Fail("THE APP NEVER PLAYED ANY AUDIO. It answered in text and stayed silent - "
            + "AudioBufferSourceNode.start was not called once outside the mic tap.");
@@ -396,12 +414,14 @@ for (int turn = 1; turn <= turns; turn++)
     }
     else
     {
-        var d = await page.EvaluateAsync<double>("window.__spoken[0].duration");
-        var sr = await page.EvaluateAsync<double>("window.__spoken[0].sampleRate");
-        Ok($"spoke at t={spokeAt:F1}s: {d:F2}s of audio @ {sr:F0} Hz");
+        // THIS turn's clip, not the first one on the page.
+        var d = await page.EvaluateAsync<double>($"window.__spoken[{spokenBefore}].duration");
+        var sr = await page.EvaluateAsync<double>($"window.__spoken[{spokenBefore}].sampleRate");
+        Ok($"turn {turn}: spoke at t={spokeAt:F1}s: {d:F2}s of audio @ {sr:F0} Hz");
     }
 
     Console.WriteLine($"    status: \"{await StatusAsync(page)}\"");
+}   // end of the per-turn loop
 }
 catch (Exception ex)
 {
