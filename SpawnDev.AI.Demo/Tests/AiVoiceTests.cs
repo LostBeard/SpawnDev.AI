@@ -114,6 +114,83 @@ public sealed class AiVoiceTests
     /// the audio described above does not come close.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// The brevity limit shortens a reply at a SENTENCE end, and never stops mid-sentence.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 CAPTAIN, 2026-09-08: "Cutting replies mid-sentence needs to be fixed. There should be a limit, at
+    /// least not due to something that we can fix." A limit is a product decision and stays; where it CUTS
+    /// is the defect. Until this, a reply with no sentence end inside the target was chopped at the
+    /// character count - MEASURED on this file's own 343-character fixture, it spoke 320 and stopped after
+    /// "tired and content after".
+    ///
+    /// ⚠️ Pure and model-free on purpose, so it runs in milliseconds on every backend and cannot be
+    /// mistaken for a synthesis problem. The read-back gate below can only observe the CONSEQUENCE of a bad
+    /// cut, and it scored one as 92% intelligibility rather than as a truncation.
+    /// </remarks>
+    [AiTest(Timeout = 30_000)]
+    public Task BrevityLimitCutsOnlyAtSentenceEnds()
+    {
+        const int Cap = 320, Ceiling = 1200;
+        var failures = new List<string>();
+        void Check(string name, string input, Func<string, string, bool> ok, string expectation)
+        {
+            var got = AiVoiceEngine.TrimToSpeakableLength(input, Cap, Ceiling, out var why);
+            var pass = ok(got, why);
+            Console.WriteLine($"[AiVoiceTests] {(pass ? "ok  " : "FAIL")} {name}: {input.Length} -> "
+                            + $"{got.Length} chars ({why}) ...{(got.Length > 46 ? got[^46..] : got)}");
+            if (!pass) failures.Add($"{name}: expected {expectation}; got {got.Length} chars ending "
+                                  + $"\"{(got.Length > 60 ? got[^60..] : got)}\" ({why})");
+        }
+
+        // The exact line this defect was found on: ONE sentence, 343 characters, no interior full stop.
+        const string OneLongSentence =
+            "The morning train was late again, so we walked along the river and talked about the weather "
+          + "until the rain finally stopped and the sun came out over the water, warming the stones along "
+          + "the path where we sat and rested for a while before walking slowly back home together in the "
+          + "quiet evening air, tired and content after a long and useful day.";
+
+        Check("under the target is untouched", "Short enough.", (g, _) => g == "Short enough.",
+              "the input unchanged");
+        Check("one long sentence is spoken WHOLE", OneLongSentence,
+              (g, _) => g == OneLongSentence,
+              $"all {OneLongSentence.Length} characters, not {Cap}");
+
+        // Many sentences: it must stop ON a terminator, and inside the target.
+        var many = string.Concat(Enumerable.Repeat("This is one ordinary sentence of moderate length. ", 12));
+        Check("many sentences stop on a terminator", many,
+              (g, _) => g.Length <= Cap && (g.EndsWith('.') || g.EndsWith('!') || g.EndsWith('?')),
+              $"<= {Cap} chars ending on a terminator");
+
+        // A tiny first sentence must not become the whole spoken reply.
+        Check("a tiny first sentence is not the whole reply", "Sure. " + OneLongSentence,
+              (g, _) => g.Length > Cap / 3, "more than a one-word answer");
+
+        // The ONLY case allowed to stop mid-sentence, and it must say so.
+        var runOn = "The " + string.Concat(Enumerable.Repeat("and then something else happened ", 60)) + "end.";
+        Check("a run-on past the ceiling is cut at a word boundary", runOn,
+              (g, w) => g.Length <= Ceiling && !g.EndsWith(' ') && w.Contains("ceiling"),
+              $"<= {Ceiling} chars, a reason naming the ceiling");
+
+        // ⚠️ THE PROPERTY, over every case above: whatever comes back is a PREFIX of the input that ends at
+        // a word boundary. A cut inside a word is heard as a mispronunciation, which is the one thing a
+        // brevity limit must never manufacture.
+        foreach (var input in new[] { OneLongSentence, many, "Sure. " + OneLongSentence, runOn })
+        {
+            var got = AiVoiceEngine.TrimToSpeakableLength(input, Cap, Ceiling, out _);
+            if (!input.StartsWith(got, StringComparison.Ordinal))
+                failures.Add($"result is not a prefix of the input ({got.Length} of {input.Length})");
+            else if (got.Length < input.Length && !char.IsWhiteSpace(input[got.Length])
+                     && !char.IsPunctuation(input[got.Length]))
+                failures.Add($"cut INSIDE a word at {got.Length}: \"...{got[^30..]}|{input[got.Length]}...\"");
+        }
+
+        if (failures.Count > 0)
+            throw new Exception($"the brevity limit cuts badly in {failures.Count} case(s): "
+                              + string.Join(" | ", failures));
+        return Task.CompletedTask;
+    }
+
     [AiTest(Heavy = true, Timeout = 1_800_000)]
     public async Task SpokenReplyIsIntelligibleWhenReadBack()
     {
@@ -136,7 +213,12 @@ public sealed class AiVoiceTests
         // CLIFF with length, and the demo's own MaxSpokenCharacters is 320, which puts every real spoken
         // reply past the edge. These steps bracket the knee; the growth is one clause at a time so the
         // words and the voice stay ordinary and only LENGTH varies.
-        // 🔴 THE LONGEST LINE HERE MUST REACH MaxSpokenCharacters, WHICH IS 320.
+        // 🔴 THE LONGEST LINE HERE MUST REACH MaxSpokenCharacters, WHICH IS 320 - it is 343.
+        // ⚠️ SINCE 2026-09-08 IT IS SPOKEN WHOLE. MaxSpokenCharacters is a soft TARGET now and shortening
+        // happens only at sentence ends, so this single 343-character sentence runs past 320 and is
+        // rendered in full - which is the point: it puts a real over-target utterance through the voice.
+        // The limit's own decision logic is gated separately and without a model by
+        // BrevityLimitCutsOnlyAtSentenceEnds; this row exercises SYNTHESIS past the target, not trimming.
         // MEASURED 2026-09-04: this gate originally stopped at 123 characters and passed at 100%, while
         // the Captain's third live turn spoke a 288-character reply that came back "intermittently
         // garbled" with varying volume. A gate that stops short of the product's OWN cap cannot see the

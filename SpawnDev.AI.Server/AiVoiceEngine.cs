@@ -348,12 +348,18 @@ public sealed class AiVoiceEngine : IDisposable
     }
 
     /// <summary>
-    /// How many characters of a reply are spoken aloud. Default 320.
+    /// Soft target for how many characters of a reply are spoken aloud. Default 320.
     /// </summary>
     /// <remarks>
     /// A spoken reply is not a written one. Nobody wants a chat model's full paragraph read at them, and a
-    /// voice assistant that monologues is worse than one that is brief - so this cap is a product decision
+    /// voice assistant that monologues is worse than one that is brief - so a limit is a product decision
     /// first, and it would exist even if everything below it were free.
+    ///
+    /// 🔴 IT IS A TARGET, NOT A CUT. Speech is shortened only at SENTENCE ends. A reply that stops
+    /// mid-clause does not sound brief, it sounds broken - and by ear it is indistinguishable from the voice
+    /// itself failing at length, which is a defect we have actually had. When the sentence in progress runs
+    /// past this number, the whole sentence is still spoken, bounded by
+    /// <see cref="MaxSpokenCharactersCeiling"/>.
     ///
     /// ✅ The engine limit this ALSO used to hide is FIXED (ILGPU.ML 5.2.7-local.11, 2026-09-01). An
     /// utterance past ZipVoice's precomputed [1999, 48] positional table - about 21 s of speech - takes a
@@ -367,41 +373,117 @@ public sealed class AiVoiceEngine : IDisposable
     /// </remarks>
     public int MaxSpokenCharacters { get; set; } = 320;
 
-    /// <summary>Cut a reply at a sentence end near the cap, rather than mid-word.</summary>
+    /// <summary>Hard ceiling in characters. Only a single sentence longer than this is ever cut. Default 1200.</summary>
+    /// <remarks>
+    /// ⚠️ This exists so that "never cut mid-sentence" cannot become "read a 4,000-character run-on
+    /// paragraph at the user". It is the ONLY path that can still stop mid-sentence, it sits far above any
+    /// ordinary sentence, and when it fires it says so in the log - at that length the text is malformed
+    /// rather than merely long, and that is worth seeing rather than silently trimming.
+    /// </remarks>
+    public int MaxSpokenCharactersCeiling { get; set; } = 1200;
+
     private string TrimToSpeakableLength(string text, int? overrideCap)
     {
         var cap = overrideCap is > 0 ? overrideCap.Value : MaxSpokenCharacters;
-        if (text.Length <= cap) return text;
-
-        // Prefer the last sentence end inside the cap - a reply that stops mid-clause sounds broken, while
-        // one that stops a sentence early just sounds brief.
-        var window = text[..cap];
-        var cut = window.LastIndexOfAny(new[] { '.', '!', '?' });
-        string spoken;
-        if (cut > cap / 3)
-        {
-            spoken = window[..(cut + 1)];
-        }
-        else if (char.IsWhiteSpace(text[cap]))
-        {
-            // The cap landed exactly on a word boundary - the whole window is whole words. (`text[cap]` is
-            // in range: this method returned already if `text.Length <= cap`.)
-            spoken = window.TrimEnd();
-        }
-        else
-        {
-            // No sentence end to cut at and the cap fell INSIDE a word. Back up to the last word boundary:
-            // the summary above has always promised "rather than mid-word", and a raw `text[..cap]` never
-            // delivered it - it stops wherever the character count stops, which for one long sentence is
-            // usually mid-word. Half a word is heard as a mispronunciation, and manufacturing one is the
-            // last thing a brevity cap should do. A single word longer than two thirds of the cap has no
-            // boundary worth using, so that keeps the raw window.
-            var lastSpace = window.LastIndexOf(' ');
-            spoken = (lastSpace > cap / 3 ? window[..lastSpace] : window).TrimEnd();
-        }
-        Console.WriteLine($"[AiVoiceEngine] speaking {spoken.Length} of {text.Length} characters "
-                        + $"(cap={cap})");
+        var spoken = TrimToSpeakableLength(text, cap, MaxSpokenCharactersCeiling, out var why);
+        if (spoken.Length != text.Length)
+            Console.WriteLine($"[AiVoiceEngine] speaking {spoken.Length} of {text.Length} characters "
+                            + $"(target={cap}, ceiling={MaxSpokenCharactersCeiling}): {why}");
         return spoken;
+    }
+
+    /// <summary>
+    /// Shorten a reply for speech at a SENTENCE boundary. Pure, so it can be gated without a model.
+    /// </summary>
+    /// <param name="text">The reply as written.</param>
+    /// <param name="cap">Soft target - see <see cref="MaxSpokenCharacters"/>.</param>
+    /// <param name="ceiling">Hard ceiling - see <see cref="MaxSpokenCharactersCeiling"/>.</param>
+    /// <param name="why">One phrase naming which rule decided, for the log.</param>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THE RULE IS: NEVER END MID-SENTENCE. Speak whole sentences while they fit the target; if the very
+    /// first sentence already exceeds the target, speak that sentence WHOLE rather than cutting it. Only a
+    /// single sentence longer than <paramref name="ceiling"/> is cut, and then at a word boundary.
+    /// </para>
+    /// <para>
+    /// ⚠️ This replaces a rule that cut at <c>text[..cap]</c> whenever no sentence end fell inside the
+    /// window. MEASURED 2026-09-06 on the voice gate's own fixture - a single 343-character sentence - it
+    /// spoke 320 characters, stopping after "tired and content after" and dropping "a long and useful day."
+    /// The audio was perfect; the sentence was not. Worse, the read-back then scored that as 92%
+    /// intelligibility and the shortfall was written up as voice degradation.
+    /// </para>
+    /// <para>
+    /// ⚠️ A terminator counts as a sentence end only at end-of-text or before whitespace, which keeps "3.5"
+    /// and "example.com" intact; runs like "?!" and "..." collapse to one boundary. An abbreviation
+    /// ("Dr. Smith") is still read as a boundary - the cost is an utterance ending slightly early at a
+    /// plausible place, never one ending mid-clause, and only when the reply is over target anyway.
+    /// </para>
+    /// <para>
+    /// ⚠️ Stopping too EARLY is a real failure too: "Sure." followed by a long paragraph would otherwise
+    /// speak one word. When the whole sentences that fit come to less than a third of the target, one more
+    /// whole sentence is taken if the ceiling allows - the same judgement the old <c>cap / 3</c> test was
+    /// making, now made without ever splitting a sentence.
+    /// </para>
+    /// </remarks>
+    public static string TrimToSpeakableLength(string text, int cap, int ceiling, out string why)
+    {
+        why = "";
+        if (string.IsNullOrEmpty(text) || cap <= 0 || text.Length <= cap) return text;
+        if (ceiling < cap) ceiling = cap;
+
+        var ends = SentenceEndOffsets(text);
+
+        // The most whole sentences that fit inside the target.
+        int chosen = 0;
+        foreach (var e in ends) { if (e <= cap) chosen = e; else break; }
+
+        if (chosen == 0)
+        {
+            // The first sentence alone is past the target. Speak it whole - that is the entire point.
+            int first = ends[0];
+            if (first <= ceiling)
+            {
+                why = "first sentence runs past the target, spoken whole";
+                return text[..first].TrimEnd();
+            }
+
+            // A single sentence longer than the ceiling: the one case that can still stop mid-sentence.
+            var window = text[..ceiling];
+            var lastSpace = window.LastIndexOf(' ');
+            why = $"ONE sentence of {first} characters exceeds the ceiling - cut mid-sentence at a word boundary";
+            return (lastSpace > ceiling / 3 ? window[..lastSpace] : window).TrimEnd();
+        }
+
+        if (chosen < cap / 3)
+        {
+            // What fits is too short to sound like an answer; take one more whole sentence if allowed.
+            foreach (var e in ends)
+            {
+                if (e <= chosen) continue;
+                if (e <= ceiling) { chosen = e; why = "one sentence over the target, to avoid a clipped reply"; }
+                break;
+            }
+        }
+        if (why.Length == 0) why = "whole sentences within the target";
+        return text[..chosen].TrimEnd();
+    }
+
+    /// <summary>Offsets just past each sentence terminator, always ending with <c>text.Length</c>.</summary>
+    private static List<int> SentenceEndOffsets(string text)
+    {
+        var ends = new List<int>();
+        for (int i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c != '.' && c != '!' && c != '?') continue;
+            int j = i;
+            while (j + 1 < text.Length && (text[j + 1] == '.' || text[j + 1] == '!' || text[j + 1] == '?')) j++;
+            if (j + 1 >= text.Length || char.IsWhiteSpace(text[j + 1])) ends.Add(j + 1);
+            i = j;
+        }
+        // Text after the last terminator - or text with none at all - is a final sentence in its own right.
+        if (ends.Count == 0 || ends[^1] != text.Length) ends.Add(text.Length);
+        return ends;
     }
 
     /// <summary>
