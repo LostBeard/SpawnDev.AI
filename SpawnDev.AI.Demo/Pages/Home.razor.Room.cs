@@ -15,6 +15,27 @@ namespace SpawnDev.AI.Demo.Pages;
 public partial class Home
 {
     [Inject] CharacterLibrary Characters { get; set; } = default!;
+    [Inject] ReachyDriver Robot { get; set; } = default!;
+
+    /// <summary>The robot's address, as typed. Remembered only for this session.</summary>
+    string _robotAddress = "";
+
+    bool _robotBusy;
+
+    /// <summary>Connect to or park the physical robot.</summary>
+    async Task ToggleRobotAsync()
+    {
+        if (_robotBusy) return;
+        _robotBusy = true;
+        StateHasChanged();
+        try
+        {
+            if (Robot.IsConnected) await Robot.DisconnectAsync();
+            else await Robot.ConnectAsync(_robotAddress);
+            _status = Robot.Status;
+        }
+        finally { _robotBusy = false; StateHasChanged(); }
+    }
 
     /// <summary>The room. With no agents in it the page behaves exactly as it always did.</summary>
     readonly AgentRoom _room = new();
@@ -32,7 +53,7 @@ public partial class Home
     bool RoomActive => _room.Agents.Count > 0;
 
     /// <summary>The motion each character's body is currently performing, by character id.</summary>
-    readonly Dictionary<string, AvatarAction> _avatarAction = new();
+    readonly Dictionary<string, SpawnDev.Reachy.Gesture> _avatarAction = new();
 
     /// <summary>Which character is speaking right now, so its body idles and the others stay still.</summary>
     string _speakingAgentId = "";
@@ -54,7 +75,8 @@ public partial class Home
     }
 
     /// <summary>The motion a character's body should be showing.</summary>
-    AvatarAction ActionFor(string id) => _avatarAction.TryGetValue(id, out var a) ? a : AvatarAction.None;
+    SpawnDev.Reachy.Gesture ActionFor(string id)
+        => _avatarAction.TryGetValue(id, out var a) ? a : SpawnDev.Reachy.Gesture.None;
 
     /// <summary>
     /// Perform a reply's written actions, in order, while the character speaks.
@@ -65,24 +87,44 @@ public partial class Home
     /// in Blazor WASM, it EXITS THE RUNTIME and takes the whole page with it. A decorative animation must
     /// never be able to do that, so the entire body is wrapped.
     /// </remarks>
-    async Task PlayActionsAsync(string agentId, IReadOnlyList<AvatarAction> actions, CancellationToken ct)
+    async Task PlayActionsAsync(ChatAgent agent, IReadOnlyList<string> written, CancellationToken ct)
     {
+        var agentId = agent.Id;
+        // Only the character actually holding the robot drives it; everyone else is drawn.
+        var drivesRobot = Robot.IsConnected
+            && AvatarActions.EffectiveAvatar(agent, AvatarActions.SoleRobotHolder(_room.Agents))
+               == AvatarKind.Reachy;
         try
         {
-            foreach (var action in actions)
+            foreach (var text in written)
             {
                 if (ct.IsCancellationRequested) break;
-                _avatarAction[agentId] = action;
+
+                var gesture = SpawnDev.Reachy.GestureClassifier.Classify(text);
+                if (gesture == SpawnDev.Reachy.Gesture.None) continue;
+
+                _avatarAction[agentId] = gesture;
                 await InvokeAsync(StateHasChanged);
-                try { await Task.Delay(1300, ct); }
-                catch (OperationCanceledException) { break; }
+
+                if (drivesRobot)
+                {
+                    // ⚠️ AWAITED, not fired off. ReachyBody sequences its own movements by waiting out
+                    // each one's duration - the daemon's goto only queues - so overlapping calls would
+                    // make a gesture interrupt itself, a defect this stack has already paid for once.
+                    await Robot.PerformAsync(text, ct: ct);
+                }
+                else
+                {
+                    try { await Task.Delay(1300, ct); }
+                    catch (OperationCanceledException) { break; }
+                }
             }
         }
         catch (Exception ex) { Console.WriteLine($"[ROOM] avatar animation stopped: {ex.Message}"); }
         finally
         {
             // Always return to rest, or the last motion of the round stays frozen on the body.
-            _avatarAction[agentId] = AvatarAction.None;
+            _avatarAction[agentId] = SpawnDev.Reachy.Gesture.None;
             try { await InvokeAsync(StateHasChanged); } catch { /* the page is going away */ }
         }
     }
@@ -197,6 +239,33 @@ public partial class Home
         StateHasChanged();
         await ScrollToBottom();
 
+        // ⚠️ EVERY member's model, not just the page's. A character can be configured with a model
+        // nobody has downloaded, and the round would otherwise stop on that member's turn having already
+        // started pulling gigabytes.
+        var missing = _room.Agents
+            .Select(a => a.Model)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(WouldDownload)
+            .ToList();
+        if (missing.Count > 0)
+        {
+            _showModels = true;
+            _messages.Add(new Msg
+            {
+                Role = "system",
+                Text = $"These characters use models this device does not have yet: "
+                     + string.Join(", ", missing.Select(m => $"**{m}** ({FormatSize(ChoiceFor(m)!.SizeBytes)})"))
+                     + ". Download them in the model panel (📦), or point those characters at a model that "
+                     + "is already here.",
+            });
+            _busy = false;
+            _generationCts?.Dispose();
+            _generationCts = null;
+            await InvokeAsync(StateHasChanged);
+            await ScrollToBottom();
+            return;
+        }
+
         var plan = _room.PlanRound();
         var spoken = 0;
         var clock = new System.Diagnostics.Stopwatch();
@@ -287,9 +356,11 @@ public partial class Home
 
                     // The body acts WHILE the voice plays, so start it unawaited and let it run alongside
                     // the speech below rather than miming the whole reply before saying a word.
-                    var motions = AvatarActions.RecogniseAll(line.Text);
-                    var acting = motions.Count > 0
-                        ? PlayActionsAsync(agent.Id, motions, _generationCts?.Token ?? default)
+                    // The RAW directions, not pre-classified gestures: the on-screen body classifies
+                    // them for its animation and the SDK classifies them for the robot, from the same text.
+                    var (_, written) = SpawnDev.Reachy.SpokenText.Split(line.Text);
+                    var acting = written.Length > 0
+                        ? PlayActionsAsync(agent, written, _generationCts?.Token ?? default)
                         : Task.CompletedTask;
 
                     // Each member speaks in its OWN voice; one with no voice simply stays text-only, which

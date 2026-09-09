@@ -19,10 +19,16 @@
             <div class="pickers">
                 <label>
                     Chat model
+                    @* A tick means it is on this device; a size means choosing it starts that download. *@
                     <select @bind="_model" disabled="@_busy">
                         @foreach (var m in _models)
                         {
-                            <option value="@m">@m</option>
+                            var choice = ChoiceFor(m);
+                            <option value="@m">
+                                @(choice == null ? m
+                                  : IsApproved(m) ? $"✓ {m}"
+                                  : $"⬇ {m} ({FormatSize(choice.SizeBytes)})")
+                            </option>
                         }
                     </select>
                 </label>
@@ -38,6 +44,10 @@
                 <button class="gear @(_showSettings ? "on" : "")" @onclick="ToggleSettings" title="Agent settings (system prompt, temperature)">⚙️</button>
                 @* GROUP CHAT. Characters the user made - each with its own persona, model and voice - talk
                    to each other and to the user inside a shared scene. *@
+                @* MODELS. Sizes and "already downloaded" live here, because a name in a dropdown cannot
+                   tell anyone that picking it costs 6.9 GB. *@
+                <button class="gear @(_showModels ? "on" : "")" @onclick="() => { _showModels = !_showModels; }"
+                        title="Choose a model - sizes, and what is already downloaded">📦</button>
                 <button class="gear @(_showRoom ? "on" : "")" @onclick="() => { _showRoom = !_showRoom; }"
                         title="Group chat: characters, scene, and who is in the room">
                     @(RoomActive ? $"🎭 {_room.Agents.Count}" : "🎭")
@@ -76,6 +86,75 @@
         </div>
     }
 
+    @* ── MODELS ──
+       🔴 Nothing here downloads until a button is pressed. Each row states what the model is for and what
+       it costs, and whether this device already has it - read from the torrent client, so it stays true
+       after the browser evicts one. *@
+    @if (_ready && _showModels)
+    {
+        <div class="settings models">
+            <div class="setrow">
+                <label class="setlbl">
+                    Models
+                    <span class="sethint">
+                        Weights stream from the SpawnDev hub and are cached in your browser. Large downloads
+                        happen only when you ask for them, and only once.
+                    </span>
+                </label>
+                @if (_catalogue.Count == 0)
+                {
+                    <p class="sethint">
+                        The catalogue is unavailable, so sizes cannot be shown. Models will still load on
+                        demand - which means a large one may download without warning.
+                    </p>
+                }
+                <div class="modellist">
+                    @foreach (var choice in _catalogue)
+                    {
+                        <div class="modelrow @(_model == choice.Name ? "current" : "") @(IsApproved(choice.Name) ? "here" : "")">
+                            <div class="modelhead">
+                                <b>@choice.Name</b>
+                                @* The size is always shown. "Approved" means the user already agreed to
+                                   fetch it, which is what the app can actually know - not whether the
+                                   bytes are still in the browser cache. *@
+                                @* Size always, plus whether it was agreed to, plus how much is already
+                                   here. The cached figure is INFORMATION only - it never reaches 100% for
+                                   a lazy-hash torrent, so nothing is decided on it. *@
+                                <span class="modelsize">
+                                    @FormatSize(choice.SizeBytes)@(IsApproved(choice.Name) ? " · approved" : "")@CachedLabel(choice.Name)
+                                </span>
+                            </div>
+                            @if (!string.IsNullOrEmpty(choice.Description))
+                            {
+                                <div class="sethint">@choice.Description</div>
+                            }
+                            <div class="modelactions">
+                                @if (_downloadingModel == choice.Name)
+                                {
+                                    <span class="sethint">Fetching… the page stays usable.</span>
+                                }
+                                else if (IsApproved(choice.Name))
+                                {
+                                    <button class="chip" disabled="@(_downloadingModel.Length > 0)"
+                                            @onclick="() => DownloadAndLoadAsync(choice.Name)">
+                                        @(_model == choice.Name ? "Reload" : "Use this model")
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="chip download" disabled="@(_downloadingModel.Length > 0)"
+                                            @onclick="() => DownloadAndLoadAsync(choice.Name)">
+                                        ⬇ Download &amp; load (@FormatSize(choice.SizeBytes))
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
     @* ── GROUP CHAT ─────────────────────────────────────────
        Characters are saved in OPFS and survive a reload. The SCENE belongs to the room, not to any
        character: it is the shared setting every member is handed verbatim, which is what lets several
@@ -104,6 +183,31 @@
                         </span>
                     </label>
                 </div>
+            </div>
+
+            @* THE PHYSICAL ROBOT. Only one character can hold it, and the page has to be served over
+               plain HTTP to reach it at all - the daemon speaks HTTP on the LAN, so an HTTPS page is
+               blocked as mixed content and the failure looks like an unreachable robot. Say so up front. *@
+            <div class="setrow">
+                <label class="setlbl">
+                    Reachy Mini
+                    <span class="sethint">
+                        Give a character the "Reachy Mini" body and it acts out its *actions* on the real
+                        robot. Everyone else in the scene is drawn on screen.
+                    </span>
+                </label>
+                @if (ReachyDriver.MixedContentWarning(JS.Get<string?>("location.origin")) is { } warn)
+                {
+                    <p class="sethint warn">@warn</p>
+                }
+                <div class="setactions">
+                    <input class="voice-name" placeholder="robot address, e.g. 192.168.1.170"
+                           @bind="_robotAddress" disabled="@(_robotBusy || Robot.IsConnected)" />
+                    <button class="chip" @onclick="ToggleRobotAsync" disabled="@_robotBusy">
+                        @(_robotBusy ? "…" : Robot.IsConnected ? "Park & disconnect" : "Connect")
+                    </button>
+                </div>
+                <span class="sethint">@Robot.Status</span>
             </div>
 
             <div class="setrow">
@@ -216,8 +320,13 @@
                 and cache in your browser — every tab shares the same resident model. Ask for a
                 picture and the chat model will paint one with the on-device diffusion model.
             </p>
+            @* Starting the server IS the agreement for the model it will run - the size is on the
+               button, so nothing large is ever fetched without having been named first. Every OTHER model
+               is agreed to separately in the model panel. *@
             <button class="primary big" @onclick="StartAsync" disabled="@_starting">
-                @(_starting ? "Starting worker + WebGPU…" : "Start the AI server")
+                @(_starting ? "Starting worker + WebGPU…"
+                  : ChoiceFor(_model) is { } c ? $"Start the AI server ({FormatSize(c.SizeBytes)} model)"
+                  : "Start the AI server")
             </button>
             @if (!string.IsNullOrEmpty(_status))
             {
@@ -607,6 +716,59 @@
 
     .setlbl.inline {
         flex: 1;
+    }
+
+    /* ── MODEL PICKER ── */
+    .modellist {
+        display: flex;
+        flex-direction: column;
+        gap: .5rem;
+        margin-top: .4rem;
+    }
+
+    .modelrow {
+        border: 1px solid #273043;
+        border-radius: 10px;
+        padding: .5rem .65rem;
+        background: #0d121c;
+    }
+
+        /* Already local reads differently from "this will cost you a download" at a glance. */
+        .modelrow.here {
+            border-color: #2f5d4a;
+        }
+
+        .modelrow.current {
+            border-color: #7c3aed;
+            background: #141031;
+        }
+
+    .modelhead {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: .5rem;
+        font-size: .8rem;
+        color: #d6dbe4;
+    }
+
+    .sethint.warn {
+        color: #e0a458;
+    }
+
+    .modelsize {
+        font-size: .66rem;
+        color: #8b98ad;
+        white-space: nowrap;
+    }
+
+    .modelactions {
+        margin-top: .4rem;
+    }
+
+    .chip.download {
+        border-color: #7c3aed;
+        color: #cbb8ff;
     }
 
     /* ── THE STAGE ──────────────────────────────────────────────────────────── */

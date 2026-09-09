@@ -67,3 +67,20 @@ public sealed record AiChatResult(
     /// "ai-artifact://{id}". Null when no server tool ran.</summary>
     public IReadOnlyList<AiToolArtifact>? Artifacts { get; init; }
 }
+
+/// <summary>
+/// A model a user can choose, with everything needed to decide BEFORE committing to the download.
+/// </summary>
+/// <param name="Name">What to pass as the model name.</param>
+/// <param name="SizeBytes">Approximate download size. 0 when unknown.</param>
+/// <param name="Description">What it is good for, and its trade-off.</param>
+/// <param name="CachedFraction">
+/// How much of this model is already on the device, 0..1, or null when nothing has fetched it.
+/// </param>
+/// <remarks>
+/// ⚠️ <paramref name="CachedFraction"/> IS PROGRESS, NOT A VERDICT. It never reliably reaches 1.0 for the
+/// lazy-hash torrents the hub serves, because their reported length is piece-aligned and overstates the
+/// file. Show it; do not decide anything on it. Whether the user AGREED to a download is a separate fact,
+/// and one a host can actually persist.
+/// </remarks>
+public sealed record AiModelChoice(string Name, long SizeBytes, string Description, double? CachedFraction);

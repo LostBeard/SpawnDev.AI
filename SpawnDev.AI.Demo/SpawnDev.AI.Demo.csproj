@@ -17,6 +17,8 @@
 	<ItemGroup>
 		<!-- Add Blazor support to SpawnJS -->
 		<PackageReference Include="SpawnDev.SpawnJS.Blazor" Version="2.1.10" />
+
+		<PackageReference Include="SpawnDev.Reachy" Version="0.1.0-preview.1" />
 		
 		<PackageReference Include="SpawnDev.SpawnJS.RazorRenderer" Version="2.1.5" />
 

@@ -113,6 +113,12 @@ public partial class Home : IDisposable
             await LoadSavedVoicesAsync();
             // Characters are metadata only - no audio, no model - so listing them costs a directory read.
             await LoadCharactersAsync();
+            // The catalogue is metadata too, and it is what lets the picker state a size before asking
+            // anyone to commit to a download.
+            await LoadCatalogueAsync();
+            // Pressing "Start the AI server" is the agreement for the model that server will run - its
+            // size is on the button. Every other model is agreed to separately in the model panel.
+            await Consent.ApproveAsync(_model);
         }
         catch (Exception ex) { _status = $"Failed: {ex.Message}"; }
         finally { _starting = false; StateHasChanged(); }
@@ -155,6 +161,16 @@ public partial class Home : IDisposable
             await ScrollToBottom();
             return;
         }
+
+        // 🔴 Never let a turn be the thing that starts a multi-GB download. The weights are fetched deep
+        // inside the first generation, where nothing has asked the user anything, so the check belongs
+        // here - before either path commits.
+        if (!EnsureModelIsHere()) { _input = text; return; }
+
+        // 🔴 Never let a turn be the thing that starts a multi-GB download. The weights are fetched deep
+        // inside the first generation, where nothing has asked the user anything, so the check belongs
+        // here - before either path commits. The typed text goes back in the box, not in the bin.
+        if (!EnsureModelIsHere()) { _input = text; return; }
 
         // With characters in the room the turn belongs to THEM: each replies in order, hearing the ones
         // before it. The solo path below sends one message to one model with the page's system prompt,
@@ -966,18 +982,23 @@ public partial class Home : IDisposable
             // one, a single asterisk is ordinary emphasis - and removing the words in "I'm *not* doing
             // that" would have the voice say the OPPOSITE of what is on screen. There we keep the words
             // and drop only the markers.
+            // Role-play: the SDK splitter, which also lifts out un-asterisked third-person prose that is
+            // really a stage direction. Otherwise Unmark, which keeps every word - see StageDirections.
             var inScene = _room.RolePlay;
-            var (speakable, actions) = inScene
-                ? StageDirections.Split(text)
-                : (StageDirections.Unmark(text), (IReadOnlyList<StageDirection>)System.Array.Empty<StageDirection>());
-            if (actions.Count > 0)
-                Console.WriteLine($"[HF-SPEAK] {actions.Count} stage direction(s) not spoken: "
-                    + string.Join(", ", actions.Select(a => a.Text)));
+            var speakable = inScene
+                ? SpawnDev.Reachy.SpokenText.Split(text).Spoken
+                : StageDirections.Unmark(text);
+            var actions = inScene
+                ? SpawnDev.Reachy.SpokenText.Split(text).Actions
+                : System.Array.Empty<string>();
+            if (actions.Length > 0)
+                Console.WriteLine($"[HF-SPEAK] {actions.Length} stage direction(s) not spoken: "
+                    + string.Join(", ", actions));
             if (string.IsNullOrWhiteSpace(speakable))
             {
                 // The whole reply was action and no dialogue. Silence is correct - there is nothing to
                 // say - but say WHY, or it reads as the voice having failed.
-                _status = actions.Count > 0 ? "(action only - nothing said aloud)" : "Nothing to speak.";
+                _status = actions.Length > 0 ? "(action only - nothing said aloud)" : "Nothing to speak.";
                 StateHasChanged();
                 return;
             }

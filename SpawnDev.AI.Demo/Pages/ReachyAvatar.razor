@@ -34,21 +34,27 @@
     /// <summary>Who this body belongs to.</summary>
     [Parameter] public string Name { get; set; } = "";
 
-    /// <summary>The motion to perform. Setting it again replays it.</summary>
-    [Parameter] public AvatarAction Action { get; set; } = AvatarAction.None;
+    /// <summary>
+    /// The motion to perform. Setting it again replays it.
+    /// </summary>
+    /// <remarks>
+    /// <c>SpawnDev.Reachy.Gesture</c> deliberately - the same vocabulary the physical robot performs, so a
+    /// scene reads the same whether it plays here or on the hardware.
+    /// </remarks>
+    [Parameter] public SpawnDev.Reachy.Gesture Action { get; set; } = SpawnDev.Reachy.Gesture.None;
 
     /// <summary>True while this character is talking, for a subtle idle motion.</summary>
     [Parameter] public bool Speaking { get; set; }
 
     // Bumped whenever a motion is (re)assigned, purely to re-key the group and restart the animation.
     private int _beat;
-    private AvatarAction _last = AvatarAction.None;
+    private SpawnDev.Reachy.Gesture _last = SpawnDev.Reachy.Gesture.None;
 
     protected override void OnParametersSet()
     {
         // Re-key on EVERY assignment, not only on a change of value: two nods in a row are two nods, and
         // comparing values would silently swallow the second one.
-        if (Action != AvatarAction.None) _beat++;
+        if (Action != SpawnDev.Reachy.Gesture.None) _beat++;
         _last = Action;
     }
 }
@@ -124,19 +130,17 @@
         transform-origin: 50px 70px;
     }
 
-    .act-tilt { animation: reachy-tilt 900ms ease-in-out; }
+    /* One class per SpawnDev.Reachy Gesture. Head motions animate the whole group; the antennae-led
+       ones (perk, wiggle, droop) are further down, because on the real robot those are all stalks. */
     .act-nod { animation: reachy-nod 700ms ease-in-out; }
     .act-shake { animation: reachy-shake 700ms ease-in-out; }
-    .act-lookaround { animation: reachy-lookaround 1600ms ease-in-out; }
-    .act-lookat { animation: reachy-lookat 700ms ease-in-out; }
-    .act-startle { animation: reachy-startle 600ms cubic-bezier(.36,.07,.19,.97); }
-    .act-laugh { animation: reachy-laugh 900ms ease-in-out; }
-    .act-shrug { animation: reachy-shrug 800ms ease-in-out; }
-
-    @@keyframes reachy-tilt {
-        0%, 100% { transform: rotate(0deg); }
-        35%, 70% { transform: rotate(-13deg); }
-    }
+    .act-tilt { animation: reachy-tilt 900ms ease-in-out; }
+    .act-lookdown { animation: reachy-lookdown 900ms ease-in-out; }
+    .act-lookup { animation: reachy-lookup 900ms ease-in-out; }
+    .act-leanin { animation: reachy-leanin 800ms ease-in-out; }
+    .act-turnbody { animation: reachy-turnbody 1400ms ease-in-out; }
+    .act-bounce { animation: reachy-bounce 800ms ease-in-out; }
+    .act-spin { animation: reachy-spin 1600ms ease-in-out; }
 
     @@keyframes reachy-nod {
         0%, 100% { transform: translateY(0) rotate(0deg); }
@@ -151,40 +155,51 @@
         80% { transform: rotate(5deg); }
     }
 
-    @@keyframes reachy-lookaround {
+    @@keyframes reachy-tilt {
+        0%, 100% { transform: rotate(0deg); }
+        35%, 70% { transform: rotate(-13deg); }
+    }
+
+    @@keyframes reachy-lookdown {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        40%, 65% { transform: translateY(4px) rotate(9deg); }
+    }
+
+    @@keyframes reachy-lookup {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        40%, 65% { transform: translateY(-4px) rotate(-9deg); }
+    }
+
+    /* Toward the viewer: there is no depth here, so it reads as a small scale-up plus a dip. */
+    @@keyframes reachy-leanin {
+        0%, 100% { transform: scale(1) translateY(0); }
+        45%, 70% { transform: scale(1.07) translateY(2px); }
+    }
+
+    @@keyframes reachy-turnbody {
         0%, 100% { transform: translateX(0) rotate(0deg); }
-        25% { transform: translateX(-6px) rotate(-7deg); }
-        60% { transform: translateX(6px) rotate(7deg); }
+        30% { transform: translateX(-7px) rotate(-8deg); }
+        70% { transform: translateX(7px) rotate(8deg); }
     }
 
-    @@keyframes reachy-lookat {
-        0%, 100% { transform: translateX(0); }
-        50% { transform: translateX(3px) scale(1.03); }
-    }
-
-    @@keyframes reachy-startle {
-        0%, 100% { transform: translateY(0) scale(1); }
-        15% { transform: translateY(-5px) scale(1.06); }
-        40% { transform: translateY(1px) scale(.98); }
-    }
-
-    @@keyframes reachy-laugh {
-        0%, 100% { transform: rotate(0deg) translateY(0); }
-        20% { transform: rotate(-6deg) translateY(-2px); }
-        45% { transform: rotate(5deg) translateY(1px); }
-        70% { transform: rotate(-4deg) translateY(-1px); }
-    }
-
-    @@keyframes reachy-shrug {
+    @@keyframes reachy-bounce {
         0%, 100% { transform: translateY(0); }
-        45% { transform: translateY(-4px); }
+        25% { transform: translateY(-5px); }
+        50% { transform: translateY(1px); }
+        75% { transform: translateY(-2px); }
+    }
+
+    /* A full turn - the robot rotates its torso, so the whole figure goes round. */
+    @@keyframes reachy-spin {
+        0% { transform: rotateY(0deg); }
+        100% { transform: rotateY(360deg); }
     }
 
     /* Antennae carry perk/droop/wave: the head stays put and the expression is all in the stalks, which
        is exactly how Reachy Mini reads in person. */
     .act-perk .antennae { animation: reachy-perk 800ms ease-out; transform-origin: 50px 30px; }
     .act-droop .antennae { animation: reachy-droop 1100ms ease-in-out; transform-origin: 50px 30px; }
-    .act-wave .antennae { animation: reachy-wave 900ms ease-in-out; transform-origin: 50px 30px; }
+    .act-wiggle .antennae { animation: reachy-wiggle 900ms ease-in-out; transform-origin: 50px 30px; }
 
     @@keyframes reachy-perk {
         0%, 100% { transform: translateY(0) scaleY(1); }
@@ -196,10 +211,11 @@
         50% { transform: translateY(4px) scaleY(.72); }
     }
 
-    @@keyframes reachy-wave {
+    @@keyframes reachy-wiggle {
         0%, 100% { transform: rotate(0deg); }
-        25% { transform: rotate(-11deg); }
-        60% { transform: rotate(11deg); }
+        20% { transform: rotate(-11deg); }
+        45% { transform: rotate(11deg); }
+        70% { transform: rotate(-7deg); }
     }
 
     /* Respect a stated preference for less motion - this is decoration, and a whole row of them moving at

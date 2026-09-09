@@ -268,6 +268,9 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             _router = new AiApiRouter(engine)
             {
                 Images = _images, Tools = _tools, Speech = _speech, Voice = _voice, Vad = _vad,
+                // Only the hub provider knows a model's download size and whether this device already
+                // has it - the desktop Ollama-cache provider has everything locally by definition.
+                HubModels = provider,
             };
         }
         finally { _initGate.Release(); }

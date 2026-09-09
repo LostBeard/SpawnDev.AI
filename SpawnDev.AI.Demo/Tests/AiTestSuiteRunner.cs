@@ -35,6 +35,7 @@ public static class AiTestSuiteRunner
         typeof(StageDirectionTests),
         typeof(CharacterToolAccessTests),
         typeof(AvatarActionTests),
+        typeof(ModelCatalogueTests),
     };
 
     /// <summary>Milliseconds a test may run before it is reported as timed out. Overridable per test.</summary>

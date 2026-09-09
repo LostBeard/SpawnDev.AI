@@ -22,6 +22,17 @@ public sealed class AiApiRouter
     /// <summary>Optional image engine - enables /v1/images/generations (OpenAI-compatible).</summary>
     public AiImageEngine? Images { get; set; }
 
+    /// <summary>
+    /// Optional hub model provider - enables <c>GET /ai/models</c>, the catalogue a picker needs.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <c>/api/tags</c>, which answers "what can I ask for" in Ollama's shape. This answers
+    /// the question a UI has to settle BEFORE downloading gigabytes: how big is it, what is it for, and is
+    /// it already here. Without the last one the user is asked to consent to a download that may cost
+    /// nothing, or told nothing about one that costs 7 GB.
+    /// </remarks>
+    public HubModelProvider? HubModels { get; set; }
+
     /// <summary>Optional tool registry - enables /ai/artifacts/{id} (base64 fetch of tool outputs).</summary>
     public AiToolRegistry? Tools { get; set; }
 
@@ -81,6 +92,18 @@ public sealed class AiApiRouter
                 await t.WriteJsonAsync(200, new { voices = Voice.VoiceIds }); return true;
             case ("GET", _) when Tools != null && path.StartsWith("/ai/artifacts/", StringComparison.Ordinal):
                 await GetArtifact(path["/ai/artifacts/".Length..], t); return true;
+            case ("GET", "/ai/models") when HubModels != null:
+                await t.WriteJsonAsync(200, new
+                {
+                    models = HubModels.Catalogue().Select(m => new
+                    {
+                        name = m.Name,
+                        sizeBytes = m.SizeBytes,
+                        description = m.Description,
+                        cachedFraction = m.CachedFraction,
+                    }),
+                });
+                return true;
             case ("GET", "/ai/image-models") when Images != null:
                 await t.WriteJsonAsync(200, new
                 {

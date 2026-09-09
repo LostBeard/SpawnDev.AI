@@ -10,7 +10,10 @@
 // and the suite never touches the page - so without this gate the whole user-facing half is unverified.
 using Microsoft.Playwright;
 
-var url = args.Length > 0 ? args[0] : "http://localhost:5199/";
+// ⚠️ ?worker=dedicated on purpose. A SHARED worker's console does not reach page.Console, so anything
+// the AI server logs - model load progress, cache state, failures - is invisible to this gate and a slow
+// load is indistinguishable from a hang. A dedicated worker shares its console with the window.
+var url = args.Length > 0 ? args[0] : "http://localhost:5199/?worker=dedicated";
 
 // Distinctive names: they are asserted against the transcript, and a name that could appear in a model's
 // own prose (e.g. "Ada") would let this pass on a reply that mentions it rather than one attributed to it.
@@ -19,12 +22,19 @@ const string NameB = "Qualla";
 const string Scene = "You are on the derelict colony of Copper-9, at night, after the lights failed.";
 
 using var pw = await Playwright.CreateAsync();
-await using var browser = await pw.Chromium.LaunchAsync(new()
+// 🔴 A PERSISTENT profile, deliberately. With a throwaway one, OPFS starts empty every run: the model is
+// re-downloaded in full each time (MEASURED: 424 MB on the network tab), and nothing can ever report as
+// already-cached - so a cache assertion could only ever fail. A real user keeps their profile, and so
+// does this gate.
+var profileDir = Path.Combine(Path.GetTempPath(), "spawndev-ai-room-gate-profile");
+Directory.CreateDirectory(profileDir);
+Console.WriteLine($"[gate] profile: {profileDir}");
+await using var browser = await pw.Chromium.LaunchPersistentContextAsync(profileDir, new()
 {
     Headless = false,
-    Channel = "chrome",   // TJ's installed Chrome build (hardware WebGPU); separate automation profile
+    Channel = "chrome",   // TJ's installed Chrome build (hardware WebGPU)
 });
-var page = await browser.NewPageAsync();
+var page = browser.Pages.Count > 0 ? browser.Pages[0] : await browser.NewPageAsync();
 page.Console += (_, msg) => Console.WriteLine($"[console] {msg.Text}");
 
 Console.WriteLine($"[gate] goto {url}");
@@ -88,8 +98,35 @@ await page.PressAsync("textarea:not(.sysbox)", "Enter");
 await page.WaitForSelectorAsync("textarea:not(.sysbox):not([disabled])", new() { Timeout = 420000 });
 var total = (DateTime.UtcNow - t0).TotalSeconds;
 
-// ── What actually rendered ──────────────────────────────────────────────────────────────────────────
+// ── The model catalogue, AFTER a model has actually loaded ──────────────────────────────────────────
+// Order matters: opening the panel before the first message would ask "is it cached?" of a model nothing
+// had fetched yet, and the honest answer then is no. Checking it here makes it a real test of the
+// torrent-backed cache state.
+Console.WriteLine("[gate] opening the model panel");
+await page.ClickAsync("button.gear:has-text(\"📦\")", new() { Timeout = 15000 });
+await page.WaitForSelectorAsync(".settings.models", new() { Timeout = 15000 });
+var modelRows = await page.Locator(".settings.models .modelrow").CountAsync();
+var localRows = await page.Locator(".settings.models .modelrow.here").CountAsync();
+var sizeText = await page.Locator(".settings.models .modelsize").AllInnerTextsAsync();
+Console.WriteLine($"[gate] catalogue: {modelRows} model(s), {localRows} reported as on this device");
+Console.WriteLine($"[gate] sizes: {string.Join(" | ", sizeText.Select(t => t.Trim()))}");
+
 var fails = new List<string>();
+if (modelRows == 0)
+    fails.Add("the model panel listed nothing - GET /ai/models did not reach the page, so no size or "
+        + "download state is shown before a multi-GB fetch");
+if (sizeText.Count != modelRows)
+    fails.Add($"{modelRows} rows but {sizeText.Count} size labels - a row with no size asks the user to "
+        + "consent to an unknown download");
+// The model that just answered must be marked approved: starting the server is the agreement for it,
+// and without that record every visit would re-prompt for the model the demo runs on by default.
+if (localRows == 0)
+    fails.Add("no model is marked approved, yet one just loaded and answered - the consent record is not "
+        + "reaching the UI, so the download guard would block the demo's own default model");
+// And nothing UNapproved may be marked approved, or the guard is decorative.
+if (localRows == modelRows && modelRows > 1)
+    fails.Add($"all {modelRows} models report as approved, which cannot be right - only the default was "
+        + "ever agreed to, so the guard would wave through a 6.9 GB download");
 var transcript = await page.InnerTextAsync(".transcript");
 Console.WriteLine($"[gate] TRANSCRIPT ({total:F1}s):\n{transcript}");
 

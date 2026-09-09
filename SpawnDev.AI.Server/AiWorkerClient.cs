@@ -470,6 +470,48 @@ public sealed class AiWorkerClient
     }
 
     /// <summary>
+    /// Every model the server can serve: what it is for, how big the download is, and whether this
+    /// device already has it.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THIS IS WHAT MAKES A BIG DOWNLOAD OPT-IN. Without it a UI can only offer names, and the first
+    /// message on a fresh pick silently pulls gigabytes - the user finds out from their connection, not
+    /// from the app. It reports size and purpose only; whether the user has AGREED to a given download is
+    /// the host's to remember.
+    /// </remarks>
+    public async Task<List<AiModelChoice>> GetModelCatalogueAsync(CancellationToken ct = default)
+    {
+        var found = new List<AiModelChoice>();
+        await SendAsync("GET", "/ai/models", null, ct: ct, onFrame: f =>
+        {
+            if (f.T is not ("json" or "event") || f.Data == null) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(f.Data);
+                if (!doc.RootElement.TryGetProperty("models", out var models)
+                    || models.ValueKind != JsonValueKind.Array) return;
+                foreach (var m in models.EnumerateArray())
+                {
+                    var name = m.TryGetProperty("name", out var n) ? n.GetString() : null;
+                    if (string.IsNullOrEmpty(name)) continue;
+                    found.Add(new AiModelChoice(
+                        name,
+                        m.TryGetProperty("sizeBytes", out var sz) && sz.TryGetInt64(out var bytes) ? bytes : 0,
+                        m.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
+                        m.TryGetProperty("cachedFraction", out var cf) && cf.ValueKind == JsonValueKind.Number
+                            ? cf.GetDouble() : null));
+                }
+            }
+            catch (JsonException)
+            {
+                // A malformed catalogue means an empty picker, not a broken app - the caller falls back
+                // to whatever it already knows.
+            }
+        });
+        return found;
+    }
+
+    /// <summary>
     /// The tools the server offers, each as a JSON definition ready to hand back to
     /// <see cref="ChatStreamAsync"/>.
     /// </summary>

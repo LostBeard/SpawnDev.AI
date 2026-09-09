@@ -1,58 +1,66 @@
+using SpawnDev.Reachy;
+
 namespace SpawnDev.AI.Demo.Tests;
 
 /// <summary>
-/// What a character writes becomes an action a body can perform - the same one, whichever body it is.
+/// A reply's stage directions reach a body, in order, and the one physical robot is never contended.
 /// </summary>
 /// <remarks>
-/// ⚠️ NOT heavy - pure mapping, no model. It is the join between two very different backends (an on-screen
-/// avatar and the physical Reachy Mini), and its failure mode is a scene that plays differently depending
-/// on whether the robot happens to be plugged in. That is not something watching either one alone reveals.
+/// ⚠️ NOT heavy - no model. And deliberately NOT a test of <c>GestureClassifier</c>: which words map to
+/// which gesture is the SDK's business, tested against real captured model output there. Re-asserting its
+/// table here would pin the demo to today's phrasings and break every time the SDK learned a new one.
+/// What is tested is what this layer actually does: preserve order, drop what no body can perform, and
+/// arbitrate the single robot.
 /// </remarks>
 public sealed class AvatarActionTests
 {
-    /// <summary>Written actions map to the shared vocabulary, and unknown ones map to nothing.</summary>
+    /// <summary>Recognised gestures come out in the order they were written.</summary>
+    /// <remarks>
+    /// 🔴 ORDER IS THE PART THAT MATTERS AND THE PART THAT LOOKS FINE WHEN WRONG. A character that nods
+    /// and then shakes its head means something specific; performing those the other way round is a
+    /// different reply, and nothing on screen would indicate it happened.
+    /// </remarks>
     [AiTest(Timeout = 30_000)]
-    public Task WrittenActionsBecomeMotions()
+    public Task GesturesComeOutInWrittenOrder()
     {
-        Maps("tilts her head", AvatarAction.Tilt);
-        Maps("nods slowly", AvatarAction.Nod);
-        Maps("shakes his head", AvatarAction.Shake);
-        Maps("waves", AvatarAction.Wave);
-        Maps("sighs and slumps", AvatarAction.Droop);
-        Maps("grins", AvatarAction.Perk);
-        Maps("recoils in alarm", AvatarAction.Startle);
-        Maps("giggles", AvatarAction.Laugh);
-        Maps("shrugs", AvatarAction.Shrug);
+        // Phrasings taken from the SDK's own real-model-output fixtures, so this leans on cues that are
+        // known to classify rather than on wording invented to match a table.
+        var got = AvatarActions.RecogniseAll("*nods enthusiastically* Sure. *shakes her head* Actually, no.");
+        if (got.Count != 2)
+            throw new Exception($"expected two gestures, got {got.Count}: [{string.Join(",", got)}]");
+        if (got[0] != Gesture.Nod || got[1] != Gesture.Shake)
+            throw new Exception($"order or mapping wrong: [{string.Join(",", got)}]");
 
-        // 🔴 ORDERING WITHIN THE VOCABULARY MATTERS. "looks around" contains "look", so a table tested in
-        // the wrong order turns scanning the room into a glance at the user - a plausible-looking motion
-        // that means something different from what the character wrote.
-        Maps("looks around the room", AvatarAction.LookAround);
-        Maps("looks at Uzi", AvatarAction.LookAt);
-
-        // Nothing recognisable performs NOTHING. A random motion for unparsed text reads as meaning
-        // something, which in a scene is a lie about what the character did.
-        Maps("recalibrates her flux inverter", AvatarAction.None);
-        Maps("", AvatarAction.None);
-        Maps(null, AvatarAction.None);
-        return Task.CompletedTask;
-    }
-
-    /// <summary>A whole reply yields its motions in order, ignoring the ones nothing can perform.</summary>
-    [AiTest(Timeout = 30_000)]
-    public Task ARepliesActionsComeOutInOrder()
-    {
-        var got = AvatarActions.RecogniseAll("*waves* Hey. *tilts head* You okay? *recalibrates something*");
-        var expected = new[] { AvatarAction.Wave, AvatarAction.Tilt };
-        if (!got.SequenceEqual(expected))
-            throw new Exception($"got [{string.Join(",", got)}], expected [{string.Join(",", expected)}]");
-
-        if (AvatarActions.RecogniseAll("Just talking, no actions at all.").Count != 0)
+        // Nothing physical written = nothing performed. A body that moves on every reply is noise.
+        if (AvatarActions.RecogniseAll("Just talking, nothing physical at all.").Count != 0)
             throw new Exception("plain dialogue must produce no motion");
+        if (AvatarActions.RecogniseAll("").Count != 0) throw new Exception("empty text must produce none");
+        if (AvatarActions.RecogniseAll(null).Count != 0) throw new Exception("null must produce none");
+
+        // The filter must never emit None - it is the "no body can perform this" value, and animating it
+        // would show a motion for text nothing understood.
+        foreach (var g in AvatarActions.RecogniseAll("*tilts head* Hm. *antennas droop sadly* Oh."))
+            if (g == Gesture.None) throw new Exception("Gesture.None leaked through as a performable motion");
         return Task.CompletedTask;
     }
 
-    /// <summary>Only one character can hold the single physical robot; the rest still get a body.</summary>
+    /// <summary>Un-asterisked prose that is really a stage direction still reaches the body.</summary>
+    /// <remarks>
+    /// Models write "His head bobs up and down" as ordinary narration, with no markers at all. The SDK's
+    /// splitter pulls those out; this pins that the demo actually benefits from it rather than only
+    /// handling the asterisked form - the whole reason to use the SDK splitter over a local one.
+    /// </remarks>
+    [AiTest(Timeout = 30_000)]
+    public Task ProseStageDirectionsAreRecognisedToo()
+    {
+        var got = AvatarActions.RecogniseAll("Her head tilts to one side.");
+        if (got.Count == 0)
+            throw new Exception("an un-asterisked prose stage direction produced no gesture - the demo is "
+                + "not getting the SDK splitter's prose extraction");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Only one character drives the single physical robot; the rest still get a body.</summary>
     /// <remarks>
     /// 🔴 THERE IS EXACTLY ONE REACHY MINI. Two characters both driving it would issue conflicting moves to
     /// the same head, and the result is not a merge - it is whichever command landed last, with BOTH
@@ -128,12 +136,5 @@ public sealed class AvatarActionTests
             throw new Exception("an embodied character was never told the action convention, so it will "
                 + "not produce any and the body will never move");
         return Task.CompletedTask;
-    }
-
-    private static void Maps(string? written, AvatarAction expected)
-    {
-        var got = AvatarActions.Recognise(written);
-        if (got != expected)
-            throw new Exception($"Recognise(\"{written}\") = {got}, expected {expected}");
     }
 }
