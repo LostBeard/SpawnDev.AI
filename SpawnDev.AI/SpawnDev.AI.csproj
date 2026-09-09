@@ -5,7 +5,7 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<Version>1.1.0-preview.1</Version>
-		<PackageReleaseNotes>v1.0.0 - New</PackageReleaseNotes>
+		<PackageReleaseNotes>v1.1.0-preview.1 - Voice: speech in (Whisper + /api/transcribe), speech out (ZipVoice), and hands-free turns with a real endpointer. Stop now cancels a generation inside the browser worker. Engine: SpawnDev.ILGPU.ML 5.2.12. Full history: CHANGELOG.md</PackageReleaseNotes>
 		<Title>SpawnDev.AI</Title>
 		<Authors>LostBeard</Authors>
 		<Description>Core contracts for the SpawnDev AI stack: chat sessions, Ollama/OpenAI-compatible API shapes, and tool-calling contracts. Shared by SpawnDev.AI.Server (desktop HTTP + browser-worker model server) and SpawnDev.AI.Blazor (chat UI components).</Description>

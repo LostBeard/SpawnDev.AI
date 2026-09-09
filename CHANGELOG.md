@@ -97,6 +97,30 @@ Notable changes per release. Preview - APIs will change.
   chat completes with NO page crash. Tradeoff: an LLM↔image switch reloads the incoming model (OPFS→GPU);
   letting a small LLM + tiled SD-Turbo co-reside when they actually fit is a follow-up optimization.
 
+## 1.1.0-preview.1 - Voice: speech in, speech out, and hands-free turns
+
+- **Speech to text.** `AiSpeechEngine` + `/api/transcribe` bring Whisper into the stack, with tests that
+  assert a known transcript rather than "some text came back". Whisper loads through the lazy-hash torrent
+  path rather than `ModelHub`.
+- **Voice input in the chat UI.** Speak, get an editable transcript before it is sent.
+- **Voice output (ZipVoice).** Replies are spoken back in the user's own reference voice, including long
+  replies, with an optional per-request cap override.
+- **Hands-free speech to speech.** A real endpointer (not a fixed window), models warmed in the order the
+  turn needs them, and progress reported while the turn runs. Warming the voice with a synthesis was costing
+  the first turn 88 seconds and no longer happens.
+- **Stop actually stops.** `AiWorkerServer.FrameTransport.Aborted` was hardcoded to
+  `CancellationToken.None`, so all 27 `t.Aborted` call sites in `AiApiRouter` were inert on the browser
+  worker path, which is the path the demo uses. Desktop `ServerHost` passed `HttpContext.RequestAborted`, so
+  it read as working everywhere. Cancellation was already marshalled by SpawnDev.SpawnJS.WebWorkers, so no
+  abort frame was needed. Gated by `StopCancelsGenerationInsideTheWorker`, red-checked PASS/FAIL/PASS.
+- **Brevity cap cuts only at sentence ends**, never mid-sentence.
+- **A real VRAM budget** replaces the eviction ring.
+- Engine: SpawnDev.ILGPU.ML `5.2.12`.
+- Test harness: results stream live with an elapsed stamp and a heartbeat naming the in-flight test (a heavy
+  run used to print nothing at all for its whole budget); the voice gate now produces audio a human can
+  listen to and scores the read-back against what the engine actually spoke rather than what it was asked to
+  speak; `tools/check-tools-compile.cs` compiles the loose tool scripts, which nothing did before.
+
 ## 1.0.0-preview.11 - Compound repo+crew grounding + coherent Ground toggle
 
 - **Compound "what is X and who is on the crew?" grounds BOTH sections.** A message that names a repo AND
