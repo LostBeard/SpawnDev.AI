@@ -74,6 +74,20 @@ public sealed class CharacterToolAccessTests
         if (CharacterLibrary.ToAgent(legacy, "room-model", null).AllowedTools is { Count: > 0 })
             throw new Exception("a character saved before tools existed must NOT gain tool access");
 
+        // 🔴 A character saved before MotionScale existed deserialises to 0, and 0 means "never moves" -
+        // a body that silently stopped acting, with nothing reporting why. It must normalise to normal.
+        var legacyScale = new SavedCharacter("t3", "Old", "p", "m", null, DateTime.UtcNow,
+            null, AvatarKind.Screen, 0);
+        var normalised = CharacterLibrary.ToAgent(legacyScale, "m", null);
+        if (Math.Abs(normalised.MotionScale - 1.0) > 0.001)
+            throw new Exception($"a stored MotionScale of 0 became {normalised.MotionScale} - 0 scales "
+                + "every gesture to nothing, so the character would appear to stop acting");
+
+        // A deliberate value survives untouched.
+        var chosen = CharacterLibrary.ToAgent(legacyScale with { MotionScale = 0.4 }, "m", null);
+        if (Math.Abs(chosen.MotionScale - 0.4) > 0.001)
+            throw new Exception($"a chosen MotionScale of 0.4 came back as {chosen.MotionScale}");
+
         await Task.CompletedTask;
     }
 }

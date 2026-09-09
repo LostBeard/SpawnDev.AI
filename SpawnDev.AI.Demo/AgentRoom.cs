@@ -18,8 +18,17 @@ namespace SpawnDev.AI.Demo;
 /// talk is given none, and cannot reach the hardware however it is prompted.
 /// </remarks>
 /// <param name="Avatar">The body this character acts through. None = text and voice only.</param>
+/// <param name="MotionScale">
+/// How animated this character is, 1.0 being normal. Clamped to 0.3-1.6 when applied.
+/// </param>
+/// <remarks>
+/// <see cref="MotionScale"/> is part of the persona rather than a global setting because it is part of
+/// who a character IS - the same written action should read as a twitch from one and a whole-body
+/// reaction from another. <c>ReachyBody</c> already takes it, so the robot honours it for free.
+/// </remarks>
 public sealed record ChatAgent(string Id, string Name, string Model, string Persona, string? VoiceId = null,
-    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.None);
+    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.None,
+    double MotionScale = 1.0);
 
 /// <summary>One line of the room's shared transcript.</summary>
 /// <param name="SpeakerId">Who said it. <see cref="AgentRoom.UserId"/> for the person.</param>
@@ -157,9 +166,16 @@ public sealed class AgentRoom
                     + "words outside them.";
         // Brevity is a room rule, not a persona choice: several agents each writing an essay turns one
         // exchange into minutes of synthesis and reading.
+        // ⚠️ THE ANTI-ECHO CLAUSE IS THERE FOR AN OBSERVED FAILURE, not as boilerplate. Every other
+        // speaker's line arrives as a `user` turn, and a small model's most common failure is to restate
+        // its most recent user turn - MEASURED: two characters on qwen2.5-0.5b produced BYTE-IDENTICAL
+        // replies ("I looks around, looking for any sign of life...") because the second echoed the
+        // first. It reads as a conversation and contains one voice. A stronger model is the real fix, and
+        // the model picker now offers several; this costs one clause and helps the weak ones.
         messages.Add(new AiChatMessage("system",
             system + " Reply as yourself, briefly - a sentence or two. Do not prefix your reply with your "
-                   + "name, and do not speak for anyone else."));
+                   + "name, and do not speak for anyone else. Never repeat what someone else just said - "
+                   + "respond to it with something of your own."));
 
         foreach (var line in Transcript)
         {

@@ -20,9 +20,15 @@ namespace SpawnDev.AI.Demo;
 /// The body this character acts through. Defaults to None, so a character saved before avatars existed
 /// stays text-only rather than suddenly appearing on screen.
 /// </param>
+/// <param name="MotionScale">
+/// How animated this character is, 1.0 normal. A character saved before this existed reads back as 0,
+/// which <see cref="CharacterLibrary.ToAgent"/> normalises to 1.0 - a stored zero would otherwise mean
+/// "never moves", which is not what anyone chose.
+/// </param>
 public sealed record SavedCharacter(
     string Id, string Name, string Persona, string Model, string? VoiceId, DateTime SavedUtc,
-    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.None);
+    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.None,
+    double MotionScale = 1.0);
 
 /// <summary>
 /// Characters the user has created, persisted to OPFS.
@@ -58,7 +64,7 @@ public sealed class CharacterLibrary
     /// <summary>Create or update a character.</summary>
     public async Task<SavedCharacter> SaveAsync(string id, string name, string persona, string model,
         string? voiceId, IReadOnlyList<string>? allowedTools = null,
-        AvatarKind avatar = AvatarKind.None)
+        AvatarKind avatar = AvatarKind.None, double motionScale = 1.0)
     {
         if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("a character needs an id", nameof(id));
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("a character needs a name", nameof(name));
@@ -66,7 +72,7 @@ public sealed class CharacterLibrary
         if (!await _fs.DirectoryExists(Dir)) await _fs.CreateDirectory(Dir);
         var saved = new SavedCharacter(id, name.Trim(), (persona ?? "").Trim(), (model ?? "").Trim(),
             string.IsNullOrWhiteSpace(voiceId) ? null : voiceId, DateTime.UtcNow,
-            allowedTools is { Count: > 0 } ? allowedTools.ToList() : null, avatar);
+            allowedTools is { Count: > 0 } ? allowedTools.ToList() : null, avatar, motionScale);
         await _fs.Write(Path(id), JsonSerializer.Serialize(saved));
         return saved;
     }
@@ -126,7 +132,10 @@ public sealed class CharacterLibrary
     public static ChatAgent ToAgent(SavedCharacter character, string fallbackModel, string? voiceId)
         => new(character.Id, character.Name,
             string.IsNullOrWhiteSpace(character.Model) ? fallbackModel : character.Model,
-            character.Persona, voiceId, character.AllowedTools, character.Avatar);
+            character.Persona, voiceId, character.AllowedTools, character.Avatar,
+            // 🔴 A character saved before MotionScale existed deserialises to 0, and 0 means "never
+            // moves" - a body that silently stopped acting. Normalise it to normal.
+            character.MotionScale > 0 ? character.MotionScale : 1.0);
 
     /// <summary>
     /// The tool definitions an agent is allowed to use, picked out of everything the server offers.

@@ -277,6 +277,15 @@
                         </span>
                     </label>
                     <label class="setlbl">
+                        How animated <b>@_charMotionScale.ToString("0.0")x</b>
+                        <input type="range" min="0.3" max="1.6" step="0.1" @bind="_charMotionScale"
+                               @bind:event="oninput" disabled="@_savingCharacter" />
+                        <span class="sethint">
+                            Scales every gesture. The same written action reads as a twitch from one
+                            character and a whole-body reaction from another.
+                        </span>
+                    </label>
+                    <label class="setlbl">
                         Voice
                         <select @bind="_charVoiceId" disabled="@_savingCharacter">
                             <option value="">(no voice — text only)</option>

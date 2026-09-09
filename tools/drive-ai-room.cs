@@ -55,7 +55,9 @@ await page.FillAsync(".settings.room textarea.sysbox >> nth=0", Scene);
 
 // Two replies per round, not the default four: this gate pays a real generation per reply and one round
 // trip through each character is what it is checking.
-await page.FillAsync(".settings.room input[type=range]", "2");
+// nth=0: there are two ranges in this panel now (replies per round, then a character's
+// motion scale). An unqualified selector matches both and Playwright refuses it.
+await page.FillAsync(".settings.room input[type=range] >> nth=0", "2");
 
 async Task CreateCharacter(string name, string persona)
 {

@@ -139,7 +139,9 @@ try
     await page.WaitForSelectorAsync($".charchip.in:has-text(\"{Character}\")", new() { Timeout = 15000 });
 
     // One reply is enough - the robot only has one head.
-    await page.FillAsync(".settings.room input[type=range]", "1");
+    // nth=0: there are two ranges in this panel now (replies per round, then a character's
+// motion scale). An unqualified selector matches both and Playwright refuses it.
+await page.FillAsync(".settings.room input[type=range] >> nth=0", "1");
 
     // The badge marks who holds the hardware, and it must be this character.
     if (await page.Locator(".stage-slot.robot .robot-badge").CountAsync() == 0)

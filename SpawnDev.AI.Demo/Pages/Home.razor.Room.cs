@@ -48,6 +48,7 @@ public partial class Home
     // The character editor's fields. An empty `_editingCharId` means "creating a new one".
     string _editingCharId = "", _charName = "", _charPersona = "", _charModel = "", _charVoiceId = "";
     AvatarKind _charAvatar = AvatarKind.None;
+    double _charMotionScale = 1.0;
 
     /// <summary>True when at least one character is in the room, so a turn runs the round instead.</summary>
     bool RoomActive => _room.Agents.Count > 0;
@@ -108,10 +109,11 @@ public partial class Home
 
                 if (drivesRobot)
                 {
+                    // The character's own animation level - ReachyBody clamps it to a safe range.
                     // ⚠️ AWAITED, not fired off. ReachyBody sequences its own movements by waiting out
                     // each one's duration - the daemon's goto only queues - so overlapping calls would
                     // make a gesture interrupt itself, a defect this stack has already paid for once.
-                    await Robot.PerformAsync(text, ct: ct);
+                    await Robot.PerformAsync(text, agent.MotionScale, ct);
                 }
                 else
                 {
@@ -143,7 +145,7 @@ public partial class Home
     void NewCharacter()
     {
         _editingCharId = ""; _charName = ""; _charPersona = "";
-        _charModel = ""; _charVoiceId = ""; _charAvatar = AvatarKind.None;
+        _charModel = ""; _charVoiceId = ""; _charAvatar = AvatarKind.None; _charMotionScale = 1.0;
         _showRoom = true;
         StateHasChanged();
     }
@@ -153,6 +155,7 @@ public partial class Home
     {
         _editingCharId = c.Id; _charName = c.Name; _charPersona = c.Persona;
         _charModel = c.Model; _charVoiceId = c.VoiceId ?? ""; _charAvatar = c.Avatar;
+        _charMotionScale = c.MotionScale > 0 ? c.MotionScale : 1.0;
         StateHasChanged();
     }
 
@@ -171,7 +174,7 @@ public partial class Home
         {
             var id = string.IsNullOrEmpty(_editingCharId) ? CharacterLibrary.MakeId(_charName) : _editingCharId;
             var saved = await Characters.SaveAsync(id, _charName, _charPersona, _charModel, _charVoiceId,
-                allowedTools: null, avatar: _charAvatar);
+                allowedTools: null, avatar: _charAvatar, motionScale: _charMotionScale);
             await LoadCharactersAsync();
 
             // ⚠️ A character already IN the room holds a COPY of its settings - ChatAgent is a record built
