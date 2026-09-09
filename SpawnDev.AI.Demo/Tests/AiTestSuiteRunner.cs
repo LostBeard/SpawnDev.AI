@@ -37,6 +37,7 @@ public static class AiTestSuiteRunner
         typeof(AvatarActionTests),
         typeof(ModelCatalogueTests),
         typeof(ToolPlumbingTests),
+        typeof(OllamaSourcedModelTests),
     };
 
     /// <summary>Milliseconds a test may run before it is reported as timed out. Overridable per test.</summary>

@@ -2,6 +2,40 @@
 
 Notable changes per release. Preview - APIs will change.
 
+## Unreleased - reasoning models, model-driven tools, and an opt-in model catalogue
+
+Library changes since 1.1.0-preview.1. Not published yet.
+
+- **Reasoning models are usable at all.** `AiChatEngine` now suppresses and filters hybrid
+  reasoning output. `qwen3:0.6b` shipped in the demo's model list and nothing stripped
+  `<think>…</think>`, so the model's private deliberation rendered in the chat bubble AND was read
+  aloud by the TTS. Two halves, both needed:
+  - `ThinkingStreamer` filters it out of the STREAM (mirrors the existing `ToolAwareStreamer`
+    holdback, so a `<thi` split across deltas never flashes on screen). A final-only strip would let
+    the whole monologue type itself across the screen and then vanish.
+  - `SuppressThinking` (default true) prefills the empty think block at the prompt, exactly as
+    `enable_thinking=false` does, using the real vocabulary token id rather than encoded text.
+    MEASURED: filtering alone is not enough - at a 384-token budget `qwen3:1.7b` spent the ENTIRE
+    budget reasoning and returned nothing, so after filtering the user got silence.
+  - Tool calls are now parsed from the STRIPPED text, so a call the model was only *considering*
+    inside its reasoning is no longer executed.
+- **Model-driven tool calls are reachable.** `AiWorkerClient.ChatStreamAsync` takes `toolsJson`, and
+  handles the single non-streamed message the router returns when tools are present - previously such
+  a turn succeeded, reported `stop`, and delivered NOTHING to `onDelta`. `ListToolsAsync` enumerates
+  the server's tools over the MCP surface and translates them to the OpenAI function shape.
+- **`GET /ai/models`** (`AiApiRouter.HubModels`) publishes name, size, purpose and cache progress -
+  what a picker needs to state a download's cost BEFORE asking anyone to commit to it.
+  `AiWorkerClient.GetModelCatalogueAsync` reads it into `AiModelChoice`.
+- **`HubModelOption` serves the ollama registry as well as Hugging Face** - `FromOllama(name, model,
+  tag, …)` plus a `Description` for the picker. That is how multi-layer models are published (gemma4
+  ships its weights and its vision/audio projector as separate layers), and it is the same path the
+  ILGPU.ML demo uses.
+- **`HubModelProvider.CachedFraction`** reports how much of a model is local, and documents why it is
+  progress rather than a verdict: the loader opens with `deselect: true` so a torrent's progress is
+  partial by design; `TorrentFileInfo.Name` is empty for the hub's single-file lazy-hash torrents; and
+  the reported `Length` is piece-aligned and overstates the file (162 pieces read as 675,710,816 for a
+  ~531 MB GGUF). Nothing decides anything on it.
+
 ## 1.0.0-preview.1 - Initial extraction
 
 - **SpawnDev.AI**: contracts - `AiChatMessage`/`AiGenerationOptions`/`AiChatRequest`/`AiChatResult`/

@@ -126,7 +126,7 @@ builder.Services.AddSpawnDevAI(options =>
         "gemma4:12b",
         "gemma4",
         "12b",
-        approxSizeBytes: 7_408_798_105,
+        approxSizeBytes: 7_381_382_048,   // MEASURED from the hub webseed, not estimated
         description: "Text + image + audio in, text out - the multimodal path for Reachy snapshots and "
                    + "microphone input. LARGE: ~6.9 GB for the text decoder alone, and it needs a WebGPU "
                    + "GPU with the VRAM to match. Text-only in this demo so far."));

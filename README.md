@@ -48,6 +48,29 @@ var router = new AiApiRouter(engine);
 // host it: map every request to router.TryHandleAsync(method, path, bodyJson, yourTransport)
 ```
 
+## The demo: a room of characters
+
+The [live demo](https://lostbeard.github.io/SpawnDev.AI/) is a group chat. You make **characters** -
+name, persona, model, voice, body and how animated they are - and they talk to each other and to you.
+Everything persists in OPFS, so a cast survives a reload.
+
+- **A scene** belongs to the room, not to a character, and every member is handed it verbatim. A
+  persona is who someone IS; a scene is where everybody is right now.
+- **Each member hears the ones before it** in the same round, which is what makes it a conversation
+  rather than several models answering the same question.
+- **A voice per character**, streamed sentence-by-sentence so it starts talking after the first
+  sentence rather than the whole reply, with a stop button.
+- **A body.** Physical actions written in asterisks (`*tilts head*`) drive an on-screen Reachy-shaped
+  avatar - or the real [Reachy Mini](https://github.com/LostBeard/SpawnDev.Reachy) when one is on your
+  LAN. Both perform the same `Gesture` vocabulary, so a scene reads the same either way. There is one
+  robot, so if two characters ask for it the first keeps it and the rest are drawn.
+- **Models are opt-in.** Every model states its size and what it is for, and nothing large downloads
+  until you press the button that says so. Eight are offered, from a 369 MB starter to gemma4:12b.
+
+⚠️ Driving the physical robot needs the page served over plain HTTP (`http://localhost`): the robot's
+daemon speaks HTTP on the LAN, so an HTTPS page is blocked as mixed content. The demo says so rather
+than failing opaquely.
+
 ## Status
 
 Preview. Extracted from the proven `SpawnDev.ILGPU.ML` Ollama-server example and verified against the
