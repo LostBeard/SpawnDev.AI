@@ -23,6 +23,10 @@ public static class AiTestSuiteRunner
         typeof(AiChatTests),
         typeof(AiSpeechTests),
         typeof(AiVoiceTests),
+        // ⚠️ THIS LIST IS EXPLICIT - a test class that is not here does not run, and nothing says so. The
+        // suite's own count is the only tell (READY: N tests), which is why a new class gets added in the
+        // same change that creates it.
+        typeof(VoiceLibraryTests),
     };
 
     /// <summary>Milliseconds a test may run before it is reported as timed out. Overridable per test.</summary>

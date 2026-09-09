@@ -96,6 +96,9 @@ public partial class Home : IDisposable
             catch { _imageModels = new() { ("sd-turbo", "") }; }
             _ready = true;
             await RefreshStorageAsync();
+            // Metadata only - no clip is read and nothing is prepared here. Preparing happens when a voice
+            // is actually chosen, so a page load never pays for voices the user may not use.
+            await LoadSavedVoicesAsync();
         }
         catch (Exception ex) { _status = $"Failed: {ex.Message}"; }
         finally { _starting = false; StateHasChanged(); }
@@ -503,6 +506,89 @@ public partial class Home : IDisposable
     string _voiceName = "";
     bool _savingVoice;
 
+    /// <summary>Name typed for the voice about to be saved. Defaults to something usable.</summary>
+    string _newVoiceName = "My voice";
+
+    /// <summary>Saved voices from OPFS - metadata only, so listing never reads a clip.</summary>
+    List<SavedVoice> _savedVoices = new();
+
+    /// <summary>
+    /// Voice ids already prepared in the worker this session. Preparation is per SESSION (the engine holds
+    /// features in memory), while the library is per DEVICE - so a saved voice is prepared lazily, once,
+    /// the first time it is chosen after a reload.
+    /// </summary>
+    readonly HashSet<string> _preparedVoices = new(StringComparer.OrdinalIgnoreCase);
+
+    async Task LoadSavedVoicesAsync()
+    {
+        try { _savedVoices = await Voices.ListAsync(); }
+        catch (Exception ex) { Console.WriteLine($"[voices] could not list saved voices: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Choose a saved voice, preparing it in the worker if this session has not already.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Preparation is what costs - it derives the prompt features from the clip - so it happens HERE, on
+    /// a deliberate click, and exactly once per session. Doing it at startup would make every page load pay
+    /// for voices the user may not use; doing it per reply is the defect this whole feature removes.
+    /// </remarks>
+    async Task SelectVoiceAsync(string id)
+    {
+        var saved = _savedVoices.FirstOrDefault(v => v.Id == id);
+        if (saved == null) { ClearSavedVoice(); return; }
+
+        _savingVoice = true;
+        _status = _preparedVoices.Contains(id) ? $"Switching to “{saved.DisplayName}”…"
+                                               : $"Preparing “{saved.DisplayName}” (once)…";
+        StateHasChanged();
+        try
+        {
+            if (!_preparedVoices.Contains(id))
+            {
+                var samples = await Voices.ReadSamplesAsync(saved);
+                if (samples == null)
+                {
+                    // Say which voice, and that its audio is the missing part - a picker that silently does
+                    // nothing is indistinguishable from one that is broken.
+                    SpeechFailed($"“{saved.DisplayName}” could not be loaded — its saved audio is missing or "
+                               + "truncated. Save it again.");
+                    return;
+                }
+                await Ai.PrepareVoiceAsync(saved.Id, saved.DisplayName, saved.ReferenceText,
+                    samples, saved.SampleRate);
+                _preparedVoices.Add(id);
+            }
+            _voiceId = saved.Id;
+            _voiceName = saved.DisplayName;
+            _status = $"Speaking as “{_voiceName}”.";
+        }
+        catch (Exception ex)
+        {
+            SpeechFailed($"Could not use “{saved.DisplayName}”: {ex.Message}");
+        }
+        finally
+        {
+            _savingVoice = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Delete a saved voice from this device.</summary>
+    async Task DeleteVoiceAsync(string id)
+    {
+        try
+        {
+            await Voices.DeleteAsync(id);
+            _preparedVoices.Remove(id);
+            if (_voiceId == id) { _voiceId = ""; _voiceName = ""; }
+            await LoadSavedVoicesAsync();
+            _status = "Voice deleted.";
+        }
+        catch (Exception ex) { SpeechFailed($"Deleting the voice failed: {ex.Message}"); }
+        StateHasChanged();
+    }
+
     /// <summary>
     /// Keep the voice just heard, so every later reply speaks in it without re-deriving anything.
     /// </summary>
@@ -523,13 +609,18 @@ public partial class Home : IDisposable
         StateHasChanged();
         try
         {
-            var id = "voice-" + Guid.NewGuid().ToString("n")[..8];
+            var id = VoiceLibrary.MakeId(displayName);
+            // Persist FIRST, then prepare. A voice that is prepared but not saved would work until the next
+            // reload and then vanish with no way to get it back - the clip is only in memory for this turn.
+            await Voices.SaveAsync(id, displayName, _lastHeardText, _lastHeardSamples, WhisperRate);
             var prepared = await Ai.PrepareVoiceAsync(id, displayName, _lastHeardText,
                 _lastHeardSamples, WhisperRate);
+            _preparedVoices.Add(id);
             _voiceId = prepared.VoiceId;
             _voiceName = string.IsNullOrWhiteSpace(prepared.DisplayName) ? displayName : prepared.DisplayName;
+            await LoadSavedVoicesAsync();
             _status = $"Saved “{_voiceName}” ({prepared.ReferenceSeconds:F1}s reference). "
-                    + "Replies now speak in it without re-cloning.";
+                    + "Replies speak in it without re-cloning, and it survives a reload.";
         }
         catch (Exception ex)
         {

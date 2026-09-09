@@ -1,6 +1,7 @@
 @using SpawnDev.AI.Server
 @using SpawnDev.SpawnJS
 @inject AiWorkerClient Ai
+@inject VoiceLibrary Voices
 @inject SpawnJSRuntime JS
 
 <div class="sdai">
@@ -161,28 +162,36 @@
                     title="@(_handsFree ? "Stop hands-free conversation" : "Hands-free: talk, and it talks back in your voice")">
                 @(_handsFree ? "🛑 Hands-free" : "💬🔊")
             </button>
-            @* SAVE A VOICE. Without this the reply is cloned from the user's LAST TURN on every single
-               reply - which re-sends the reference PCM over the worker and makes the engine re-derive the
-               prompt features each time, and clones from the recogniser's transcript rather than a clean
-               one. Saving keeps a voice and speaks from it directly. Shown only once there is audio to
-               save, and swapped for a "back to last turn" control while a voice is held. *@
-            @if (string.IsNullOrEmpty(_voiceId))
+            @* SAVED VOICES. Without these the reply is cloned from the user's LAST TURN on every single
+               reply - re-sending the reference PCM over the worker, making the engine re-derive prompt
+               features that never change, and cloning from the recogniser's transcript rather than a clean
+               one. A saved voice is derived once, persists in OPFS across reloads, and is chosen here. *@
+            @if (_savedVoices.Count > 0)
             {
-                @if (_lastHeardSamples != null && _lastHeardSamples.Length > 0)
-                {
-                    <button class="primary" disabled="@_savingVoice"
-                            @onclick='() => SaveCurrentVoiceAsync("My voice")'
-                            title="Keep this voice and stop re-cloning it on every reply">
-                        @(_savingVoice ? "…" : "💾🗣️")
-                    </button>
-                }
+                <select class="voice-picker" disabled="@_savingVoice"
+                        title="Which voice replies are spoken in"
+                        @onchange="e => SelectVoiceAsync(e.Value?.ToString() ?? string.Empty)">
+                    <option value="" selected="@string.IsNullOrEmpty(_voiceId)">🗣️ Your last turn</option>
+                    @foreach (var v in _savedVoices)
+                    {
+                        <option value="@v.Id" selected="@(_voiceId == v.Id)">🗣️ @v.DisplayName</option>
+                    }
+                </select>
             }
-            else
+            @if (_lastHeardSamples != null && _lastHeardSamples.Length > 0)
             {
-                <button class="primary" @onclick="ClearSavedVoice"
-                        title="@($"Speaking as {_voiceName} - click to use your last turn's voice again")">
-                    🗣️ @_voiceName
+                <button class="primary" disabled="@_savingVoice"
+                        @onclick='() => SaveCurrentVoiceAsync(_newVoiceName)'
+                        title="Keep the voice you just spoke in, so replies stop re-cloning it every turn">
+                    @(_savingVoice ? "…" : "💾🗣️")
                 </button>
+                <input class="voice-name" placeholder="name this voice" @bind="_newVoiceName"
+                       disabled="@_savingVoice" title="Whose voice is this? e.g. Nikki, Aubs" />
+            }
+            @if (!string.IsNullOrEmpty(_voiceId))
+            {
+                <button class="primary" @onclick="() => DeleteVoiceAsync(_voiceId)"
+                        title="@($"Delete the saved voice {_voiceName} from this device")">🗑️🗣️</button>
             }
             @* Stop REPLACES Send while a generation is in flight, and is bound to _generationCts rather
                than _busy: _busy is also true while transcribing or generating an image, where there is

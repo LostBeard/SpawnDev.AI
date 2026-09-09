@@ -25,6 +25,9 @@ builder.Services.AddWebWorkerService();
 // WebTorrent for P2P model delivery, persisted to OPFS so reloads reuse downloaded pieces (bytes
 // stay JS-side end-to-end - the loader streams pieces straight to the GPU).
 builder.Services.AddSingleton<IAsyncFS, AsyncFSFileSystemDirectoryHandle>();
+// Saved voices live in OPFS beside the model cache, on the same filesystem abstraction, so a voice a family
+// member trains survives a reload instead of being re-cloned from whatever was last said.
+builder.Services.AddSingleton<SpawnDev.AI.Demo.VoiceLibrary>();
 builder.Services.AddSingleton<WebTorrentClient>(sp =>
 {
     var client = new WebTorrentClient(new WebTorrentClientOptions { AsyncFileSystem = sp.GetRequiredService<IAsyncFS>() });
