@@ -5,13 +5,19 @@
 // and its atomics don't serialize like a GPU's - which would invalidate an SD-Turbo perf A/B run here.
 using Microsoft.Playwright;
 
-var profileDir = args.Length > 0 ? args[0] : @"C:\Users\TJ\AppData\Local\Temp\claude-imgtest-profile";
-bool unsafeFlag = args.Length > 1 && args[1] == "unsafe";
+// Flags are matched by NAME so they can appear in any order; the first non-flag argument is the profile.
+// "headless" matters because an automated gate runs headless: if headless Chrome only ever gets a SOFTWARE
+// adapter, every headless model-backed run is measuring SwiftShader - and this tool could not say so while
+// it hardcoded a headed launch.
+bool unsafeFlag = args.Contains("unsafe");
+bool headless = args.Contains("headless");
+var profileDir = args.FirstOrDefault(a => a != "unsafe" && a != "headless")
+                 ?? @"C:\Users\TJ\AppData\Local\Temp\claude-imgtest-profile";
 
 using var pw = await Playwright.CreateAsync();
 await using var ctx = await pw.Chromium.LaunchPersistentContextAsync(profileDir, new()
 {
-    Headless = false,
+    Headless = headless,
     Channel = "chrome",
     Args = unsafeFlag ? new[] { "--enable-unsafe-webgpu" } : System.Array.Empty<string>(),
 });
@@ -28,6 +34,6 @@ var info = await page.EvaluateAsync<string>(@"async () => {
   return JSON.stringify({ vendor: i.vendor, architecture: i.architecture, device: i.device, description: i.description,
            isFallback: a.isFallbackAdapter, features: [...a.features].slice(0,3) });
 }");
-Console.WriteLine($"ADAPTER (unsafeFlag={unsafeFlag}): {info}");
+Console.WriteLine($"ADAPTER (headless={headless} unsafeFlag={unsafeFlag} profile={profileDir}): {info}");
 await ctx.CloseAsync();
 return 0;

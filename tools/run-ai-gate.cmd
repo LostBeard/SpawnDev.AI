@@ -16,14 +16,18 @@ REM The runner streams every START/TEST line and a heartbeat naming the in-fligh
 REM SpawnDev.AI.TestRunner/Program.cs). Tail the log to see progress - do NOT judge liveness by log SIZE,
 REM and do not read silence as a hang: that misread killed the 2026-09-08 heavy gate.
 REM ---------------------------------------------------------------------------------------------------
+REM ⚠️ cmd's SHIFT moves %0 as well, so %~dp0 after a shift is the FIRST ARGUMENT's directory, not this
+REM script's. Resolve the project path BEFORE shifting - getting this wrong sent dotnet looking for the
+REM runner next to the log file and the run died instantly with an empty log.
+set "PROJ=%~dp0..\SpawnDev.AI.TestRunner\SpawnDev.AI.TestRunner.csproj"
+
 set "LOG=%~1"
 if "%LOG%"=="" set "LOG=%TEMP%\ai-gate.log"
 shift
 
 set "ARGS=%1 %2 %3 %4 %5 %6 %7 %8 %9"
 
-cd /d "%~dp0.."
 echo === %DATE% %TIME% === >"%LOG%"
 echo args: %ARGS% >>"%LOG%"
-dotnet run --project SpawnDev.AI.TestRunner -c Release -- %ARGS% >>"%LOG%" 2>&1
+dotnet run --project "%PROJ%" -c Release -- %ARGS% >>"%LOG%" 2>&1
 echo EXITCODE=%ERRORLEVEL% >>"%LOG%"
