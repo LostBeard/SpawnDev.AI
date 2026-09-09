@@ -78,6 +78,14 @@ public sealed class ReachyDriver : IAsyncDisposable
             }
 
             await client.SetMotorModeAsync(MotorMode.Enabled).ConfigureAwait(false);
+
+            // 🔴 WAKE IT BEFORE GESTURING. A parked robot sits with its head lowered into its chest
+            // (MEASURED on a real unit at rest: pitch 0.50 rad down), and firing an expressive gesture
+            // from there starts it with a lurch out of the park pose. wake_up is the daemon's own move for
+            // exactly this transition, and it is the mirror of the parking recipe in DisconnectAsync.
+            await client.WakeUpAsync(ct).ConfigureAwait(false);
+            await Task.Delay(1500, ct).ConfigureAwait(false);
+
             _client = client;
             _body = new ReachyBody(client);
             _body.Log += m => Console.WriteLine($"[reachy] {m}");
