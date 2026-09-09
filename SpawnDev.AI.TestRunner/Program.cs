@@ -36,6 +36,7 @@ var dedicated = false;
 var verbose = false;
 var externalUrl = "";
 var wavDir = "";
+var heartbeatSeconds = 60;
 for (var i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -47,11 +48,14 @@ for (var i = 0; i < args.Length; i++)
         case "--verbose": verbose = true; break;
         case "--url": externalUrl = ++i < args.Length ? args[i] : ""; break;
         case "--filter": filter = ++i < args.Length ? args[i] : ""; break;
+        case "--heartbeat":
+            heartbeatSeconds = ++i < args.Length && int.TryParse(args[i], out var hb) && hb > 0 ? hb : 60;
+            break;
         case "--wav": wavDir = ++i < args.Length ? args[i] : ""; break;
         case "-h":
         case "--help":
             Console.WriteLine("usage: [filter] [--filter <text>] [--heavy] [--headed] [--verbose] "
-                            + "[--cold] [--dedicated] [--url <url>] [--wav <dir>]");
+                            + "[--cold] [--dedicated] [--url <url>] [--wav <dir>] [--heartbeat <seconds>]");
             return 0;
         default:
             if (!args[i].StartsWith("-")) filter = args[i];
@@ -96,7 +100,7 @@ try
         query += "&wav=1";
         Console.WriteLine($"  --wav: writing utterances to {wavDir}");
     }
-    return await RunAsync(url.TrimEnd('/') + "/" + query, headed, verbose, heavy, cold, wavDir);
+    return await RunAsync(url.TrimEnd('/') + "/" + query, headed, verbose, heavy, cold, wavDir, heartbeatSeconds);
 }
 finally
 {
@@ -145,7 +149,8 @@ static async Task<(Process?, string)> StartServerAsync(string demoProject)
     return (process, completed == urlFound.Task ? urlFound.Task.Result : "");
 }
 
-static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heavy, bool cold, string wavDir)
+static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heavy, bool cold, string wavDir,
+    int heartbeatSeconds)
 {
     using var playwright = await Playwright.CreateAsync();
     await using var context = await LaunchAsync(playwright, headed, cold);
@@ -153,6 +158,16 @@ static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heav
 
     var finished = new TaskCompletionSource<string>();
     var results = new List<string>();
+    // 🔴 Results used to be BUFFERED and printed only after the suite reported its summary, and only
+    // READY: echoed live. A shared worker's console does not reach the page, so without --verbose a heavy
+    // run printed NOTHING for its entire 120-minute budget. On 2026-09-08 that blackout was read as a hang:
+    // the run was killed at 27 minutes and the AI packages did not ship. A healthy long run and a wedged
+    // one MUST NOT look the same - stream every event as it happens, and say so periodically when nothing
+    // is happening.
+    var clock = Stopwatch.StartNew();
+    var running = "";                    // the test the page says it is executing right now
+    var lastEvent = TimeSpan.Zero;       // when the page last reported any test progress
+    string Stamp() => $"{(int)clock.Elapsed.TotalMinutes:D2}:{clock.Elapsed.Seconds:D2}";
     // label -> (expected chunk count, sample rate, sample count, chunks BY INDEX). Keyed by label so two
     // utterances interleaving on the console could never splice into one file, and slotted by index rather
     // than appended so out-of-order delivery cannot scramble the audio. That matters more here than it
@@ -163,9 +178,21 @@ static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heav
     page.Console += (_, msg) =>
     {
         var text = msg.Text;
-        if (text.StartsWith("TEST: ")) results.Add(text[6..]);
+        if (text.StartsWith("TEST: "))
+        {
+            results.Add(text[6..]);
+            lastEvent = clock.Elapsed;
+            running = "";
+            PrintResult(text[6..]);
+        }
+        else if (text.StartsWith("START: "))
+        {
+            running = text[7..];
+            lastEvent = clock.Elapsed;
+            Console.WriteLine($"  [{Stamp()}] ---> {running}");
+        }
         else if (text.StartsWith("RESULTS: ")) finished.TrySetResult(text[9..]);
-        else if (text.StartsWith("READY: ")) Console.WriteLine($"  {text}");
+        else if (text.StartsWith("READY: ")) Console.WriteLine($"  [{Stamp()}] {text}");
         else if (text.StartsWith("WAV-BEGIN: ")) WavBegin(text[11..]);
         else if (text.StartsWith("WAV-DATA: ")) WavData(text[10..]);
         else if (text.StartsWith("WAV-END: ")) WavEnd(text[9..].Trim());
@@ -214,6 +241,15 @@ static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heav
             Console.WriteLine($"  [warn] {label}: could not write audio - {ex.Message}");
         }
     }
+    // Name|Result|DurationMs|Detail
+    void PrintResult(string line)
+    {
+        var parts = line.Split('|', 4);
+        if (parts.Length < 3) { Console.WriteLine($"  {line}"); return; }
+        Console.WriteLine($"  [{Stamp()}] {parts[1],-4}  {parts[0]} ({parts[2]}ms)");
+        if (parts.Length > 3 && !string.IsNullOrWhiteSpace(parts[3])) Console.WriteLine($"        {parts[3]}");
+    }
+
     page.PageError += (_, err) => Console.WriteLine($"  [pageerror] {err}");
 
     Console.WriteLine($"running {url}");
@@ -228,18 +264,35 @@ static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heav
     // the test it is waiting on is still legitimately running - a harness that lies about its own subject.
     // InterleavedImagesAndChatSurviveRepeatedEviction currently sits at 90 minutes.
     var budget = heavy ? TimeSpan.FromMinutes(120) : TimeSpan.FromMinutes(10);
+    // Reports the time elapsed WITHOUT a result, next to the test that is actually in flight. That is the
+    // number which separates a long test doing its job from a wedge, and it is the number nobody had.
+    var beat = TimeSpan.FromSeconds(heartbeatSeconds);
+    using var heartbeat = new Timer(_ =>
+    {
+        var quiet = clock.Elapsed - lastEvent;
+        if (quiet < beat) return;
+        var what = string.IsNullOrEmpty(running) ? "(between tests)" : running;
+        Console.WriteLine($"  [{Stamp()}] ... {what} - {(int)quiet.TotalMinutes:D2}:{quiet.Seconds:D2} with no "
+                        + $"result, {results.Count} test(s) reported");
+    }, null, beat, beat);
     var completed = await Task.WhenAny(finished.Task, Task.Delay(budget));
+    heartbeat.Change(Timeout.Infinite, Timeout.Infinite);
 
     Console.WriteLine();
     var failed = 0;
+    var failures = new List<string>();
     foreach (var line in results)
     {
         // Name|Result|DurationMs|Detail
         var parts = line.Split('|', 4);
-        if (parts.Length < 3) { Console.WriteLine(line); continue; }
-        if (parts[1] == "FAIL") failed++;
-        Console.WriteLine($"  {parts[1],-4}  {parts[0]} ({parts[2]}ms)");
-        if (parts.Length > 3 && !string.IsNullOrWhiteSpace(parts[3])) Console.WriteLine($"        {parts[3]}");
+        if (parts.Length >= 3 && parts[1] == "FAIL") { failed++; failures.Add(line); }
+    }
+    // Every result already streamed live, so repeat only what a gate has to act on.
+    if (failures.Count > 0)
+    {
+        Console.WriteLine($"{failures.Count} FAILED:");
+        foreach (var line in failures) PrintResult(line);
+        Console.WriteLine();
     }
     if (wavFiles.Count > 0)
         Console.WriteLine($"  {wavFiles.Count} utterance(s) written to {wavDir}");
@@ -247,7 +300,9 @@ static async Task<int> RunAsync(string url, bool headed, bool verbose, bool heav
     Console.WriteLine();
     if (completed != finished.Task)
     {
-        Console.WriteLine($"TIMED OUT after {budget.TotalMinutes:F0} min - the suite never reported a summary");
+        Console.WriteLine($"TIMED OUT after {budget.TotalMinutes:F0} min - the suite never reported a summary"
+                        + $" ({results.Count} test(s) reported"
+                        + (string.IsNullOrEmpty(running) ? "" : $", in flight: {running}") + ")");
         return Math.Max(1, failed);
     }
     Console.WriteLine(finished.Task.Result);

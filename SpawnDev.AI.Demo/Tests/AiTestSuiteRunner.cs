@@ -72,6 +72,11 @@ public static class AiTestSuiteRunner
             }
             else
             {
+                // Announced BEFORE the test runs, so a long test is identifiable while it is still in
+                // flight. Without this the harness only ever speaks about a test that has already
+                // finished, and a heavy run that is working normally is indistinguishable from a wedged
+                // one for as long as its longest test takes.
+                Console.WriteLine($"START: {name}");
                 try
                 {
                     var instance = ActivatorUtilities.CreateInstance(services, type);
