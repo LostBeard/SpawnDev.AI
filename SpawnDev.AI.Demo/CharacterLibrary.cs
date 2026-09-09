@@ -12,8 +12,17 @@ namespace SpawnDev.AI.Demo;
 /// <param name="Model">Which model they think with. Empty means "whatever the room is using".</param>
 /// <param name="VoiceId">A saved voice id, or null for text-only.</param>
 /// <param name="SavedUtc">When it was saved.</param>
+/// <param name="AllowedTools">
+/// Tools this character may call, by name. Null (the value a character saved before tools existed reads
+/// back as) means none - so an older character never silently gains the ability to act on the world.
+/// </param>
+/// <param name="Avatar">
+/// The body this character acts through. Defaults to None, so a character saved before avatars existed
+/// stays text-only rather than suddenly appearing on screen.
+/// </param>
 public sealed record SavedCharacter(
-    string Id, string Name, string Persona, string Model, string? VoiceId, DateTime SavedUtc);
+    string Id, string Name, string Persona, string Model, string? VoiceId, DateTime SavedUtc,
+    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.None);
 
 /// <summary>
 /// Characters the user has created, persisted to OPFS.
@@ -48,14 +57,16 @@ public sealed class CharacterLibrary
 
     /// <summary>Create or update a character.</summary>
     public async Task<SavedCharacter> SaveAsync(string id, string name, string persona, string model,
-        string? voiceId)
+        string? voiceId, IReadOnlyList<string>? allowedTools = null,
+        AvatarKind avatar = AvatarKind.None)
     {
         if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("a character needs an id", nameof(id));
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("a character needs a name", nameof(name));
 
         if (!await _fs.DirectoryExists(Dir)) await _fs.CreateDirectory(Dir);
         var saved = new SavedCharacter(id, name.Trim(), (persona ?? "").Trim(), (model ?? "").Trim(),
-            string.IsNullOrWhiteSpace(voiceId) ? null : voiceId, DateTime.UtcNow);
+            string.IsNullOrWhiteSpace(voiceId) ? null : voiceId, DateTime.UtcNow,
+            allowedTools is { Count: > 0 } ? allowedTools.ToList() : null, avatar);
         await _fs.Write(Path(id), JsonSerializer.Serialize(saved));
         return saved;
     }
@@ -115,5 +126,41 @@ public sealed class CharacterLibrary
     public static ChatAgent ToAgent(SavedCharacter character, string fallbackModel, string? voiceId)
         => new(character.Id, character.Name,
             string.IsNullOrWhiteSpace(character.Model) ? fallbackModel : character.Model,
-            character.Persona, voiceId);
+            character.Persona, voiceId, character.AllowedTools, character.Avatar);
+
+    /// <summary>
+    /// The tool definitions an agent is allowed to use, picked out of everything the server offers.
+    /// </summary>
+    /// <param name="agent">The character about to take a turn.</param>
+    /// <param name="serverTools">Every tool definition the server published, as JSON.</param>
+    /// <returns>Only the allowed ones; empty when the character may use none.</returns>
+    /// <remarks>
+    /// 🔴 FILTERS RATHER THAN TRUSTING THE PROMPT. Handing a model every tool and asking it not to use
+    /// most of them is not a control - a tool the model never receives is one it cannot call, however it
+    /// is talked into it. Matching is on the name inside the definition, so a tool the server has stopped
+    /// offering simply does not appear and the character carries on without it.
+    /// </remarks>
+    public static List<string> ToolsFor(ChatAgent agent, IReadOnlyList<string> serverTools)
+    {
+        var allowed = agent.AllowedTools;
+        if (allowed is not { Count: > 0 } || serverTools.Count == 0) return new List<string>();
+
+        var wanted = new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase);
+        return serverTools.Where(def => ToolName(def) is { } n && wanted.Contains(n)).ToList();
+    }
+
+    /// <summary>The "name" a tool definition declares, or null when it is not shaped like one.</summary>
+    private static string? ToolName(string definitionJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(definitionJson);
+            var root = doc.RootElement;
+            // OpenAI shape {type:"function", function:{name}}, or a bare {name} as MCP lists it.
+            if (root.TryGetProperty("function", out var fn) && fn.TryGetProperty("name", out var n1))
+                return n1.GetString();
+            return root.TryGetProperty("name", out var n2) ? n2.GetString() : null;
+        }
+        catch (JsonException) { return null; }
+    }
 }

@@ -1,0 +1,212 @@
+@* An on-screen stand-in for Reachy Mini: a head that turns and tilts, and two antennae that carry most
+   of the expression. Shaped like the robot ON PURPOSE - the same written action has to read the same way
+   whether it is performed here or by the hardware, and there is only ever one of the hardware. *@
+
+<div class="reachy @(Speaking ? "speaking" : "")" title="@Name">
+    @* @key on the animated group is what makes the SAME action play twice in a row. A CSS animation does
+       not restart when its class is re-applied to a node that already has it, so a character nodding twice
+       would nod once and then stand still. Re-keying forces Blazor to swap the element, which restarts it. *@
+    <svg viewBox="0 0 100 110" class="body" @key="_beat">
+        <g class="act-@Action.ToString().ToLowerInvariant()">
+            <!-- antennae: the expressive part, since there are no arms or eyebrows -->
+            <g class="antennae">
+                <line class="ant left" x1="36" y1="30" x2="26" y2="10" />
+                <circle class="tip" cx="26" cy="9" r="3.5" />
+                <line class="ant right" x1="64" y1="30" x2="74" y2="10" />
+                <circle class="tip" cx="74" cy="9" r="3.5" />
+            </g>
+            <!-- head -->
+            <g class="head">
+                <ellipse class="skull" cx="50" cy="48" rx="26" ry="23" />
+                <circle class="eye" cx="40" cy="46" r="5.5" />
+                <circle class="eye" cx="60" cy="46" r="5.5" />
+                <circle class="pupil" cx="40" cy="46" r="2.4" />
+                <circle class="pupil" cx="60" cy="46" r="2.4" />
+            </g>
+        </g>
+        <!-- body: fixed, so the head has something to move against -->
+        <path class="torso" d="M30 74 Q50 68 70 74 L76 100 Q50 106 24 100 Z" />
+    </svg>
+    <div class="label">@Name</div>
+</div>
+
+@code {
+    /// <summary>Who this body belongs to.</summary>
+    [Parameter] public string Name { get; set; } = "";
+
+    /// <summary>The motion to perform. Setting it again replays it.</summary>
+    [Parameter] public AvatarAction Action { get; set; } = AvatarAction.None;
+
+    /// <summary>True while this character is talking, for a subtle idle motion.</summary>
+    [Parameter] public bool Speaking { get; set; }
+
+    // Bumped whenever a motion is (re)assigned, purely to re-key the group and restart the animation.
+    private int _beat;
+    private AvatarAction _last = AvatarAction.None;
+
+    protected override void OnParametersSet()
+    {
+        // Re-key on EVERY assignment, not only on a change of value: two nods in a row are two nods, and
+        // comparing values would silently swallow the second one.
+        if (Action != AvatarAction.None) _beat++;
+        _last = Action;
+    }
+}
+
+<style>
+    .reachy {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        gap: .15rem;
+        width: 74px;
+    }
+
+    .reachy .body {
+        width: 74px;
+        height: 82px;
+        overflow: visible;
+    }
+
+    .reachy .skull {
+        fill: #1b2233;
+        stroke: #3a4a63;
+        stroke-width: 2;
+    }
+
+    .reachy .torso {
+        fill: #151b28;
+        stroke: #273043;
+        stroke-width: 2;
+    }
+
+    .reachy .eye {
+        fill: #0b0f18;
+    }
+
+    .reachy .pupil {
+        fill: #8b7cf6;
+    }
+
+    .reachy .ant {
+        stroke: #3a4a63;
+        stroke-width: 2.5;
+        stroke-linecap: round;
+    }
+
+    .reachy .tip {
+        fill: #8b7cf6;
+    }
+
+    .reachy .label {
+        font-size: .62rem;
+        color: #9fb0c8;
+        max-width: 74px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* A character that is talking breathes a little, so a silent room is visibly different from a
+       speaking one even before any action fires. */
+    .reachy.speaking .body {
+        animation: reachy-breathe 1.6s ease-in-out infinite;
+    }
+
+    @@keyframes reachy-breathe {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-1.5px); }
+    }
+
+    /* Every motion is a one-shot on the group, and the transform origin is the neck so the head pivots
+       where a head would rather than around the middle of the picture. */
+    .reachy g[class^="act-"] {
+        transform-origin: 50px 70px;
+    }
+
+    .act-tilt { animation: reachy-tilt 900ms ease-in-out; }
+    .act-nod { animation: reachy-nod 700ms ease-in-out; }
+    .act-shake { animation: reachy-shake 700ms ease-in-out; }
+    .act-lookaround { animation: reachy-lookaround 1600ms ease-in-out; }
+    .act-lookat { animation: reachy-lookat 700ms ease-in-out; }
+    .act-startle { animation: reachy-startle 600ms cubic-bezier(.36,.07,.19,.97); }
+    .act-laugh { animation: reachy-laugh 900ms ease-in-out; }
+    .act-shrug { animation: reachy-shrug 800ms ease-in-out; }
+
+    @@keyframes reachy-tilt {
+        0%, 100% { transform: rotate(0deg); }
+        35%, 70% { transform: rotate(-13deg); }
+    }
+
+    @@keyframes reachy-nod {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        30% { transform: translateY(3px) rotate(6deg); }
+        65% { transform: translateY(0) rotate(-2deg); }
+    }
+
+    @@keyframes reachy-shake {
+        0%, 100% { transform: rotate(0deg); }
+        20% { transform: rotate(9deg); }
+        50% { transform: rotate(-9deg); }
+        80% { transform: rotate(5deg); }
+    }
+
+    @@keyframes reachy-lookaround {
+        0%, 100% { transform: translateX(0) rotate(0deg); }
+        25% { transform: translateX(-6px) rotate(-7deg); }
+        60% { transform: translateX(6px) rotate(7deg); }
+    }
+
+    @@keyframes reachy-lookat {
+        0%, 100% { transform: translateX(0); }
+        50% { transform: translateX(3px) scale(1.03); }
+    }
+
+    @@keyframes reachy-startle {
+        0%, 100% { transform: translateY(0) scale(1); }
+        15% { transform: translateY(-5px) scale(1.06); }
+        40% { transform: translateY(1px) scale(.98); }
+    }
+
+    @@keyframes reachy-laugh {
+        0%, 100% { transform: rotate(0deg) translateY(0); }
+        20% { transform: rotate(-6deg) translateY(-2px); }
+        45% { transform: rotate(5deg) translateY(1px); }
+        70% { transform: rotate(-4deg) translateY(-1px); }
+    }
+
+    @@keyframes reachy-shrug {
+        0%, 100% { transform: translateY(0); }
+        45% { transform: translateY(-4px); }
+    }
+
+    /* Antennae carry perk/droop/wave: the head stays put and the expression is all in the stalks, which
+       is exactly how Reachy Mini reads in person. */
+    .act-perk .antennae { animation: reachy-perk 800ms ease-out; transform-origin: 50px 30px; }
+    .act-droop .antennae { animation: reachy-droop 1100ms ease-in-out; transform-origin: 50px 30px; }
+    .act-wave .antennae { animation: reachy-wave 900ms ease-in-out; transform-origin: 50px 30px; }
+
+    @@keyframes reachy-perk {
+        0%, 100% { transform: translateY(0) scaleY(1); }
+        40% { transform: translateY(-4px) scaleY(1.18); }
+    }
+
+    @@keyframes reachy-droop {
+        0%, 100% { transform: translateY(0) scaleY(1); }
+        50% { transform: translateY(4px) scaleY(.72); }
+    }
+
+    @@keyframes reachy-wave {
+        0%, 100% { transform: rotate(0deg); }
+        25% { transform: rotate(-11deg); }
+        60% { transform: rotate(11deg); }
+    }
+
+    /* Respect a stated preference for less motion - this is decoration, and a whole row of them moving at
+       once is a lot. The character still speaks and still says what it did. */
+    @@media (prefers-reduced-motion: reduce) {
+        .reachy .body, .reachy g[class^="act-"], .reachy .antennae {
+            animation: none !important;
+        }
+    }
+</style>

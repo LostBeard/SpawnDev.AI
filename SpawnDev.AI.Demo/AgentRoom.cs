@@ -8,7 +8,18 @@ namespace SpawnDev.AI.Demo;
 /// <param name="Model">The model this agent thinks with. Different agents may use different models.</param>
 /// <param name="Persona">System-prompt personality. Empty is fine - the model is then just itself.</param>
 /// <param name="VoiceId">A prepared voice id, or null to stay silent (text only).</param>
-public sealed record ChatAgent(string Id, string Name, string Model, string Persona, string? VoiceId = null);
+/// <param name="AllowedTools">
+/// Names of the tools this character may call. Null or empty means it cannot call any.
+/// </param>
+/// <remarks>
+/// ⚠️ TOOL ACCESS IS PER CHARACTER, not per room, and that is the point rather than a refinement. These
+/// tools do things in the world - generate an image, move a physical robot - and "one or more personas can
+/// drive Reachy" is a different statement from "anything in the room can". A character that should only
+/// talk is given none, and cannot reach the hardware however it is prompted.
+/// </remarks>
+/// <param name="Avatar">The body this character acts through. None = text and voice only.</param>
+public sealed record ChatAgent(string Id, string Name, string Model, string Persona, string? VoiceId = null,
+    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.None);
 
 /// <summary>One line of the room's shared transcript.</summary>
 /// <param name="SpeakerId">Who said it. <see cref="AgentRoom.UserId"/> for the person.</param>
@@ -69,6 +80,23 @@ public sealed class AgentRoom
     /// </remarks>
     public int MaxAgentTurnsPerRound { get; set; } = 4;
 
+    /// <summary>
+    /// True when this room is ROLE-PLAY: asterisks mean physical action rather than emphasis.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THIS IS THE SWITCH FOR A DESTRUCTIVE OPERATION, so what turns it on matters. In role-play a
+    /// <c>*...*</c> span is lifted out of the reply and never spoken; outside it, the same span is ordinary
+    /// markdown emphasis, and removing the words in "I'm *not* doing that" makes the voice say the OPPOSITE
+    /// of what is on screen.
+    /// <para>
+    /// Either signal is sufficient. A SCENE means the characters are somewhere and acting. A character with
+    /// a BODY - an on-screen avatar or the robot - has something to act WITH, and its actions are the whole
+    /// reason it has one, so requiring a scene as well would leave an embodied character standing still.
+    /// </para>
+    /// </remarks>
+    public bool RolePlay
+        => !string.IsNullOrWhiteSpace(Scene) || Agents.Any(a => a.Avatar != AvatarKind.None);
+
     /// <summary>Add a line to the transcript.</summary>
     public void Say(string speakerId, string speakerName, string text)
         => Transcript.Add(new RoomLine(speakerId, speakerName, text));
@@ -120,7 +148,13 @@ public sealed class AgentRoom
             : $"You are {speaker.Name}. {speaker.Persona} {whoElse}";
         // The scene goes to EVERY agent, verbatim and identically - that shared frame is the difference
         // between characters role-playing a scene together and several characters answering separately.
+        // The asterisk convention is asked for ONLY in a scene: it is how a model marks physical action,
+        // it is what drives an avatar or the robot, and it is stripped before anything is spoken aloud.
+        // Outside a scene there is nothing to act, and asking for it would just add markup to answers.
         if (!string.IsNullOrWhiteSpace(Scene)) system += $" The scene: {Scene}";
+        if (RolePlay)
+            system += " Put any physical action between asterisks, like *looks around*, and keep spoken "
+                    + "words outside them.";
         // Brevity is a room rule, not a persona choice: several agents each writing an essay turns one
         // exchange into minutes of synthesis and reading.
         messages.Add(new AiChatMessage("system",

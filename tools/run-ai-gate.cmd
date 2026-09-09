@@ -23,6 +23,15 @@ set "PROJ=%~dp0..\SpawnDev.AI.TestRunner\SpawnDev.AI.TestRunner.csproj"
 
 set "LOG=%~1"
 if "%LOG%"=="" set "LOG=%TEMP%\ai-gate.log"
+REM The FIRST argument is the LOG PATH, not a runner switch. Passing "--heavy" first silently made it
+REM the log file NAME and shifted the real flag away, so the run was NOT heavy - and a heavy-only
+REM filtered suite then skipped everything and "passed" in seconds. Refuse it loudly instead.
+echo %LOG% | findstr /b /c:"--" >nul
+if not errorlevel 1 (
+  echo ERROR: first argument must be the LOG FILE PATH, got "%LOG%".
+  echo Usage: run-ai-gate.cmd ^<log-file^> [runner args...]
+  exit /b 2
+)
 shift
 
 set "ARGS=%1 %2 %3 %4 %5 %6 %7 %8 %9"

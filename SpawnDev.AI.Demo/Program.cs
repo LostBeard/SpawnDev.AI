@@ -70,6 +70,27 @@ builder.Services.AddSpawnDevAI(options =>
         "LiquidAI/LFM2-1.2B-GGUF",
         "LFM2-1.2B-Q4_K_M.gguf",
         ApproxSizeBytes: 730_893_248));
+    // ── The role-play / tool-calling tier ──────────────────────────────────────────────────────────
+    // Same "qwen3" architecture as the 0.6B above, so no engine work - these are a size step, not a port.
+    // They exist because a 0.5-0.6B model cannot hold a character: it restates the scene back at you and
+    // its tool calls are unreliable. Both are hybrid reasoning models, and their <think> blocks are
+    // filtered in AiChatEngine (ReasoningModelTests gates it) rather than being shown or spoken.
+    //
+    // ⚠️ ONE model stays resident. A room whose characters use DIFFERENT models pays a full load per turn,
+    // and at this size that dominates everything else - prefer one model for the whole cast and let the
+    // personas differentiate them.
+    options.Models.Add(new HubModelOption(
+        "qwen3:1.7b-q8_0",
+        "Qwen/Qwen3-1.7B-GGUF",
+        "Qwen3-1.7B-Q8_0.gguf",
+        ApproxSizeBytes: 1_834_426_016));
+    // Q4_K_M rather than Q8_0 on purpose: at 4B the 8-bit file is ~4.3GB, and the quality gained over
+    // Q4_K_M does not pay for that in a browser tab.
+    options.Models.Add(new HubModelOption(
+        "qwen3:4b-q4_k_m",
+        "Qwen/Qwen3-4B-GGUF",
+        "Qwen3-4B-Q4_K_M.gguf",
+        ApproxSizeBytes: 2_497_280_256));
 });
 
 // RunAsync's callback runs after auto-starting services are up. The test suite runs ONLY in the window

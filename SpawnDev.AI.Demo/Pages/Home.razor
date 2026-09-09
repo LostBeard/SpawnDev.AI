@@ -160,6 +160,19 @@
                         </span>
                     </label>
                     <label class="setlbl">
+                        Body
+                        <select @bind="_charAvatar" disabled="@_savingCharacter">
+                            <option value="@AvatarKind.None">(none - text and voice only)</option>
+                            <option value="@AvatarKind.Screen">On screen</option>
+                            <option value="@AvatarKind.Reachy">Reachy Mini (the robot)</option>
+                        </select>
+                        <span class="sethint">
+                            What acts out this character's *actions*. There is only one physical robot, so
+                            if two characters ask for it the first one in the room keeps it and the other
+                            is drawn on screen.
+                        </span>
+                    </label>
+                    <label class="setlbl">
                         Voice
                         <select @bind="_charVoiceId" disabled="@_savingCharacter">
                             <option value="">(no voice — text only)</option>
@@ -215,6 +228,28 @@
     }
     else
     {
+        @* THE STAGE. Characters with a body stand here, above the conversation, and act out what they
+           wrote while they say it. Drawn only when somebody actually has a body - an empty strip above a
+           normal chat would be clutter. *@
+        @if (RoomActive && EmbodiedAgents().Any())
+        {
+            <div class="stage">
+                @foreach (var (agent, kind) in EmbodiedAgents())
+                {
+                    <div class="stage-slot @(kind == AvatarKind.Reachy ? "robot" : "")"
+                         title="@(kind == AvatarKind.Reachy ? $"{agent.Name} is driving Reachy Mini" : agent.Name)">
+                        <ReachyAvatar Name="@agent.Name"
+                                      Action="@ActionFor(agent.Id)"
+                                      Speaking="@(_speakingAgentId == agent.Id)" />
+                        @if (kind == AvatarKind.Reachy)
+                        {
+                            <span class="robot-badge" title="Driving the physical robot">🤖</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
         <div class="transcript" @ref="_scrollRef">
             @if (_messages.Count == 0 && !_busy)
             {
@@ -572,6 +607,38 @@
 
     .setlbl.inline {
         flex: 1;
+    }
+
+    /* ── THE STAGE ──────────────────────────────────────────────────────────── */
+    .stage {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .6rem;
+        justify-content: center;
+        padding: .6rem;
+        margin-bottom: .5rem;
+        border: 1px solid #273043;
+        border-radius: 12px;
+        background: linear-gradient(180deg, #0d121c 0%, #0f1420 100%);
+    }
+
+    .stage-slot {
+        position: relative;
+        display: flex;
+    }
+
+        /* The character holding the real robot is marked, because from the outside its on-screen body
+           looks the same as everyone else's and which one moves the hardware is not otherwise knowable. */
+        .stage-slot.robot .reachy .pupil,
+        .stage-slot.robot .reachy .tip {
+            fill: #34d399;
+        }
+
+    .robot-badge {
+        position: absolute;
+        top: -2px;
+        right: -2px;
+        font-size: .7rem;
     }
 
     .charlist {

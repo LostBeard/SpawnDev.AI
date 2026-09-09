@@ -238,6 +238,17 @@ public sealed class AiChatEngine : IAiChatService
         var lm = lease.Model;
         var (promptIds, stopIds) = ChatTemplates.BuildChatPrompt(lm.Gguf, lm.Tokenizer, ToTuples(messages),
             toolsJson: toolsJson);
+        if (SuppressThinking)
+        {
+            var before = promptIds.Length;
+            promptIds = WithThinkingSuppressed(promptIds, lm.Tokenizer);
+            // ⚠️ ANNOUNCE IT. "The model reasoned anyway" and "my prefill never applied" produce the
+            // identical reply, so without this line a failing run invites a theory about the model when
+            // the honest reading is that the code did not run.
+            PerfLog?.Invoke(promptIds.Length > before
+                ? $"thinking suppressed: +{promptIds.Length - before} prefill tokens"
+                : "thinking NOT suppressed: no <think> token in this vocabulary (not a reasoning model)");
+        }
         long buildMs = sw.ElapsedMilliseconds;
 
         var cfg = ToConfig(request.Options);
@@ -245,37 +256,60 @@ public sealed class AiChatEngine : IAiChatService
 
         Func<string, Task>? wrapped = null;
         ToolAwareStreamer? streamer = null;
+        ThinkingStreamer? thinking = null;
         if (onDelta != null)
         {
             // Tool requests stream text but must never leak tool-call markup as visible text; the
             // holdback logic (extracted from the proven Anthropic streaming path) buffers the longest
             // possible partial "<tool_call>" suffix and stops text at the first full tag.
             streamer = toolsJson != null ? new ToolAwareStreamer(onDelta) : null;
+            Func<string, Task> sink = streamer != null ? streamer.PushAsync : onDelta;
+
+            // 🔴 THINKING IS FILTERED FIRST, AND ALWAYS - not only for tool requests. A hybrid reasoning
+            // model (Qwen3) emits its chain of thought in <think>…</think> ahead of the answer, and nothing
+            // downstream removes it: it renders in the bubble, it is what a room hands the next speaker as
+            // something that was said out loud, and hands-free READS IT ALOUD. Filtering in the STREAM
+            // rather than at the end matters - a final-only strip would let the whole monologue type itself
+            // across the screen and then vanish.
+            thinking = new ThinkingStreamer(sink);
             wrapped = async d =>
             {
                 if (firstMs < 0) firstMs = sw.ElapsedMilliseconds;
-                if (streamer != null) await streamer.PushAsync(d).ConfigureAwait(false);
-                else await onDelta(d).ConfigureAwait(false);
+                await thinking.PushAsync(d).ConfigureAwait(false);
             };
         }
 
         var res = await lm.Generator.GenerateAsync(promptIds, cfg, request.Options.Stops, stopIds, wrapped, ct)
             .ConfigureAwait(false);
 
+        // ⚠️ Parse tool calls from the VISIBLE text, not the raw. A model that reasons about calling a
+        // tool writes the call inside its think block ("maybe I should <tool_call>…"); parsing the raw
+        // text would EXECUTE a call the model was only considering.
+        var visible = StripThinking(res.Text);
         var calls = toolsJson != null
-            ? ChatTemplates.ParseToolCalls(res.Text).Select(tc => new AiToolCall(tc.Name, tc.ArgumentsJson)).ToList()
+            ? ChatTemplates.ParseToolCalls(visible).Select(tc => new AiToolCall(tc.Name, tc.ArgumentsJson)).ToList()
             : new List<AiToolCall>();
+
+        // Release any tail the thinking filter was holding (a trailing "<thi" that never became a tag)
+        // BEFORE the tool streamer flushes, since it feeds into it.
+        if (thinking != null) await thinking.FlushTailAsync().ConfigureAwait(false);
         if (streamer != null && calls.Count == 0)
             await streamer.FlushTailAsync().ConfigureAwait(false);   // no tool call - release the held-back tail
+
+        // Thinking that never closed means the budget ran out mid-monologue: there IS no answer, and the
+        // caller would otherwise get a silent empty reply with no idea why.
+        if (visible.Trim().Length == 0 && res.Text.Contains("<think>", StringComparison.OrdinalIgnoreCase))
+            PerfLog?.Invoke($"THINKING NEVER CLOSED on {request.Model}: the whole {res.GeneratedTokens}-token "
+                + "budget went into reasoning, so the reply is empty. Raise MaxOutputTokens.");
 
         PerfLog?.Invoke(
             $"{(onDelta != null ? "stream" : "once"),-6} prompt={promptIds.Length,6}tok reused={lm.Generator.LastReusedPrefix,6}tok " +
             $"TTFT={(firstMs >= 0 ? firstMs : sw.ElapsedMilliseconds),7}ms total={sw.ElapsedMilliseconds,7}ms " +
             $"gen={res.GeneratedTokens,5}tok stop={res.Stop}");
 
-        return new AiChatResult(res.Text, res.PromptTokens, res.GeneratedTokens, ToStopKind(res.Stop), calls)
+        return new AiChatResult(visible, res.PromptTokens, res.GeneratedTokens, ToStopKind(res.Stop), calls)
         {
-            TextWithoutToolCalls = calls.Count > 0 ? StripToolCalls(res.Text).Trim() : res.Text,
+            TextWithoutToolCalls = calls.Count > 0 ? StripToolCalls(visible).Trim() : visible,
         };
     }
 
@@ -510,6 +544,157 @@ public sealed class AiChatEngine : IAiChatService
             for (int i = 0; i < s.Length; i++) if (!char.IsWhiteSpace(s[i])) return i;
             return -1;
         }
+    }
+
+    /// <summary>
+    /// Ask hybrid reasoning models NOT to think, rather than thinking and having it hidden. Default true.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 STRIPPING <c>&lt;think&gt;</c> IS NOT ENOUGH ON ITS OWN, and the bigger the model the worse it
+    /// gets. MEASURED 2026-09-09: with a 384-token budget, <c>qwen3:0.6b</c> reasoned briefly and then
+    /// answered, but <c>qwen3:1.7b</c> spent the ENTIRE budget reasoning and never reached an answer - so
+    /// after filtering there was nothing left and the user got silence. Raising the budget is not the fix
+    /// either: hundreds of tokens of deliberation before each line of dialogue is latency the voice pays
+    /// for, per character, per turn.
+    /// <para>
+    /// So thinking is turned OFF at the prompt. Filtering stays as the backstop for a model that reasons
+    /// anyway - the two are belt and braces, not alternatives.
+    /// </para>
+    /// </remarks>
+    public bool SuppressThinking { get; set; } = true;
+
+    /// <summary>
+    /// Append the empty think block that tells a Qwen3-style model its reasoning is already done.
+    /// </summary>
+    /// <remarks>
+    /// This is exactly what <c>enable_thinking=false</c> does in the model's own chat template: it prefills
+    /// <c>&lt;think&gt;\n\n&lt;/think&gt;</c> into the assistant turn, so the model continues from a
+    /// position where the reasoning section is already closed. That makes it STRUCTURAL rather than a
+    /// request - unlike a "/no_think" hint in the prompt, which the model may simply not honour.
+    /// <para>
+    /// ⚠️ Uses the tokenizer's SPECIAL-token ids, never <c>Encode("&lt;think&gt;")</c>. If the tag is a
+    /// single special token in the vocabulary (it is, for Qwen3) then encoding the text could split it into
+    /// sub-words that merely LOOK like the tag and mean nothing to the model. A model with no such token is
+    /// not a reasoning model, and is left completely alone.
+    /// </para>
+    /// </remarks>
+    private static int[] WithThinkingSuppressed(int[] promptIds, SentencePieceTokenizer tokenizer)
+    {
+        if (!tokenizer.TryGetId("<think>", out var open) || !tokenizer.TryGetId("</think>", out var close))
+            return promptIds;   // not a hybrid reasoning model - nothing to suppress
+
+        // The template writes "<think>\n\n</think>\n\n"; the newlines are ordinary text.
+        var gap = tokenizer.Encode("\n\n");
+        var result = new List<int>(promptIds.Length + 2 + gap.Length * 2);
+        result.AddRange(promptIds);
+        result.Add(open);
+        result.AddRange(gap);
+        result.Add(close);
+        result.AddRange(gap);
+        return result.ToArray();
+    }
+
+    // ── Streaming thinking-markup suppression ──
+    // A hybrid reasoning model emits <think>…</think> before its answer. That is private deliberation, not
+    // a reply: it must never be rendered, never enter a group transcript as something a character said, and
+    // above all never be spoken by the TTS. Mirrors ToolAwareStreamer deliberately - same holdback idea, so
+    // a partial "<thi" at a delta boundary is never flashed on screen.
+    /// <summary>Public so the delta-boundary behaviour can be tested at every possible split.</summary>
+    public sealed class ThinkingStreamer
+    {
+        private const string Open = "<think>", Close = "</think>";
+        private readonly Func<string, Task> _onDelta;
+        private readonly StringBuilder _sb = new();
+        private int _cursor;      // everything before this is decided: emitted, or discarded as thinking
+        private bool _inside;
+
+        public ThinkingStreamer(Func<string, Task> onDelta) => _onDelta = onDelta;
+
+        public Task PushAsync(string delta)
+        {
+            _sb.Append(delta);
+            return PumpAsync(final: false);
+        }
+
+        /// <summary>Release anything held back that turned out not to be a tag.</summary>
+        public Task FlushTailAsync() => PumpAsync(final: true);
+
+        private async Task PumpAsync(bool final)
+        {
+            while (true)
+            {
+                var s = _sb.ToString();
+                if (_inside)
+                {
+                    int c = s.IndexOf(Close, _cursor, StringComparison.Ordinal);
+                    if (c < 0)
+                    {
+                        // Not closed yet. Advance the SEARCH position only as far as is safe for a closer
+                        // that straddles this boundary - a closing tag needs Close.Length chars, so one
+                        // that is still incomplete must begin within the last Close.Length-1.
+                        _cursor = Math.Max(_cursor, s.Length - (Close.Length - 1));
+                        return;
+                    }
+                    _cursor = c + Close.Length;
+                    _inside = false;
+                    continue;
+                }
+
+                int o = s.IndexOf(Open, _cursor, StringComparison.Ordinal);
+                if (o >= 0)
+                {
+                    if (o > _cursor) await Emit(s, _cursor, o).ConfigureAwait(false);
+                    _cursor = o + Open.Length;
+                    _inside = true;
+                    continue;
+                }
+
+                // No opener in sight: emit everything except a trailing run that could still BECOME one.
+                int hold = final ? 0 : PartialSuffixLength(s, Open);
+                int upTo = s.Length - hold;
+                if (upTo > _cursor) { await Emit(s, _cursor, upTo).ConfigureAwait(false); _cursor = upTo; }
+                return;
+            }
+        }
+
+        private Task Emit(string s, int from, int to) => _onDelta(s[from..to]);
+
+        /// <summary>Length of the longest proper prefix of <paramref name="tag"/> that ends the string.</summary>
+        private static int PartialSuffixLength(string s, string tag)
+        {
+            int max = Math.Min(tag.Length - 1, s.Length);
+            for (int h = max; h > 0; h--)
+                if (s.AsSpan(s.Length - h).SequenceEqual(tag.AsSpan(0, h))) return h;
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Remove &lt;think&gt;…&lt;/think&gt; blocks, leaving only what the model meant to say.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ An UNCLOSED block discards everything after it, deliberately. The model ran out of budget while
+    /// still reasoning, so what follows is a severed half-thought, not an answer - showing it would put
+    /// the model's private deliberation on screen, which is the whole thing this prevents.
+    /// </remarks>
+    public static string StripThinking(string text)
+    {
+        if (string.IsNullOrEmpty(text) || text.IndexOf("<think>", StringComparison.OrdinalIgnoreCase) < 0)
+            return text;
+
+        const string open = "<think>", close = "</think>";
+        var sb = new StringBuilder();
+        int i = 0;
+        while (i < text.Length)
+        {
+            int o = text.IndexOf(open, i, StringComparison.OrdinalIgnoreCase);
+            if (o < 0) { sb.Append(text, i, text.Length - i); break; }
+            sb.Append(text, i, o - i);
+            int c = text.IndexOf(close, o + open.Length, StringComparison.OrdinalIgnoreCase);
+            if (c < 0) break;                       // never closed - nothing after it is an answer
+            i = c + close.Length;
+        }
+        return sb.ToString().TrimStart();
     }
 
     // ── Mapping helpers ──

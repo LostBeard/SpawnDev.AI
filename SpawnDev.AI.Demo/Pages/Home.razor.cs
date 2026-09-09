@@ -956,7 +956,32 @@ public partial class Home : IDisposable
             // ⚠️ PLAYBACK IS STRICTLY SERIALISED - render ahead, play one at a time, await the end of each.
             // Firing playback per chunk without waiting makes a reply interrupt ITSELF a word or two in,
             // which is a defect this codebase has already paid for once on the robot.
-            var chunks = AiVoiceEngine.SplitIntoSpeakableChunks(text, SpeakChunkCharacters);
+            // 🔴 STAGE DIRECTIONS ARE NOT SPEECH. A character in a scene writes "*tilts head* Fine."
+            // and the synthesiser, given the raw text, reads the asterisks out loud. Handled HERE rather
+            // than at each call site because this is the only place text becomes audio - one guard that
+            // cannot be forgotten by the next path that wants to speak something.
+            //
+            // ⚠️ WHICH treatment depends on whether we are in a scene, and the difference matters. In a
+            // scene the model was ASKED to mark actions with asterisks, so they are lifted out. Outside
+            // one, a single asterisk is ordinary emphasis - and removing the words in "I'm *not* doing
+            // that" would have the voice say the OPPOSITE of what is on screen. There we keep the words
+            // and drop only the markers.
+            var inScene = _room.RolePlay;
+            var (speakable, actions) = inScene
+                ? StageDirections.Split(text)
+                : (StageDirections.Unmark(text), (IReadOnlyList<StageDirection>)System.Array.Empty<StageDirection>());
+            if (actions.Count > 0)
+                Console.WriteLine($"[HF-SPEAK] {actions.Count} stage direction(s) not spoken: "
+                    + string.Join(", ", actions.Select(a => a.Text)));
+            if (string.IsNullOrWhiteSpace(speakable))
+            {
+                // The whole reply was action and no dialogue. Silence is correct - there is nothing to
+                // say - but say WHY, or it reads as the voice having failed.
+                _status = actions.Count > 0 ? "(action only - nothing said aloud)" : "Nothing to speak.";
+                StateHasChanged();
+                return;
+            }
+            var chunks = AiVoiceEngine.SplitIntoSpeakableChunks(speakable, SpeakChunkCharacters);
             _speaker ??= new AudioPlayback(JS);
             double spokenSeconds = 0;
             int spokenChunks = 0;

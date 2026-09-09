@@ -391,14 +391,30 @@ public sealed class AiWorkerClient
     /// a done reason real Ollama never sends would break drop-in clients. A caller that cancelled already
     /// knows it did - treat your OWN token as the signal, do not try to read cancellation off the wire.
     /// </para></param>
+    /// <param name="toolsJson">
+    /// Tool definitions the model may call, each a JSON object (as from <see cref="ListToolsAsync"/>).
+    /// Null leaves tools off entirely.
+    /// </param>
+    /// <remarks>
+    /// ⚠️ PASSING TOOLS TURNS OFF TOKEN STREAMING, and that is the server's design rather than an
+    /// oversight: a tool call only resolves once the whole message has been generated, so the router runs
+    /// the turn non-streaming and the engine executes the tools and continues. <paramref name="onDelta"/>
+    /// still fires - once, with the finished text - so a caller that renders deltas keeps working, but the
+    /// reply arrives in one piece and a UI should say it is working rather than look stalled.
+    /// </remarks>
     public async Task<string> ChatStreamAsync(string model, IReadOnlyList<AiChatMessage> messages,
-        AiGenerationOptions? options = null, Action<string>? onDelta = null, CancellationToken ct = default)
+        AiGenerationOptions? options = null, Action<string>? onDelta = null,
+        IReadOnlyList<string>? toolsJson = null, CancellationToken ct = default)
     {
         options ??= new AiGenerationOptions();
         var body = JsonSerializer.Serialize(new
         {
             model,
             messages = messages.Select(m => new { role = m.Role, content = m.Content }),
+            // Embedded as parsed JSON, not as strings: the router requires a real array of tool objects
+            // and would read an array of quoted strings as no tools at all - silently, since absent tools
+            // is a legitimate state.
+            tools = toolsJson?.Select(t => JsonSerializer.Deserialize<JsonElement>(t)).ToList(),
             stream = true,
             options = new
             {
@@ -429,6 +445,21 @@ public sealed class AiWorkerClient
                             doneReason = dr.GetString() ?? "stop";
                     }
                     break;
+                // A TOOL-ENABLED turn comes back as ONE non-streamed message, not as events. Without
+                // this the call would succeed, deliver nothing to onDelta, and report "stop" - a reply
+                // that silently vanished.
+                case "json" when f.Status is >= 200 and < 300 && f.Data != null:
+                    using (var doc = JsonDocument.Parse(f.Data))
+                    {
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("message", out var m)
+                            && m.TryGetProperty("content", out var mc)
+                            && mc.GetString() is { Length: > 0 } whole)
+                            onDelta?.Invoke(whole);
+                        if (root.TryGetProperty("done_reason", out var dr2))
+                            doneReason = dr2.GetString() ?? "stop";
+                    }
+                    break;
                 case "json" or "error" when f.Status is not (>= 200 and < 300) && f.Status != 0:
                     error = f.Data;
                     break;
@@ -436,6 +467,58 @@ public sealed class AiWorkerClient
         });
         if (error != null) throw new HttpRequestException($"/api/chat: {error}");
         return doneReason;
+    }
+
+    /// <summary>
+    /// The tools the server offers, each as a JSON definition ready to hand back to
+    /// <see cref="ChatStreamAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// Read over the MCP surface (<c>POST /mcp</c>, <c>tools/list</c>) because that is the enumeration the
+    /// server already exposes - there is no separate REST listing, and adding one would be a second thing
+    /// to keep in step with the registry.
+    /// </remarks>
+    public async Task<List<string>> ListToolsAsync(CancellationToken ct = default)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id = 1,
+            method = "tools/list",
+        }, J);
+
+        var found = new List<string>();
+        await SendAsync("POST", "/mcp", body, ct: ct, onFrame: f =>
+        {
+            if (f.T is not ("json" or "event") || f.Data == null) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(f.Data);
+                if (!doc.RootElement.TryGetProperty("result", out var result)
+                    || !result.TryGetProperty("tools", out var tools)
+                    || tools.ValueKind != JsonValueKind.Array) return;
+
+                foreach (var tool in tools.EnumerateArray())
+                {
+                    // MCP describes a tool as {name, description, inputSchema}; the chat surface wants the
+                    // OpenAI shape {type:"function", function:{name, description, parameters}}. Translated
+                    // here so callers never have to know both.
+                    var name = tool.TryGetProperty("name", out var n) ? n.GetString() : null;
+                    if (string.IsNullOrEmpty(name)) continue;
+                    var description = tool.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";
+                    var schema = tool.TryGetProperty("inputSchema", out var sch)
+                        ? sch.GetRawText() : "{\"type\":\"object\"}";
+                    found.Add($"{{\"type\":\"function\",\"function\":{{\"name\":{JsonSerializer.Serialize(name)},"
+                            + $"\"description\":{JsonSerializer.Serialize(description)},\"parameters\":{schema}}}}}");
+                }
+            }
+            catch (JsonException)
+            {
+                // A malformed frame means no tools this time, not a broken chat - the caller simply runs
+                // without them rather than failing a turn the user asked for.
+            }
+        });
+        return found;
     }
 
     /// <summary>

@@ -52,6 +52,8 @@ async Task CreateCharacter(string name, string persona)
     Console.WriteLine($"[gate] creating character {name}");
     await page.FillAsync(".settings.room input.voice-name.wide", name);
     await page.FillAsync(".settings.room textarea.sysbox >> nth=1", persona);
+    // Give them a body. Without one there is no stage, and the actions they write go nowhere.
+    await page.SelectOptionAsync(".settings.room select >> nth=1", "Screen");
     await page.ClickAsync(".settings.room button.primary:has-text(\"Create\")", new() { Timeout = 15000 });
     // The chip appearing IS the save landing in OPFS and the list reloading from it.
     await page.WaitForSelectorAsync($".charchip:has-text(\"{name}\")", new() { Timeout = 30000 });
@@ -87,16 +89,24 @@ await page.WaitForSelectorAsync("textarea:not(.sysbox):not([disabled])", new() {
 var total = (DateTime.UtcNow - t0).TotalSeconds;
 
 // ── What actually rendered ──────────────────────────────────────────────────────────────────────────
+var fails = new List<string>();
 var transcript = await page.InnerTextAsync(".transcript");
 Console.WriteLine($"[gate] TRANSCRIPT ({total:F1}s):\n{transcript}");
 
-// Read the speaker labels, not the prose: a name appearing anywhere in the text proves nothing about
-// whether that character actually took a turn.
+// The STAGE: both characters should have a body drawn, and their written actions should have been
+// recognised as motions. The room is role-play because the characters are embodied, so asterisks are
+// actions - which also means none of them should have been spoken aloud.
+var bodies = await page.Locator(".stage .reachy").CountAsync();
+Console.WriteLine($"[gate] {bodies} body/bodies on stage");
+if (bodies != 2)
+    fails.Add($"expected 2 bodies on the stage, found {bodies} - an embodied character was not drawn");
+
+// Read the speaker labels, not the prose: a name appearing anywhere in the text proves nothing
+// about whether that character actually took a turn.
 var speakers = await page.Locator(".transcript .msg .who").AllInnerTextsAsync();
 var said = await page.Locator(".transcript .msg.assistant .text").AllInnerTextsAsync();
 Console.WriteLine($"[gate] speakers: [{string.Join(" | ", speakers.Select(s => s.Trim()))}]");
 
-var fails = new List<string>();
 foreach (var name in new[] { NameA, NameB })
     if (!speakers.Any(s => s.Trim() == name))
         fails.Add($"{name} never spoke - the round did not reach every member of the room");
