@@ -50,6 +50,46 @@ public partial class Home
     AvatarKind _charAvatar = AvatarKind.None;
     double _charMotionScale = 1.0;
 
+    /// <summary>Tools the character being edited may call.</summary>
+    readonly HashSet<string> _charTools = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Every tool the server offers, by name. Empty until the server is up.</summary>
+    List<string> _serverToolNames = new();
+
+    /// <summary>
+    /// Read the tool names the server publishes, so a character can be granted them by name.
+    /// </summary>
+    async Task LoadToolNamesAsync()
+    {
+        try
+        {
+            var defs = await Ai.ListToolsAsync();
+            _serverToolNames = defs.Select(ToolNameOf).Where(n => n.Length > 0).Distinct().ToList();
+        }
+        catch (Exception ex) { Console.WriteLine($"[ROOM] could not list tools: {ex.Message}"); }
+    }
+
+    static string ToolNameOf(string definitionJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(definitionJson);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("function", out var fn) && fn.TryGetProperty("name", out var n1))
+                return n1.GetString() ?? "";
+            return root.TryGetProperty("name", out var n2) ? n2.GetString() ?? "" : "";
+        }
+        catch (System.Text.Json.JsonException) { return ""; }
+    }
+
+    /// <summary>Grant or revoke one tool for the character being edited.</summary>
+    void ToggleCharTool(string name, bool granted)
+    {
+        if (granted) _charTools.Add(name);
+        else _charTools.Remove(name);
+        StateHasChanged();
+    }
+
     /// <summary>True when at least one character is in the room, so a turn runs the round instead.</summary>
     bool RoomActive => _room.Agents.Count > 0;
 
@@ -146,6 +186,7 @@ public partial class Home
     {
         _editingCharId = ""; _charName = ""; _charPersona = "";
         _charModel = ""; _charVoiceId = ""; _charAvatar = AvatarKind.None; _charMotionScale = 1.0;
+        _charTools.Clear();
         _showRoom = true;
         StateHasChanged();
     }
@@ -156,6 +197,8 @@ public partial class Home
         _editingCharId = c.Id; _charName = c.Name; _charPersona = c.Persona;
         _charModel = c.Model; _charVoiceId = c.VoiceId ?? ""; _charAvatar = c.Avatar;
         _charMotionScale = c.MotionScale > 0 ? c.MotionScale : 1.0;
+        _charTools.Clear();
+        foreach (var t in c.AllowedTools ?? System.Array.Empty<string>()) _charTools.Add(t);
         StateHasChanged();
     }
 
@@ -174,7 +217,7 @@ public partial class Home
         {
             var id = string.IsNullOrEmpty(_editingCharId) ? CharacterLibrary.MakeId(_charName) : _editingCharId;
             var saved = await Characters.SaveAsync(id, _charName, _charPersona, _charModel, _charVoiceId,
-                allowedTools: null, avatar: _charAvatar, motionScale: _charMotionScale);
+                allowedTools: _charTools.ToList(), avatar: _charAvatar, motionScale: _charMotionScale);
             await LoadCharactersAsync();
 
             // ⚠️ A character already IN the room holds a COPY of its settings - ChatAgent is a record built

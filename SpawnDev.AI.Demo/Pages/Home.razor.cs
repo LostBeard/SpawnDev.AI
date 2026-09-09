@@ -116,6 +116,8 @@ public partial class Home : IDisposable
             // The catalogue is metadata too, and it is what lets the picker state a size before asking
             // anyone to commit to a download.
             await LoadCatalogueAsync();
+            // Tool names, so a character can be granted one by name in the editor.
+            await LoadToolNamesAsync();
             // Pressing "Start the AI server" is the agreement for the model that server will run - its
             // size is on the button. Every other model is agreed to separately in the model panel.
             await Consent.ApproveAsync(_model);

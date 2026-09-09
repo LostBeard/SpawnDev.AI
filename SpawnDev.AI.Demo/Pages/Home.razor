@@ -300,6 +300,31 @@
                         </select>
                     </label>
                 </div>
+                @* TOOLS. Per character, because these act on the world - and a tool a character is not
+                   handed is one it cannot be talked into calling. *@
+                @if (_serverToolNames.Count > 0)
+                {
+                    <label class="setlbl">
+                        What they can do
+                        <span class="sethint">
+                            ⚠️ Small models over-call tools. MEASURED: asked "what colour is a ripe
+                            banana?" with tools available, qwen2.5-0.5b called the image generator and
+                            narrated that instead of answering. Grant these to a capable model, or to a
+                            character whose job is actually to use them.
+                        </span>
+                    </label>
+                    <div class="charlist">
+                        @foreach (var tool in _serverToolNames)
+                        {
+                            <label class="toolgrant @(_charTools.Contains(tool) ? "on" : "")">
+                                <input type="checkbox" checked="@_charTools.Contains(tool)"
+                                       disabled="@_savingCharacter"
+                                       @onchange="e => ToggleCharTool(tool, (bool)(e.Value ?? false))" />
+                                @tool
+                            </label>
+                        }
+                    </div>
+                }
                 <label class="setlbl">
                     How they act
                     <span class="sethint">Written into their system turn, exactly as you type it.</span>
@@ -856,6 +881,25 @@
             .charchip .chip.tiny:hover {
                 opacity: 1;
             }
+
+    .toolgrant {
+        display: inline-flex;
+        align-items: center;
+        gap: .3rem;
+        border: 1px solid #273043;
+        border-radius: 999px;
+        padding: .25rem .6rem;
+        font-size: .72rem;
+        color: #9fb0c8;
+        cursor: pointer;
+    }
+
+        /* A granted tool is a capability, so it should be obvious at a glance which ones are live. */
+        .toolgrant.on {
+            border-color: #7c3aed;
+            background: #191033;
+            color: #d6dbe4;
+        }
 
     .charvoice {
         font-size: .65rem;
