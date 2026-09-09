@@ -189,6 +189,17 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             _accelerator = await context.CreatePreferredAcceleratorAsync().ConfigureAwait(false)
                 ?? throw new NotSupportedException("No GPU accelerator is available in this browser (WebGPU required).");
             var provider = new HubModelProvider(_webTorrent, _http, _options.Models);
+            // 🔴 THE SAME DEFECT THE VOICE ENGINES ALREADY PAID FOR, in the place it hurts most. This hook
+            // was declared and handed to CreateFromGGUFStreamAsync, and NOTHING SUBSCRIBED IT - so loading
+            // a chat model reported nothing at all. MEASURED: gemma4:12b takes 7.4 minutes to become
+            // resident and logged 43 lines total, none of them about the load. From the outside that is
+            // indistinguishable from a hung page, and it left no way to see WHERE those minutes go.
+            // ⚠️ WITH A CLOCK. The stages alone ("upload 0%" … "upload 100%") say WHAT is happening and
+            // not what it COSTS, and a stage that goes quiet for six minutes is still indistinguishable
+            // from a hang. Cumulative elapsed makes the expensive stage obvious from one run.
+            var loadClock = System.Diagnostics.Stopwatch.StartNew();
+            provider.OnLoadProgress = (stage, pct) =>
+                Console.WriteLine($"[model-load] {loadClock.Elapsed.TotalSeconds,7:F1}s {stage} {pct}%");
             _registry = new ModelRegistry(provider, _accelerator, _options.MaxSeqLen);
             var engine = new AiChatEngine(_registry) { MaxOutputTokens = _options.MaxOutputTokens };
             // Image generation + the agentic tool loop IN THE BROWSER: SD-Turbo streams from the
