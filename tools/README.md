@@ -13,6 +13,7 @@ dotnet run tools/<name>.cs -- [url]
 | tool | answers |
 |---|---|
 | `drive-ai-demo.cs` | Types into the composer and checks the answer - the single-shot UI gate. |
+| `drive-ai-room.cs` | Group chat: makes two characters, sets the scene, adds both to the room, sends one message, asserts BOTH answered under their own names. Deletes what it created. |
 | `drive-chat-voice.cs` | The 🎤 button: records, transcribes in the worker, and lands an editable transcript in the composer. Asserts content words plus a 70% word-overlap floor. |
 | `drive-hands-free.cs` | The 💬🔊 button, whole turn: **when** the loop stops listening (endpointing), when the reply lands, and whether the page **actually played audio** - `AudioBufferSourceNode.start` is hooked, so "it spoke" is a browser event, not a status string. Also prints the endpointer's ms/frame against its 32 ms realtime budget, and every transcription time across turns. |
 | `drive-ai-imgtest.cs` | Direct SD-Turbo image generation, bypassing the LLM. |

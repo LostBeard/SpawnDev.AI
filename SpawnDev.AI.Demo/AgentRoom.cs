@@ -171,6 +171,14 @@ public sealed class AgentRoom
     /// <param name="ct">Cancels between turns; the round stops without unwinding what was already said.</param>
     /// <returns>The lines this round added, in order.</returns>
     /// <remarks>
+    /// 🔴 NO <c>ConfigureAwait(false)</c> IN HERE, EVER. Both callbacks are UI code - they render bubbles
+    /// and speak - so the synchronization context has to survive the awaits. It was written with
+    /// ConfigureAwait(false) out of library habit, and the second speaker's turn then threw "The current
+    /// thread is not associated with the Dispatcher": the first member answered, and the round died. The
+    /// unit test stayed green throughout, because a fake generator returning <c>Task.FromResult</c>
+    /// completes synchronously and never hops threads - only the browser gate caught it.
+    /// </remarks>
+    /// <remarks>
     /// <para>
     /// 🔴 THE ORDERING IS THE FEATURE, AND IT LIVES HERE SO IT CAN BE TESTED. Each reply enters
     /// <see cref="Transcript"/> BEFORE the next member's prompt is built, and that is the entire difference
@@ -198,13 +206,13 @@ public sealed class AgentRoom
 
             // Built HERE, one turn at a time, from the transcript as it stands right now - not hoisted out
             // of the loop. Hoisting it is what silently turns this into everyone answering the user.
-            var text = (await generate(agent, BuildPromptFor(agent)).ConfigureAwait(false) ?? "").Trim();
+            var text = (await generate(agent, BuildPromptFor(agent)) ?? "").Trim();
             if (text.Length == 0) continue;
 
             var line = new RoomLine(agent.Id, agent.Name, text);
             Transcript.Add(line);
             said.Add(line);
-            if (onSaid != null) await onSaid(agent, line).ConfigureAwait(false);
+            if (onSaid != null) await onSaid(agent, line);
         }
         return said;
     }

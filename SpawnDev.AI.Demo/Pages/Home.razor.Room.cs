@@ -146,12 +146,15 @@ public partial class Home
         try
         {
             await _room.RunRoundAsync(
+                // ⚠️ Every state change in these callbacks goes through InvokeAsync. They resume after an
+                // await that crossed into the worker, so there is no guarantee of being on the dispatcher -
+                // and calling StateHasChanged off it throws, killing the round after the first speaker.
                 generate: async (agent, prompt) =>
                 {
                     _streamingWho = agent.Name;
                     _streaming = "";
                     _busyNote = $"{agent.Name} is thinking… ({++spoken}/{plan.Count}, {agent.Model})";
-                    StateHasChanged();
+                    await InvokeAsync(StateHasChanged);
 
                     clock.Restart();
                     var renderClock = System.Diagnostics.Stopwatch.StartNew();
@@ -192,7 +195,7 @@ public partial class Home
                         Ms = clock.Elapsed.TotalMilliseconds,
                         Stopped = _generationCts?.IsCancellationRequested ?? false,
                     });
-                    StateHasChanged();
+                    await InvokeAsync(StateHasChanged);
                     await ScrollToBottom();
 
                     // Each member speaks in its OWN voice; one with no voice simply stays text-only, which
@@ -215,7 +218,7 @@ public partial class Home
             _generationCts?.Dispose();
             _generationCts = null;
             _streaming = ""; _streamingWho = ""; _busy = false; _busyNote = "";
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
             await ScrollToBottom();
         }
 

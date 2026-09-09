@@ -129,13 +129,19 @@ public sealed class AgentRoomTests
         var transcriptDepthAtCallback = new List<int>();
 
         var produced = await room.RunRoundAsync(
-            generate: (agent, prompt) =>
+            generate: async (agent, prompt) =>
             {
                 shown[agent.Id] = prompt;
                 askedInOrder.Add(agent.Id);
+                // ⚠️ Yield rather than returning a completed Task. A fake that finishes synchronously
+                // never exercises the async path at all - the round then runs start to finish on one
+                // stack, and every continuation-related defect is invisible here. One of them (a
+                // ConfigureAwait(false) that dropped the Blazor dispatcher) shipped past this very test
+                // and was caught by the browser gate instead.
+                await Task.Yield();
                 // Cy says nothing at all - a real model does this, and a blank line recorded in the
                 // transcript teaches everyone after it that Cy answers with silence.
-                return Task.FromResult(agent.Id == "cy" ? "   " : $"{agent.Name} says hello.");
+                return agent.Id == "cy" ? "   " : $"{agent.Name} says hello.";
             },
             onSaid: (agent, line) =>
             {
