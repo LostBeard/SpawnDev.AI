@@ -584,6 +584,58 @@ public sealed class AiVoiceEngine : IDisposable
     }
 
     /// <summary>Offsets just past each sentence terminator, always ending with <c>text.Length</c>.</summary>
+
+    /// <summary>
+    /// Split a reply into speakable chunks at SENTENCE ends, each at most <paramref name="maxChars"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THIS IS WHAT REPLACES THE CHARACTER CAP. <see cref="MaxSpokenCharacters"/> makes a long reply
+    /// stop early - the page shows text the voice never reads. Chunking says the whole thing, and because a
+    /// caller can synthesise chunk N+1 while chunk N plays, it also cuts time-to-first-audio from "the
+    /// entire reply" to "the first sentence".
+    /// </para>
+    /// <para>
+    /// ⚠️ Uses the same <c>SentenceEndOffsets</c> the cap uses, deliberately. A second notion of "where a
+    /// sentence ends" would drift from the first, and the two disagreeing is how a reply gets cut in a place
+    /// neither of them intended.
+    /// </para>
+    /// <para>
+    /// ⚠️ A single sentence longer than <paramref name="maxChars"/> is emitted WHOLE rather than cut. The
+    /// cap's own ceiling is the only thing allowed to break a sentence; splitting mid-clause here would put
+    /// an audible stop in the middle of a phrase, which is exactly the artefact the "sentence ends only"
+    /// rule exists to prevent.
+    /// </para>
+    /// </remarks>
+    public static List<string> SplitIntoSpeakableChunks(string text, int maxChars)
+    {
+        var chunks = new List<string>();
+        if (string.IsNullOrWhiteSpace(text)) return chunks;
+        if (maxChars <= 0) maxChars = int.MaxValue;
+
+        var ends = SentenceEndOffsets(text);
+        int start = 0;
+        int lastEnd = 0;
+
+        foreach (var end in ends)
+        {
+            if (end <= start) continue;
+            // Adding this sentence would overrun the chunk: close the chunk at the previous sentence end.
+            if (end - start > maxChars && lastEnd > start)
+            {
+                chunks.Add(text[start..lastEnd].Trim());
+                start = lastEnd;
+            }
+            lastEnd = end;
+        }
+        if (start < text.Length)
+        {
+            var tail = text[start..].Trim();
+            if (tail.Length > 0) chunks.Add(tail);
+        }
+        return chunks;
+    }
+
     private static List<int> SentenceEndOffsets(string text)
     {
         var ends = new List<int>();

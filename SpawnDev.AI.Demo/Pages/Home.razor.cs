@@ -755,9 +755,55 @@ public partial class Home : IDisposable
         }
     }
 
+
+    /// <summary>
+    /// Characters per spoken chunk. Sentence ends are never crossed, so this is a target and a long
+    /// sentence is spoken whole.
+    /// </summary>
+    /// <remarks>
+    /// Smaller means the voice starts sooner and the render/play overlap has less slack; larger means fewer
+    /// seams. One or two sentences is the useful range - this is not the old brevity cap, nothing is
+    /// truncated at this length.
+    /// </remarks>
+    const int SpeakChunkCharacters = 160;
+
+    /// <summary>Cancels the current spoken reply - both the chunk loop and the audio.</summary>
+    CancellationTokenSource? _speakCts;
+
+    /// <summary>Synthesise one chunk, in the saved voice when there is one.</summary>
+    async Task<(float[] Samples, int Rate, double Ms)> SynthesizeChunkAsync(string chunk)
+    {
+        // A saved voice speaks from features derived ONCE. The per-turn path re-sends the reference PCM as a
+        // JSON number array and makes the engine re-derive those features every time, and it clones from
+        // whatever the recogniser THOUGHT was said - a transcript that is not verbatim bleeds into the start
+        // of every generated line.
+        var (samples, rate, _, ms, _) = string.IsNullOrEmpty(_voiceId)
+            ? await Ai.SpeakAsync(chunk, _lastHeardText, _lastHeardSamples!, WhisperRate)
+            : await Ai.SpeakInVoiceAsync(chunk, _voiceId);
+        return (samples, rate, ms);
+    }
+
+    /// <summary>
+    /// Stop speaking now, so the user can answer instead of waiting the reply out.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Cancels the CHUNK LOOP as well as the audio. Stopping only the audio would leave the next
+    /// sentence rendering and then play it, so the voice would resume by itself a moment after being
+    /// told to stop.
+    /// </remarks>
+    void StopSpeaking()
+    {
+        try { _speakCts?.Cancel(); } catch { /* already disposed - nothing left to stop */ }
+        try { _speaker?.Stop(); } catch (Exception ex) { Console.WriteLine($"[HF-SPEAK] stop: {ex.Message}"); }
+        _status = "Stopped speaking — go ahead.";
+        StateHasChanged();
+    }
+
     /// <summary>Speak one reply, then hand the microphone back.</summary>
     async Task SpeakReplyAsync(string text)
     {
+        _speakCts?.Dispose();
+        _speakCts = new CancellationTokenSource();
         // A PREPARED voice needs no reference for this turn - that is the whole point of preparing it.
         // Only the per-turn cloning path depends on having just heard something.
         if (string.IsNullOrEmpty(_voiceId) && (_lastHeardSamples == null || _lastHeardSamples.Length == 0))
@@ -812,31 +858,64 @@ public partial class Home : IDisposable
                 catch (Exception ex) { Console.WriteLine($"[HF-SPEAK] ticker stopped: {ex.Message}"); }
             });
 
-            // A saved voice speaks from features derived ONCE. The per-turn path re-sends the reference PCM
-            // as a JSON number array and makes the engine re-derive those features on every single reply,
-            // and it clones from whatever the recogniser THOUGHT was said - a transcript that is not
-            // verbatim bleeds into the start of every generated line.
-            var (samples, rate, _, ms, spokenText) = string.IsNullOrEmpty(_voiceId)
-                ? await Ai.SpeakAsync(text, _lastHeardText, _lastHeardSamples!, WhisperRate)
-                : await Ai.SpeakInVoiceAsync(text, _voiceId);
-            // Say so when the brevity cap shortened the reply. The page shows the FULL text while the voice
-            // reads part of it, and without this line that gap is invisible - the reply just sounds like it
-            // stops early, which is indistinguishable from the voice breaking down at length.
-            if (spokenText.Length < text.Length)
-                Console.WriteLine($"[HF-SPEAK] brevity cap: spoke {spokenText.Length} of {text.Length} "
-                                + "characters");
-            speakTicker.Cancel();
-            try { await ticker; } catch { /* already reported by the ticker itself */ }
-            Console.WriteLine($"[HF-SPEAK] synthesis returned after " +
-                              $"{(DateTime.UtcNow - speakStarted).TotalSeconds:F1}s ({ms:F0} ms reported), " +
-                              $"{samples.Length} samples @ {rate} Hz");
-
+            // ── STREAM IT: say sentence N while sentence N+1 renders ────────────────────────────────────
+            //
+            // 🔴 This replaces "wait for the whole reply, then start talking". Time-to-first-audio was the
+            // length of the ENTIRE reply; now it is the length of the first sentence. It also retires the
+            // brevity cap as a truncation: the cap made the voice stop early while the page showed text it
+            // never read, and chunking says all of it.
+            //
+            // ⚠️ PLAYBACK IS STRICTLY SERIALISED - render ahead, play one at a time, await the end of each.
+            // Firing playback per chunk without waiting makes a reply interrupt ITSELF a word or two in,
+            // which is a defect this codebase has already paid for once on the robot.
+            var chunks = AiVoiceEngine.SplitIntoSpeakableChunks(text, SpeakChunkCharacters);
             _speaker ??= new AudioPlayback(JS);
-            var seconds = await _speaker.PlayAsync(samples, rate);
-            _status = $"Spoke {seconds:F1}s in {ms:F0} ms";
-            StateHasChanged();
+            double spokenSeconds = 0;
+            int spokenChunks = 0;
 
-            await _speaker.WaitForEndAsync();
+            // Chunk 0 is synthesised up front; from then on the NEXT one renders while the current plays.
+            var pending = SynthesizeChunkAsync(chunks[0]);
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                if (_speakCts?.IsCancellationRequested ?? false) break;
+
+                var (samples, rate, ms) = await pending;
+                // Kick the next synthesis BEFORE playing this one - that overlap is the whole point.
+                pending = i + 1 < chunks.Count ? SynthesizeChunkAsync(chunks[i + 1]) : null!;
+
+                if (_speakCts?.IsCancellationRequested ?? false) break;
+                if (i == 0)
+                {
+                    speakTicker.Cancel();
+                    try { await ticker; } catch { /* already reported by the ticker itself */ }
+                    Console.WriteLine($"[HF-SPEAK] first audio after "
+                        + $"{(DateTime.UtcNow - speakStarted).TotalSeconds:F1}s ({ms:F0} ms synthesis)");
+                }
+
+                var seconds = await _speaker.PlayAsync(samples, rate);
+                spokenSeconds += seconds;
+                spokenChunks++;
+                _status = chunks.Count > 1
+                    ? $"Speaking {i + 1}/{chunks.Count}… ({spokenSeconds:F1}s)"
+                    : $"Spoke {seconds:F1}s in {ms:F0} ms";
+                StateHasChanged();
+
+                // ⚠️ Cancellable wait. Stop() ends playback; without passing the token this would sit here
+                // until the audio finished on its own and the Stop button would do nothing visible.
+                try { await _speaker.WaitForEndAsync(_speakCts?.Token ?? default); }
+                catch (OperationCanceledException) { break; }
+            }
+
+            if (_speakCts?.IsCancellationRequested ?? false)
+            {
+                _speaker.Stop();
+                _status = $"Stopped after {spokenChunks} of {chunks.Count} — go ahead.";
+            }
+            else
+            {
+                _status = $"Spoke {spokenSeconds:F1}s";
+            }
+            StateHasChanged();
         }
         catch (Exception ex)
         {

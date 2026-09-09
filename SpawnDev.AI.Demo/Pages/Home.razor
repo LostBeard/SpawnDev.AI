@@ -162,6 +162,14 @@
                     title="@(_handsFree ? "Stop hands-free conversation" : "Hands-free: talk, and it talks back in your voice")">
                 @(_handsFree ? "🛑 Hands-free" : "💬🔊")
             </button>
+            @* STOP SPEAKING. The user has read the reply and wants to answer - waiting out the voice is the
+               single most irritating thing a talking app does. Cancels the chunk loop as well as the audio,
+               or the next sentence would render and start playing a moment after being told to stop. *@
+            @if (_speaking)
+            {
+                <button class="primary stop" @onclick="StopSpeaking"
+                        title="Stop speaking so you can answer">■🔊</button>
+            }
             @* SAVED VOICES. Without these the reply is cloned from the user's LAST TURN on every single
                reply - re-sending the reference PCM over the worker, making the engine re-derive prompt
                features that never change, and cloning from the recogniser's transcript rather than a clean

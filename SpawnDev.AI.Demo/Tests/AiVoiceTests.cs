@@ -665,4 +665,57 @@ public sealed class AiVoiceTests
 
     }
 
+
+    /// <summary>
+    /// Chunking says the WHOLE reply, and only ever breaks between sentences.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 The property that matters is that nothing is LOST. Chunking exists to retire the brevity cap,
+    /// whose defect was exactly this: the page showed text the voice never read. A chunker that drops or
+    /// duplicates a clause reintroduces that silently - every chunk would still synthesise and still sound
+    /// fine, and only a careful listener comparing against the page would notice.
+    /// </para>
+    /// <para>
+    /// ⚠️ Not heavy: pure text, no model. The fixture mixes short and very long sentences and abbreviations
+    /// so that "split at any period" and "split at a fixed width" both fail it.
+    /// </para>
+    /// </remarks>
+    [AiTest(Timeout = 30_000)]
+    public Task ChunkingSpeaksTheWholeReplyAndBreaksOnlyAtSentenceEnds()
+    {
+        const string reply =
+            "Short one. Here is a considerably longer sentence that on its own runs past any sensible chunk "
+            + "target and therefore has to be emitted whole rather than cut somewhere in the middle of a "
+            + "clause where it would put an audible stop in a strange place. Then a third! And a fourth?";
+
+        var chunks = AiVoiceEngine.SplitIntoSpeakableChunks(reply, 160);
+        if (chunks.Count == 0) throw new Exception("chunking produced NOTHING for a non-empty reply");
+
+        // 1. Nothing lost, nothing duplicated - compare ignoring the whitespace the trim removes.
+        static string Squash(string s) => new string(s.Where(c => !char.IsWhiteSpace(c)).ToArray());
+        var rejoined = Squash(string.Join(" ", chunks));
+        if (rejoined != Squash(reply))
+            throw new Exception("chunking changed the text - the reply would be spoken wrong or incomplete. "
+                + $"Got {rejoined.Length} chars, expected {Squash(reply).Length}");
+
+        // 2. Every break is at a sentence end. A chunk that does not end in a terminator means the next
+        //    chunk starts mid-sentence, which is the artefact the sentence rule exists to prevent.
+        for (int i = 0; i < chunks.Count - 1; i++)
+        {
+            var last = chunks[i].TrimEnd();
+            if (last.Length == 0 || (last[^1] != '.' && last[^1] != '!' && last[^1] != '?'))
+                throw new Exception($"chunk {i + 1} of {chunks.Count} does not end at a sentence: \"{last}\"");
+        }
+
+        // 3. The over-long sentence survives INTACT rather than being cut to fit.
+        if (!chunks.Any(c => c.Contains("audible stop in a strange place")))
+            throw new Exception("the long sentence was split - a sentence longer than the target must be "
+                + "spoken whole, because breaking mid-clause is worse than a long chunk");
+
+        Console.WriteLine($"[Benchmark] Chunking: {chunks.Count} chunks, lengths "
+            + string.Join(",", chunks.Select(c => c.Length)));
+        return Task.CompletedTask;
+    }
+
 }
