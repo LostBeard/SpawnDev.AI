@@ -373,6 +373,121 @@ public sealed class AiVoiceEngine : IDisposable
     /// </remarks>
     public int MaxSpokenCharacters { get; set; } = 320;
 
+    // ── PREPARED VOICES: clone ONCE, speak many ────────────────────────────────────────────────────────
+    //
+    // 🔴 WHY. ZipVoice is one-shot cloning, and this engine was handing it RAW reference audio on every
+    // call - so every single reply re-trimmed the reference, re-ran the mel over it and rebuilt the prompt
+    // features, work that is identical for the life of a voice. The ML pipeline already anticipates the fix
+    // and says so on SynthesizeFromFeaturesAsync: "the reference features are the expensive, unchanging
+    // part of a voice, so a speaking robot computes them once per voice rather than once per sentence."
+    // ZipVoiceFeatures.TrimReferenceSilence is public for exactly this, per its own note.
+    //
+    // It also makes cloning a CHOICE instead of a per-question tax: a voice is added and prepared once
+    // (a family member records a clip, or a bundled voice ships with the app), then selected by id.
+    // ⚠️ Preparation needs the model loaded, because the feature geometry comes from the pipeline's Config.
+    private readonly Dictionary<string, PreparedVoice> _voices = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Ids of the voices prepared and ready to speak.</summary>
+    public IReadOnlyCollection<string> VoiceIds => _voices.Keys.ToArray();
+
+    /// <summary>Is this voice prepared and ready to speak without re-deriving its reference?</summary>
+    public bool HasVoice(string voiceId) => voiceId != null && _voices.ContainsKey(voiceId);
+
+    /// <summary>Forget a prepared voice (the user removed it).</summary>
+    public bool ForgetVoice(string voiceId) => voiceId != null && _voices.Remove(voiceId);
+
+    /// <summary>
+    /// Derive a voice's reference features ONCE. This is the "train" step: everything here is what used to
+    /// happen on every reply.
+    /// </summary>
+    /// <param name="referenceText">
+    /// The clip's exact transcript. ⚠️ Anything present in the audio and missing here bleeds into the start
+    /// of every generated line, so a sloppy transcript degrades the voice in a way that is invisible in the
+    /// text and audible in the output.
+    /// </param>
+    public async Task<PreparedVoice> PrepareVoiceAsync(string voiceId, string displayName,
+        string referenceText, float[] referenceSamples, int referenceSampleRate,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(voiceId)) throw new ArgumentException("a voice needs an id", nameof(voiceId));
+        if (referenceSamples == null || referenceSamples.Length == 0)
+            throw new ArgumentException("a cloned voice needs reference audio", nameof(referenceSamples));
+        if (referenceSampleRate <= 0)
+            throw new ArgumentOutOfRangeException(nameof(referenceSampleRate), referenceSampleRate,
+                "sample rate must be positive");
+
+        await EnsureLoadedAsync(ct).ConfigureAwait(false);
+
+        // Same order as ZipVoicePipeline.SynthesizeAsync, and the order matters: dead air comes off FIRST,
+        // then the deliberate tail goes on. Reversed, the trim takes back the pad that stops the reference's
+        // last word bleeding into the generated line.
+        var speech = _pipeline!.TrimReferenceSilence
+            ? SpawnDev.ILGPU.ML.Preprocessing.ZipVoiceFeatures.TrimReferenceSilence(
+                referenceSamples, referenceSampleRate, _pipeline.ReferenceSilenceGateDb,
+                maxPauseSeconds: _pipeline.ReferenceMaxPauseSeconds)
+            : referenceSamples;
+
+        int tail = (int)(_pipeline.ReferenceTailSilenceSeconds * referenceSampleRate);
+        var padded = tail > 0 ? new float[speech.Length + tail] : speech;
+        if (tail > 0) Array.Copy(speech, padded, speech.Length);
+
+        var features = SpawnDev.ILGPU.ML.Preprocessing.ZipVoiceFeatures.ComputePromptFeatures(
+            padded, referenceSampleRate, _pipeline.Config, out int promptFrames);
+
+        var voice = new PreparedVoice
+        {
+            Id = voiceId,
+            DisplayName = string.IsNullOrWhiteSpace(displayName) ? voiceId : displayName,
+            ReferenceText = referenceText ?? "",
+            PromptTokens = _tokenizer!.Encode(referenceText ?? ""),
+            PromptFeatures = features,
+            PromptFrames = promptFrames,
+            ReferenceSeconds = referenceSamples.Length / (double)referenceSampleRate,
+            ReferenceSpeechSeconds = speech.Length / (double)referenceSampleRate,
+        };
+        _voices[voiceId] = voice;
+        if (VerboseLogging)
+            Console.WriteLine($"[voice] prepared '{voiceId}' ({voice.DisplayName}): "
+                + $"{voice.ReferenceSeconds:F2}s reference -> {promptFrames} prompt frames, reused every reply");
+        return voice;
+    }
+
+    /// <summary>
+    /// Speak in an already-prepared voice. No trimming, no mel, no prompt rebuild - the reference work was
+    /// done by <see cref="PrepareVoiceAsync"/>.
+    /// </summary>
+    public async Task<AiSpeech> SpeakWithVoiceAsync(string text, string voiceId,
+        int? maxSpokenCharacters = null, int? noiseSeed = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("nothing to say", nameof(text));
+        if (!_voices.TryGetValue(voiceId ?? "", out var voice))
+            throw new InvalidOperationException(
+                $"voice '{voiceId}' is not prepared; call PrepareVoiceAsync first. Prepared: "
+                + (_voices.Count == 0 ? "(none)" : string.Join(", ", _voices.Keys)));
+
+        await EnsureLoadedAsync(ct).ConfigureAwait(false);
+        text = TrimToSpeakableLength(text, maxSpokenCharacters);
+
+        await _inferGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var started = DateTime.UtcNow;
+            _pipeline!.NoiseSeed = noiseSeed;
+            var result = await _pipeline.SynthesizeFromFeaturesAsync(
+                _tokenizer!.Encode(text), voice.PromptTokens, voice.PromptFeatures, voice.PromptFrames)
+                .ConfigureAwait(false);
+            double ms = (DateTime.UtcNow - started).TotalMilliseconds;
+            return new AiSpeech(result.Audio, result.SampleRate, ModelName, ms)
+            {
+                ReferenceSeconds = voice.ReferenceSeconds,
+                ReferenceSpeechSeconds = voice.ReferenceSpeechSeconds,
+                DecoderMs = result.DecoderMs,
+                SpokenText = text,
+            };
+        }
+        finally { _inferGate.Release(); }
+    }
+
     /// <summary>Hard ceiling in characters. Only a single sentence longer than this is ever cut. Default 1200.</summary>
     /// <remarks>
     /// ⚠️ This exists so that "never cut mid-sentence" cannot become "read a 4,000-character run-on
@@ -670,4 +785,33 @@ public sealed class AiVoiceEngine : IDisposable
         DisposeSessions();
         _gate.Dispose();
     }
+}
+
+/// <summary>
+/// A voice whose reference has already been turned into prompt features - the "trained" form of a clone.
+/// </summary>
+/// <remarks>
+/// Holding the FEATURES rather than the audio is the whole point: they are what ZipVoice actually conditions
+/// on, they are identical for every line the voice speaks, and deriving them was previously repeated on
+/// every single reply. A voice is prepared once (a family member records a clip, or a bundled voice ships
+/// with the app) and then selected by id.
+/// </remarks>
+public sealed class PreparedVoice
+{
+    /// <summary>Stable id used to select this voice.</summary>
+    public required string Id { get; init; }
+    /// <summary>Name to show a person picking a voice.</summary>
+    public required string DisplayName { get; init; }
+    /// <summary>The reference clip's exact transcript, kept so a voice can be re-derived or inspected.</summary>
+    public string ReferenceText { get; init; } = "";
+    /// <summary>Token ids of <see cref="ReferenceText"/>.</summary>
+    public required long[] PromptTokens { get; init; }
+    /// <summary>Mel prompt features ZipVoice conditions on.</summary>
+    public required float[] PromptFeatures { get; init; }
+    /// <summary>Frame count of <see cref="PromptFeatures"/>.</summary>
+    public required int PromptFrames { get; init; }
+    /// <summary>Length of the original reference clip.</summary>
+    public double ReferenceSeconds { get; init; }
+    /// <summary>Length of the reference after silence trimming - what actually conditions the model.</summary>
+    public double ReferenceSpeechSeconds { get; init; }
 }
