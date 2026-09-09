@@ -579,4 +579,90 @@ public sealed class AiVoiceTests
         if (samples.Length == 0) throw new Exception($"{FixtureUrl} decoded to zero samples");
         return (samples, rate);
     }
+
+    /// <summary>
+    /// A voice PREPARED once speaks without re-sending or re-deriving its reference, and sounds like the
+    /// same voice saying the right words.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 WHAT THIS PINS. One-shot cloning used to be paid on EVERY reply: the reference PCM crossed the
+    /// worker transport as a JSON number array each time - a six-figure array for a few seconds at 24 kHz -
+    /// and the engine then re-trimmed it and re-ran the mel to rebuild prompt features that never change for
+    /// a voice. `PrepareVoiceAsync` does that once; a reply then carries only its text and a voice id.
+    /// </para>
+    /// <para>
+    /// ⚠️ The assertion is INTELLIGIBILITY, not "some audio came back". A prepared voice that lost its
+    /// prompt features would still return plausible audio of about the right length - amplitude, duration
+    /// and sample rate all look healthy while the words are gone. So the line is read back with the
+    /// product's own recogniser and scored against what the engine says it SPOKE, never against the request
+    /// (the brevity cap can shorten one, and scoring against the request measures the cap, not the voice).
+    /// </para>
+    /// <para>
+    /// ⚠️ It speaks TWICE from one preparation. Once proves the path works; twice is what proves the
+    /// prepared features are REUSABLE rather than consumed - a voice that only worked on its first line
+    /// would pass a single-shot test and fail every real conversation.
+    /// </para>
+    /// </remarks>
+    [AiTest(Heavy = true, Timeout = 1_800_000)]
+    public async Task PreparedVoiceSpeaksWithoutResendingItsReference()
+    {
+        await _client.InitAsync();
+        var (reference, referenceRate) = await LoadFixtureAsync();
+
+        var prep = Stopwatch.StartNew();
+        var prepared = await _client.PrepareVoiceAsync("test-voice", "Test Voice", KnownTranscript,
+            reference, referenceRate);
+        prep.Stop();
+        if (prepared.PromptFrames <= 0)
+            throw new Exception($"preparing produced NO prompt frames (got {prepared.PromptFrames}) - "
+                              + "the reference was not turned into features, so nothing conditions the voice");
+
+        var voices = await _client.GetVoicesAsync();
+        if (!voices.Contains("test-voice"))
+            throw new Exception($"prepared voice is not listed; got [{string.Join(", ", voices)}]");
+
+        Console.WriteLine($"[Benchmark] PreparedVoice: prepared in {prep.ElapsedMilliseconds} ms, "
+            + $"{prepared.PromptFrames} prompt frames from {prepared.ReferenceSeconds:F2}s of reference");
+
+        string[] lines =
+        {
+            "Hello. This is SpawnDev AI, speaking from a prepared voice.",
+            "The second line proves the prepared features are reused, not consumed.",
+        };
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var sw = Stopwatch.StartNew();
+            var (samples, rate, model, ms, spoken) =
+                await _client.SpeakInVoiceAsync(lines[i], "test-voice");
+            sw.Stop();
+
+            if (samples == null || samples.Length == 0)
+                throw new Exception($"line {i + 1}: prepared voice returned NO audio");
+
+            float peak = 0f;
+            foreach (var v in samples) peak = MathF.Max(peak, MathF.Abs(v));
+            if (peak < 0.01f)
+                throw new Exception($"line {i + 1}: prepared voice returned effectively SILENCE (peak {peak:F5})");
+
+            // Score against what the engine SAID it spoke - see AiSpeech.SpokenText.
+            var (heard, _, _) = await _client.TranscribeAsync(samples, rate);
+            var spokenWords = Words(spoken);
+            var matched = new List<string>(Words(heard));
+            int hits = 0;
+            foreach (var w in spokenWords) if (matched.Remove(w)) hits++;
+            double overlap = spokenWords.Count == 0 ? 0.0 : hits / (double)spokenWords.Count;
+            Console.WriteLine($"[Benchmark] PreparedVoice line {i + 1}: {sw.ElapsedMilliseconds} ms "
+                + $"({ms:F0} ms reported), {samples.Length / (double)rate:F2}s audio, "
+                + $"overlap {overlap:P0}, heard \"{heard}\"");
+
+            if (overlap < 0.6)
+                throw new Exception($"line {i + 1}: prepared voice is NOT intelligible - only {overlap:P0} of "
+                    + $"the spoken words came back. Spoke \"{spoken}\", heard \"{heard}\". Plausible audio "
+                    + "with the words gone is exactly what a lost prompt-feature buffer produces.");
+        }
+
+    }
+
 }

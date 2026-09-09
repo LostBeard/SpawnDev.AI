@@ -437,4 +437,77 @@ public sealed class AiWorkerClient
         if (error != null) throw new HttpRequestException($"/api/chat: {error}");
         return doneReason;
     }
+
+    /// <summary>
+    /// Prepare ("train") a voice ONCE, so later replies carry only text and a voice id.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 This is what makes cloning affordable. <see cref="SpeakAsync"/> ships the reference PCM as a JSON
+    /// number array on EVERY call - a six-figure array for a few seconds at 24 kHz - and the engine then
+    /// re-trims it and re-runs the mel to rebuild prompt features that never change for a voice. Preparing
+    /// pays that once; <see cref="SpeakInVoiceAsync"/> pays none of it.
+    /// ⚠️ <paramref name="referenceText"/> must be the clip's EXACT transcript. Anything in the audio and
+    /// missing here bleeds into the start of every line the voice speaks.
+    /// </remarks>
+    public async Task<(string VoiceId, string DisplayName, int PromptFrames, double ReferenceSeconds)>
+        PrepareVoiceAsync(string voiceId, string displayName, string referenceText,
+        float[] referenceSamples, int referenceSampleRate)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            voice_id = voiceId,
+            display_name = displayName,
+            reference_text = referenceText,
+            reference_samples = referenceSamples,
+            sample_rate = referenceSampleRate,
+        }, J);
+        var json = await RequestJsonAsync("POST", "/api/voices", body);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("error", out var err))
+            throw new InvalidOperationException(err.GetString() ?? "preparing the voice failed");
+        return (
+            root.TryGetProperty("voice_id", out var idEl) ? idEl.GetString() ?? voiceId : voiceId,
+            root.TryGetProperty("display_name", out var dnEl) ? dnEl.GetString() ?? "" : "",
+            root.TryGetProperty("prompt_frames", out var pfEl) ? pfEl.GetInt32() : 0,
+            root.TryGetProperty("reference_seconds", out var rsEl) ? rsEl.GetDouble() : 0);
+    }
+
+    /// <summary>The voices already prepared in the worker.</summary>
+    public async Task<string[]> GetVoicesAsync()
+    {
+        var json = await RequestJsonAsync("GET", "/api/voices");
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.TryGetProperty("voices", out var v) && v.ValueKind == JsonValueKind.Array
+            ? v.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToArray()
+            : Array.Empty<string>();
+    }
+
+    /// <summary>Speak in a voice prepared by <see cref="PrepareVoiceAsync"/>. No reference on the wire.</summary>
+    public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
+        SpeakInVoiceAsync(string text, string voiceId, int? maxSpokenCharacters = null, int? noiseSeed = null)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            text,
+            voice_id = voiceId,
+            max_spoken_characters = maxSpokenCharacters,
+            noise_seed = noiseSeed,
+        }, J);
+        var json = await RequestJsonAsync("POST", "/api/speak", body);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("error", out var err))
+            throw new InvalidOperationException(err.GetString() ?? "speaking failed");
+        var samples = root.TryGetProperty("samples", out var sEl) && sEl.ValueKind == JsonValueKind.Array
+            ? sEl.EnumerateArray().Select(e => (float)e.GetDouble()).ToArray()
+            : Array.Empty<float>();
+        return (
+            samples,
+            root.TryGetProperty("sample_rate", out var srEl) ? srEl.GetInt32() : 24000,
+            root.TryGetProperty("model", out var mEl) ? mEl.GetString() ?? "" : "",
+            root.TryGetProperty("inference_ms", out var imEl) ? imEl.GetDouble() : 0,
+            root.TryGetProperty("spoken_text", out var stEl) ? stEl.GetString() ?? text : text);
+    }
+
 }

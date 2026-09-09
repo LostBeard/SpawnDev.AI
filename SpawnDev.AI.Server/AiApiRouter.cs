@@ -76,6 +76,9 @@ public sealed class AiApiRouter
             case ("POST", "/api/vad") when Vad != null: await ApiVad(Body(body), t); return true;
             case ("POST", "/api/warm"): await ApiWarm(Body(body), t); return true;
             case ("POST", "/api/speak") when Voice != null: await ApiSpeak(Body(body), t); return true;
+            case ("POST", "/api/voices") when Voice != null: await ApiPrepareVoice(Body(body), t); return true;
+            case ("GET", "/api/voices") when Voice != null:
+                await t.WriteJsonAsync(200, new { voices = Voice.VoiceIds }); return true;
             case ("GET", _) when Tools != null && path.StartsWith("/ai/artifacts/", StringComparison.Ordinal):
                 await GetArtifact(path["/ai/artifacts/".Length..], t); return true;
             case ("GET", "/ai/image-models") when Images != null:
@@ -850,6 +853,30 @@ public sealed class AiApiRouter
             return;
         }
 
+        // ── A PREPARED VOICE NEEDS NO REFERENCE ON THE WIRE ────────────────────────────────────────────
+        // 🔴 This is the expensive half of one-shot cloning, and it was being paid PER REPLY. The reference
+        // crossed the transport as a JSON number array every single time - the remark above already calls
+        // that "the wrong shape for real audio", a six-figure array for a few seconds at 24 kHz - and the
+        // engine then re-trimmed it and re-ran the mel over it to rebuild prompt features that never change
+        // for a voice. With a prepared voice the reference crosses ONCE, at /api/voices, and a reply carries
+        // only its text and a voice id.
+        var voiceId = body.TryGetProperty("voice_id", out var vidEl) ? vidEl.GetString() ?? "" : "";
+        if (!string.IsNullOrWhiteSpace(voiceId))
+        {
+            if (!Voice!.HasVoice(voiceId))
+            {
+                await t.WriteJsonAsync(400, new
+                {
+                    error = $"voice '{voiceId}' is not prepared - POST /api/voices with its reference clip "
+                          + "first, or omit voice_id to clone from reference_samples",
+                    voices = Voice.VoiceIds,
+                });
+                return;
+            }
+            await SpeakPreparedAsync(body, text, voiceId, t);
+            return;
+        }
+
         if (!body.TryGetProperty("reference_samples", out var refEl) || refEl.ValueKind != JsonValueKind.Array
             || refEl.GetArrayLength() == 0)
         {
@@ -945,4 +972,93 @@ public sealed class AiApiRouter
     private static string FinishReason(AiChatResult r) => r.Stop == AiStopKind.Length ? "length" : "stop";
     private static string OllamaDone(AiChatResult r) => r.Stop == AiStopKind.Length ? "length" : "stop";
     private static string AnthropicStop(AiChatResult r) => r.Stop == AiStopKind.Length ? "max_tokens" : "end_turn";
+
+    /// <summary>
+    /// POST /api/voices - prepare ("train") a voice ONCE. Body:
+    /// <c>{ voice_id, display_name, reference_text, reference_samples: number[], sample_rate }</c>.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ <c>reference_text</c> must be the clip's EXACT transcript. Anything present in the audio and
+    /// missing here bleeds into the start of every line the voice speaks - a defect that is invisible in the
+    /// text and audible in the output, and it is why deriving the reference from a recogniser's guess at the
+    /// user's last utterance was a poor default.
+    /// </remarks>
+    private async Task ApiPrepareVoice(JsonElement body, IAiServerTransport t)
+    {
+        var voiceId = body.TryGetProperty("voice_id", out var idEl) ? idEl.GetString() ?? "" : "";
+        if (string.IsNullOrWhiteSpace(voiceId))
+        {
+            await t.WriteJsonAsync(400, new { error = "body needs a non-empty 'voice_id'" });
+            return;
+        }
+        if (!body.TryGetProperty("reference_samples", out var refEl) || refEl.ValueKind != JsonValueKind.Array
+            || refEl.GetArrayLength() == 0)
+        {
+            await t.WriteJsonAsync(400, new { error = "body needs a non-empty 'reference_samples' array" });
+            return;
+        }
+
+        var displayName = body.TryGetProperty("display_name", out var dnEl) ? dnEl.GetString() ?? "" : "";
+        var referenceText = body.TryGetProperty("reference_text", out var rtEl) ? rtEl.GetString() ?? "" : "";
+        var sampleRate = body.TryGetProperty("sample_rate", out var srEl) && srEl.TryGetInt32(out var sr)
+            ? sr : 16000;
+
+        var reference = new float[refEl.GetArrayLength()];
+        var i = 0;
+        foreach (var v in refEl.EnumerateArray()) reference[i++] = (float)v.GetDouble();
+
+        try
+        {
+            var voice = await Voice!.PrepareVoiceAsync(voiceId, displayName, referenceText, reference, sampleRate)
+                .ConfigureAwait(false);
+            await t.WriteJsonAsync(200, new
+            {
+                voice_id = voice.Id,
+                display_name = voice.DisplayName,
+                prompt_frames = voice.PromptFrames,
+                reference_seconds = voice.ReferenceSeconds,
+                reference_speech_seconds = voice.ReferenceSpeechSeconds,
+                voices = Voice.VoiceIds,
+            });
+        }
+        catch (Exception ex)
+        {
+            await t.WriteJsonAsync(500, new { error = $"preparing voice '{voiceId}' failed: {ex.Message}" });
+        }
+    }
+
+    /// <summary>Speak in an already-prepared voice - no reference on the wire, no mel, no prompt rebuild.</summary>
+    private async Task SpeakPreparedAsync(JsonElement body, string text, string voiceId, IAiServerTransport t)
+    {
+        // Same ValueKind-first guards as the cloned path: TryGetInt32 THROWS on a non-number element rather
+        // than returning false, and clients serialise an absent value as null.
+        int? maxSpoken = body.TryGetProperty("max_spoken_characters", out var msEl)
+            && msEl.ValueKind == JsonValueKind.Number
+            && msEl.TryGetInt32(out var ms) && ms > 0 ? ms : null;
+        int? noiseSeed = body.TryGetProperty("noise_seed", out var nsEl)
+            && nsEl.ValueKind == JsonValueKind.Number
+            && nsEl.TryGetInt32(out var ns) ? ns : null;
+
+        try
+        {
+            var result = await Voice!.SpeakWithVoiceAsync(text, voiceId, maxSpoken, noiseSeed)
+                .ConfigureAwait(false);
+            await t.WriteJsonAsync(200, new
+            {
+                samples = result.Samples,
+                sample_rate = result.SampleRate,
+                model = result.Model,
+                inference_ms = result.InferenceMs,
+                duration_seconds = result.DurationSeconds,
+                decoder_ms = result.DecoderMs,
+                spoken_text = result.SpokenText,
+                voice_id = voiceId,
+            });
+        }
+        catch (Exception ex)
+        {
+            await t.WriteJsonAsync(500, new { error = $"speaking in voice '{voiceId}' failed: {ex.Message}" });
+        }
+    }
+
 }
