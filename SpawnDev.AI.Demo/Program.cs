@@ -131,8 +131,10 @@ builder.Services.AddSpawnDevAI(options =>
         "12b",
         approxSizeBytes: 7_381_382_048,
         description: "Text + image + audio in, text out - the multimodal path for Reachy snapshots and "
-                   + "microphone input. LARGE: ~6.9 GB for the text decoder alone, and it needs a WebGPU "
-                   + "GPU with the VRAM to match. Text-only in this demo so far."));
+                   + "microphone input. LARGE: ~6.9 GB for the text decoder alone, it needs a WebGPU GPU "
+                   + "with the VRAM to match, and MEASURED ~7.4 minutes to become resident (twice, with "
+                   + "the weights already cached) then ~1.8 tok/s. Load it once and keep it - not a model "
+                   + "to switch to mid-conversation. Text-only in this demo so far."));
 });
 
 // RunAsync's callback runs after auto-starting services are up. The test suite runs ONLY in the window

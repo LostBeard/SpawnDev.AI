@@ -236,8 +236,13 @@ public sealed class AiChatEngine : IAiChatService
         var sw = System.Diagnostics.Stopwatch.StartNew();
         using var lease = await _registry.AcquireAsync(request.Model, ct).ConfigureAwait(false);
         var lm = lease.Model;
+        // 🔴 `thinking` DEFAULTS TO TRUE in ChatTemplates, and not passing it is why gemma4:12b replied
+        // "<|channel>thought <channel|>Jupiter is the largest planet..." - its reasoning channel arrived as
+        // visible text, to be rendered in the bubble and read aloud by the TTS. For gemma4 the template
+        // switch is the real control (it builds the prompt tokens itself); the prefill below covers
+        // Qwen3-style models, and the filters cover anything that reasons anyway.
         var (promptIds, stopIds) = ChatTemplates.BuildChatPrompt(lm.Gguf, lm.Tokenizer, ToTuples(messages),
-            toolsJson: toolsJson);
+            thinking: !SuppressThinking, toolsJson: toolsJson);
         if (SuppressThinking)
         {
             var before = promptIds.Length;
@@ -602,11 +607,27 @@ public sealed class AiChatEngine : IAiChatService
     /// <summary>Public so the delta-boundary behaviour can be tested at every possible split.</summary>
     public sealed class ThinkingStreamer
     {
-        private const string Open = "<think>", Close = "</think>";
+        /// <summary>
+        /// The open/close pairs that wrap a model's private reasoning rather than its answer.
+        /// </summary>
+        /// <remarks>
+        /// ⚠️ ONE FILTER, SEVERAL FAMILIES. Qwen3 wraps reasoning in <c>&lt;think&gt;…&lt;/think&gt;</c>;
+        /// gemma4 uses its own channel markup, <c>&lt;|channel&gt;thought … &lt;channel|&gt;</c>. Both are
+        /// private deliberation that must never render or be spoken, and a filter that knew only the first
+        /// let gemma4's straight through - MEASURED: "&lt;|channel&gt;thought &lt;channel|&gt;Jupiter is the
+        /// largest planet...". A new model family means checking what ITS reasoning looks like, not
+        /// assuming this list covers it.
+        /// </remarks>
+        private static readonly (string Open, string Close)[] Pairs =
+        {
+            ("<think>", "</think>"),
+            ("<|channel>", "<channel|>"),
+        };
+
         private readonly Func<string, Task> _onDelta;
         private readonly StringBuilder _sb = new();
         private int _cursor;      // everything before this is decided: emitted, or discarded as thinking
-        private bool _inside;
+        private int _insidePair = -1;   // index into Pairs while inside a block, else -1
 
         public ThinkingStreamer(Func<string, Task> onDelta) => _onDelta = onDelta;
 
@@ -624,33 +645,47 @@ public sealed class AiChatEngine : IAiChatService
             while (true)
             {
                 var s = _sb.ToString();
-                if (_inside)
+                if (_insidePair >= 0)
                 {
-                    int c = s.IndexOf(Close, _cursor, StringComparison.Ordinal);
+                    var close = Pairs[_insidePair].Close;
+                    int c = s.IndexOf(close, _cursor, StringComparison.Ordinal);
                     if (c < 0)
                     {
                         // Not closed yet. Advance the SEARCH position only as far as is safe for a closer
-                        // that straddles this boundary - a closing tag needs Close.Length chars, so one
-                        // that is still incomplete must begin within the last Close.Length-1.
-                        _cursor = Math.Max(_cursor, s.Length - (Close.Length - 1));
+                        // that straddles this boundary - a closing tag needs close.Length chars, so one
+                        // that is still incomplete must begin within the last close.Length-1.
+                        _cursor = Math.Max(_cursor, s.Length - (close.Length - 1));
                         return;
                     }
-                    _cursor = c + Close.Length;
-                    _inside = false;
+                    _cursor = c + close.Length;
+                    _insidePair = -1;
                     continue;
                 }
 
-                int o = s.IndexOf(Open, _cursor, StringComparison.Ordinal);
-                if (o >= 0)
+                // The EARLIEST opener of any family wins, so one family's tag cannot hide inside another's.
+                int bestAt = -1, bestPair = -1;
+                for (int i = 0; i < Pairs.Length; i++)
                 {
-                    if (o > _cursor) await Emit(s, _cursor, o).ConfigureAwait(false);
-                    _cursor = o + Open.Length;
-                    _inside = true;
+                    int at = s.IndexOf(Pairs[i].Open, _cursor, StringComparison.Ordinal);
+                    if (at >= 0 && (bestAt < 0 || at < bestAt)) { bestAt = at; bestPair = i; }
+                }
+                if (bestAt >= 0)
+                {
+                    if (bestAt > _cursor) await Emit(s, _cursor, bestAt).ConfigureAwait(false);
+                    _cursor = bestAt + Pairs[bestPair].Open.Length;
+                    _insidePair = bestPair;
                     continue;
                 }
 
-                // No opener in sight: emit everything except a trailing run that could still BECOME one.
-                int hold = final ? 0 : PartialSuffixLength(s, Open);
+                // No opener in sight: hold back the longest trailing run that could still BECOME one of
+                // ANY family's openers, or a tag split across deltas leaks the block that follows it.
+                int hold = 0;
+                if (!final)
+                    foreach (var (open, _) in Pairs)
+                    {
+                        int h = PartialSuffixLength(s, open);
+                        if (h > hold) hold = h;
+                    }
                 int upTo = s.Length - hold;
                 if (upTo > _cursor) { await Emit(s, _cursor, upTo).ConfigureAwait(false); _cursor = upTo; }
                 return;
@@ -679,18 +714,27 @@ public sealed class AiChatEngine : IAiChatService
     /// </remarks>
     public static string StripThinking(string text)
     {
-        if (string.IsNullOrEmpty(text) || text.IndexOf("<think>", StringComparison.OrdinalIgnoreCase) < 0)
-            return text;
+        if (string.IsNullOrEmpty(text)) return text;
 
-        const string open = "<think>", close = "</think>";
+        // Same pairs the streaming filter knows: Qwen3's <think> and gemma4's channel markup.
+        (string Open, string Close)[] pairs = { ("<think>", "</think>"), ("<|channel>", "<channel|>") };
+        if (!pairs.Any(p => text.Contains(p.Open, StringComparison.OrdinalIgnoreCase))) return text;
+
         var sb = new StringBuilder();
         int i = 0;
         while (i < text.Length)
         {
-            int o = text.IndexOf(open, i, StringComparison.OrdinalIgnoreCase);
-            if (o < 0) { sb.Append(text, i, text.Length - i); break; }
-            sb.Append(text, i, o - i);
-            int c = text.IndexOf(close, o + open.Length, StringComparison.OrdinalIgnoreCase);
+            int bestAt = -1, bestPair = -1;
+            for (int p = 0; p < pairs.Length; p++)
+            {
+                int at = text.IndexOf(pairs[p].Open, i, StringComparison.OrdinalIgnoreCase);
+                if (at >= 0 && (bestAt < 0 || at < bestAt)) { bestAt = at; bestPair = p; }
+            }
+            if (bestAt < 0) { sb.Append(text, i, text.Length - i); break; }
+
+            sb.Append(text, i, bestAt - i);
+            var (open, close) = pairs[bestPair];
+            int c = text.IndexOf(close, bestAt + open.Length, StringComparison.OrdinalIgnoreCase);
             if (c < 0) break;                       // never closed - nothing after it is an answer
             i = c + close.Length;
         }

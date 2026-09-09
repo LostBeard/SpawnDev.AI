@@ -31,6 +31,17 @@ public sealed class ThinkingFilterTests
         // half-thought, not an answer, and showing it would put the model's private deliberation on screen.
         Check("<think>I was still reasoning when the budget ran", "");
         Check("Some answer.<think>then it kept going", "Some answer.");
+
+        // 🔴 GEMMA4'S OWN MARKUP. Its reasoning arrives as a channel, not a <think> tag - MEASURED from
+        // gemma4:12b: "<|channel>thought <channel|>Jupiter is the largest planet in our solar system."
+        // A filter that knew only Qwen3's tag let that straight through to the screen and the TTS.
+        Check("<|channel>thought <channel|>Jupiter is the largest planet.", "Jupiter is the largest planet.");
+        Check("<|channel>thought reasoning<channel|>The answer.", "The answer.");
+        Check("Before.<|channel>x<channel|>After.", "Before.After.");
+        Check("<|channel>never closed", "");
+        // Mixed families in one reply, in either order.
+        Check("<think>a</think><|channel>b<channel|>Answer.", "Answer.");
+        Check("<|channel>b<channel|><think>a</think>Answer.", "Answer.");
         return Task.CompletedTask;
     }
 
@@ -55,6 +66,12 @@ public sealed class ThinkingFilterTests
             "no markup at all",
             "<think>unclosed and truncated",
             "answer first<think>trailing thought</think>",
+            // gemma4's channel markup, split at every boundary too: "<|chan" + "nel>" is the same class
+            // of leak as "<thi" + "nk>", and its opener is longer so it has more places to split.
+            "<|channel>thought <channel|>Jupiter is the largest planet.",
+            "Before.<|channel>x<channel|>After.",
+            "<|channel>unclosed channel",
+            "<think>a</think><|channel>b<channel|>both families",
         };
 
         foreach (var text in cases)

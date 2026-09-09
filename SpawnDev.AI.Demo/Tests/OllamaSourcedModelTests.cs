@@ -78,8 +78,34 @@ public sealed class OllamaSourcedModelTests
             throw new Exception($"gemma4:12b answered \"{reply.Trim()}\" - it produced text but not the "
                 + "right answer, which points at the chat template or tokenizer rather than the loader");
 
-        // Thinking markup must not leak from this family either.
-        if (reply.Contains("<think>", StringComparison.OrdinalIgnoreCase))
-            throw new Exception("gemma4 leaked thinking markup into its reply");
+        // 🔴 THE LEAK THIS TEST ORIGINALLY MISSED. It checked for "<think>" and passed, while gemma4
+        // actually replied "<|channel>thought <channel|>Jupiter is the largest planet in our solar
+        // system." - its reasoning channel, which would have rendered in the bubble and been read aloud.
+        // Now it rejects control markup by SHAPE, so a family whose tags nobody has seen still fails.
+        if (ControlMarkupIn(reply) is { } leaked)
+            throw new Exception($"gemma4 leaked control markup ('{leaked}') into its reply: "
+                + $"\"{Flat(reply)}\". A user would see this and the TTS would read it.");
     }
+
+    /// <summary>
+    /// Any leftover model control markup in a reply, or null when it is clean.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 CHECKS THE SHAPE, NOT A LIST OF KNOWN TAGS. The gemma4 leak got past a test that looked for
+    /// "&lt;think&gt;" specifically, because gemma4 reasons in "&lt;|channel&gt;thought &lt;channel|&gt;" -
+    /// the test passed while the user would have SEEN that and the TTS would have READ it. Control tokens
+    /// share a shape, a pipe against an angle bracket, so matching the shape catches the next family's
+    /// markup without anyone having had to see it first.
+    /// </remarks>
+    /// <summary>A reply on one line, for an error message.</summary>
+    private static string Flat(string s)
+        => s.Replace((char)13, ' ').Replace((char)10, ' ').Trim();
+
+    private static string? ControlMarkupIn(string reply)
+    {
+        foreach (var probe in new[] { "<think>", "</think>", "<|", "|>" })
+            if (reply.Contains(probe, StringComparison.OrdinalIgnoreCase)) return probe;
+        return null;
+    }
+
 }

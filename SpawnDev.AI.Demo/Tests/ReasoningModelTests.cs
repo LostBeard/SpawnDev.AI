@@ -76,10 +76,9 @@ public sealed class ReasoningModelTests
             // The opener alone is the tell. A reply can legitimately contain the WORD "think", so match the
             // tag, and check the closer separately: a truncated think block leaves an opener with no closer
             // and is the worse case, because everything after it is missing entirely.
-            if (reply.Contains("<think>", StringComparison.OrdinalIgnoreCase)
-                || reply.Contains("</think>", StringComparison.OrdinalIgnoreCase))
-                failures.Add($"{model}: thinking markup reached the reply. The user would SEE this, and "
-                    + $"hands-free would SPEAK it. Reply began: \"{Head(reply, 160)}\"");
+            if (ControlMarkupIn(reply) is { } leaked)
+                failures.Add($"{model}: control markup ('{leaked}') reached the reply. The user would SEE "
+                    + $"this, and hands-free would SPEAK it. Reply began: \"{Head(reply, 160)}\"");
             else if (string.IsNullOrWhiteSpace(reply))
                 failures.Add($"{model}: produced NO text at all - if the whole reply was a think block that "
                     + "something stripped without keeping the answer, the user gets silence");
@@ -87,6 +86,23 @@ public sealed class ReasoningModelTests
 
         if (failures.Count > 0)
             throw new Exception(string.Join(" | ", failures));
+    }
+
+        /// <summary>
+    /// Any leftover model control markup in a reply, or null when it is clean.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 CHECKS THE SHAPE, NOT A LIST OF KNOWN TAGS. The gemma4 leak got past a test that looked for
+    /// "&lt;think&gt;" specifically, because gemma4 reasons in "&lt;|channel&gt;thought &lt;channel|&gt;".
+    /// Control tokens all share a shape - a pipe against an angle bracket - so matching the shape catches
+    /// the next family's markup without anyone having to have seen it first.
+    /// </remarks>
+    private static string? ControlMarkupIn(string reply)
+    {
+        foreach (var probe in new[] { "<think>", "</think>", "<|", "|>" })
+            if (reply.Contains(probe, StringComparison.OrdinalIgnoreCase))
+                return probe;
+        return null;
     }
 
     private static string Head(string s, int n)
