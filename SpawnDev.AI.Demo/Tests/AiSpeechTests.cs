@@ -288,7 +288,7 @@ public sealed class AiSpeechTests
     private async Task<(float[] Samples, int SampleRate)> LoadFixtureAsync()
     {
         var wav = await _http.GetByteArrayAsync(FixtureUrl);
-        return WavFixture.Decode(wav);
+        return WavCodec.Decode(wav);
     }
 
 

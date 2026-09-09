@@ -28,6 +28,8 @@ builder.Services.AddSingleton<IAsyncFS, AsyncFSFileSystemDirectoryHandle>();
 // Saved voices live in OPFS beside the model cache, on the same filesystem abstraction, so a voice a family
 // member trains survives a reload instead of being re-cloned from whatever was last said.
 builder.Services.AddSingleton<SpawnDev.AI.Demo.VoiceLibrary>();
+// Characters the user creates - name, persona, model and voice - saved beside the voices.
+builder.Services.AddSingleton<SpawnDev.AI.Demo.CharacterLibrary>();
 builder.Services.AddSingleton<WebTorrentClient>(sp =>
 {
     var client = new WebTorrentClient(new WebTorrentClientOptions { AsyncFileSystem = sp.GetRequiredService<IAsyncFS>() });

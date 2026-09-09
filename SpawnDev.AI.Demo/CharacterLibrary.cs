@@ -1,0 +1,119 @@
+using System.Text.Json;
+using SpawnDev.AsyncFileSystem;
+
+namespace SpawnDev.AI.Demo;
+
+/// <summary>
+/// A character the user made: who it is, how it behaves, what it thinks with, and how it sounds.
+/// </summary>
+/// <param name="Id">Stable id. Also the file name stem, so it must stay path-safe.</param>
+/// <param name="Name">What the room calls them.</param>
+/// <param name="Persona">How they should act - goes into the system turn verbatim.</param>
+/// <param name="Model">Which model they think with. Empty means "whatever the room is using".</param>
+/// <param name="VoiceId">A saved voice id, or null for text-only.</param>
+/// <param name="SavedUtc">When it was saved.</param>
+public sealed record SavedCharacter(
+    string Id, string Name, string Persona, string Model, string? VoiceId, DateTime SavedUtc);
+
+/// <summary>
+/// Characters the user has created, persisted to OPFS.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Deliberately the same shape as <see cref="VoiceLibrary"/> - same filesystem, same id rules, same
+/// list/save/delete surface - because they are the same idea applied to two kinds of thing, and a second
+/// storage style would be one more thing to keep correct for no benefit. A character is pure metadata, so
+/// unlike a voice it has no binary sibling file.
+/// </para>
+/// <para>
+/// ⚠️ A character REFERENCES a voice by id rather than containing it, so one voice can front several
+/// characters and deleting a character never destroys a voice a family member recorded.
+/// <see cref="SavedCharacter.VoiceId"/> may therefore dangle if that voice is later deleted - callers must
+/// treat a missing voice as "text only" rather than an error, which is what
+/// <see cref="ResolveVoice"/> is for.
+/// </para>
+/// </remarks>
+public sealed class CharacterLibrary
+{
+    private const string Dir = "characters";
+    private readonly IAsyncFS _fs;
+
+    /// <summary>New instance over the app's OPFS filesystem.</summary>
+    public CharacterLibrary(IAsyncFS fs) => _fs = fs;
+
+    private static string Path(string id) => $"{Dir}/{id}.json";
+
+    /// <summary>Path-safe id from a name, with a short unique suffix so two "Rose"s cannot collide.</summary>
+    public static string MakeId(string name) => VoiceLibrary.MakeId(name);
+
+    /// <summary>Create or update a character.</summary>
+    public async Task<SavedCharacter> SaveAsync(string id, string name, string persona, string model,
+        string? voiceId)
+    {
+        if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("a character needs an id", nameof(id));
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("a character needs a name", nameof(name));
+
+        if (!await _fs.DirectoryExists(Dir)) await _fs.CreateDirectory(Dir);
+        var saved = new SavedCharacter(id, name.Trim(), (persona ?? "").Trim(), (model ?? "").Trim(),
+            string.IsNullOrWhiteSpace(voiceId) ? null : voiceId, DateTime.UtcNow);
+        await _fs.Write(Path(id), JsonSerializer.Serialize(saved));
+        return saved;
+    }
+
+    /// <summary>Every saved character, by name.</summary>
+    public async Task<List<SavedCharacter>> ListAsync()
+    {
+        var found = new List<SavedCharacter>();
+        if (!await _fs.DirectoryExists(Dir)) return found;
+
+        foreach (var file in await _fs.GetFiles(Dir))
+        {
+            if (!file.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
+            try
+            {
+                var c = await _fs.ReadJSON<SavedCharacter>($"{Dir}/{file}");
+                if (c != null && !string.IsNullOrEmpty(c.Id)) found.Add(c);
+            }
+            catch
+            {
+                // One unreadable character must not hide the rest - it simply is not offered.
+            }
+        }
+        return found.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Delete a character. The voice it referenced is left alone - it may front others.</summary>
+    public async Task DeleteAsync(string id)
+    {
+        try { if (await _fs.FileExists(Path(id))) await _fs.Remove(Path(id)); }
+        catch { /* gone from the picker either way; do not fail the click */ }
+    }
+
+    /// <summary>
+    /// The voice a character should speak with, or null when it should stay text-only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ Returns null for a voice id that no longer exists rather than throwing. A character whose voice
+    /// was deleted must still be usable - silently text-only is a far better outcome than a room that
+    /// refuses to start because one member's voice is missing.
+    /// </para>
+    /// <para>
+    /// ⚠️ A BUNDLED voice ships with the app, so it is never in the user's saved list and checking only
+    /// that list would silence every character using one - the built-in voices would appear in the picker
+    /// and then do nothing, which reads as a broken feature rather than a missing file.
+    /// </para>
+    /// </remarks>
+    public static string? ResolveVoice(SavedCharacter character, IEnumerable<SavedVoice> availableVoices)
+        => character.VoiceId != null
+           && (BundledVoices.IsBundled(character.VoiceId) || availableVoices.Any(v => v.Id == character.VoiceId))
+            ? character.VoiceId
+            : null;
+
+    /// <summary>Turn a saved character into a room participant.</summary>
+    /// <param name="fallbackModel">Used when the character has no model of its own.</param>
+    public static ChatAgent ToAgent(SavedCharacter character, string fallbackModel, string? voiceId)
+        => new(character.Id, character.Name,
+            string.IsNullOrWhiteSpace(character.Model) ? fallbackModel : character.Model,
+            character.Persona, voiceId);
+}

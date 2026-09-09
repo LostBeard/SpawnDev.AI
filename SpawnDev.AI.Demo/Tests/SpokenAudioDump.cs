@@ -46,7 +46,7 @@ internal static class SpokenAudioDump
         if (!Enabled || samples == null || samples.Length == 0) return;
 
         var safe = Sanitize(label);
-        var b64 = Convert.ToBase64String(WavFixture.Encode(samples, sampleRate));
+        var b64 = Convert.ToBase64String(WavCodec.Encode(samples, sampleRate));
         var chunks = (b64.Length + ChunkChars - 1) / ChunkChars;
 
         // The header carries the chunk count so the runner can tell a truncated transfer from a complete

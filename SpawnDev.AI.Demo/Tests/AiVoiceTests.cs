@@ -24,10 +24,25 @@ public sealed class AiVoiceTests
     private readonly AiWorkerClient _client;
     private readonly HttpClient _http;
 
-    /// <summary>What the fixture actually says, verbatim.</summary>
-    private const string KnownTranscript = "All LibriVox recordings are in the public domain.";
+    /// <summary>
+    /// The clip every fixture here is cloned from - taken from the SHIPPED manifest, not restated.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 ONE DEFINITION ON PURPOSE. This clip is also a voice the app offers to users, and it used to be
+    /// described twice: once here and once in <see cref="BundledVoices"/>. Two copies of "what the audio
+    /// says" drift, and the failure mode of a wrong transcript is not an error - ZipVoice SPEAKS the words
+    /// the transcript claims are there, as a preamble to everything it generates. That defect already
+    /// shipped in this project once. Now the gate below clones from exactly what users get, so a wrong
+    /// transcript fails a test instead of quietly prefixing every reply.
+    /// </remarks>
+    private static readonly BundledVoice Fixture =
+        BundledVoices.Find(BundledVoices.IdPrefix + "librivox-shasta")
+        ?? throw new InvalidOperationException("the bundled LibriVox voice is missing from BundledVoices.All");
 
-    private const string FixtureUrl = "test-audio/librivox-public-domain.wav";
+    /// <summary>What the fixture actually says, verbatim.</summary>
+    private static string KnownTranscript => Fixture.Transcript;
+
+    private static string FixtureUrl => Fixture.Url;
 
     /// <summary>The chat model, matching AiChatTests and the demo's default.</summary>
     /// <remarks>
@@ -575,7 +590,7 @@ public sealed class AiVoiceTests
     private async Task<(float[] Samples, int SampleRate)> LoadFixtureAsync()
     {
         var bytes = await _http.GetByteArrayAsync(FixtureUrl);
-        var (samples, rate) = WavFixture.Decode(bytes);
+        var (samples, rate) = WavCodec.Decode(bytes);
         if (samples.Length == 0) throw new Exception($"{FixtureUrl} decoded to zero samples");
         return (samples, rate);
     }

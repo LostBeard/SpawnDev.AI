@@ -2,6 +2,7 @@
 @using SpawnDev.SpawnJS
 @inject AiWorkerClient Ai
 @inject VoiceLibrary Voices
+@inject HttpClient Http
 @inject SpawnJSRuntime JS
 
 <div class="sdai">
@@ -35,6 +36,12 @@
                     </select>
                 </label>
                 <button class="gear @(_showSettings ? "on" : "")" @onclick="ToggleSettings" title="Agent settings (system prompt, temperature)">⚙️</button>
+                @* GROUP CHAT. Characters the user made - each with its own persona, model and voice - talk
+                   to each other and to the user inside a shared scene. *@
+                <button class="gear @(_showRoom ? "on" : "")" @onclick="() => { _showRoom = !_showRoom; }"
+                        title="Group chat: characters, scene, and who is in the room">
+                    @(RoomActive ? $"🎭 {_room.Agents.Count}" : "🎭")
+                </button>
             </div>
         }
     </header>
@@ -65,6 +72,124 @@
                     <input type="range" min="64" max="2048" step="64" @bind="_maxTokens" @bind:event="oninput" disabled="@_busy" />
                     <span class="sethint">Upper bound on reply length</span>
                 </label>
+            </div>
+        </div>
+    }
+
+    @* ── GROUP CHAT ─────────────────────────────────────────
+       Characters are saved in OPFS and survive a reload. The SCENE belongs to the room, not to any
+       character: it is the shared setting every member is handed verbatim, which is what lets several
+       characters role-play ONE situation together instead of separately answering the same question. *@
+    @if (_ready && _showRoom)
+    {
+        <div class="settings room">
+            <div class="setrow">
+                <label class="setlbl">
+                    The scene
+                    <span class="sethint">
+                        Where everyone is and what is going on. Every character is told this, word for word.
+                        Leave it empty for an ordinary conversation.
+                    </span>
+                </label>
+                <textarea class="sysbox" @bind="_room.Scene" @bind:event="oninput" rows="3" disabled="@_busy"
+                          placeholder="e.g. The derelict colony of Copper-9, in the dark, after the lights failed."></textarea>
+                <div class="setactions">
+                    <label class="setlbl inline">
+                        Replies per round <b>@_room.MaxAgentTurnsPerRound</b>
+                        <input type="range" min="1" max="8" step="1" @bind="_room.MaxAgentTurnsPerRound"
+                               @bind:event="oninput" disabled="@_busy" />
+                        <span class="sethint">
+                            How many character replies one message triggers. This is the stop: characters
+                            given each other&#39;s replies will otherwise answer each other forever.
+                        </span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="setrow">
+                <label class="setlbl">
+                    Characters
+                    <span class="sethint">Click a name to bring them into the room, or send them out again.</span>
+                </label>
+                @if (_characters.Count == 0)
+                {
+                    <p class="sethint">None yet — make one below.</p>
+                }
+                <div class="charlist">
+                    @foreach (var c in _characters)
+                    {
+                        <span class="charchip @(IsInRoom(c.Id) ? "in" : "")">
+                            <button class="chip" @onclick="() => ToggleInRoom(c)" disabled="@_busy"
+                                    title="@(IsInRoom(c.Id) ? $"Take {c.Name} out of the room" : $"Bring {c.Name} into the room")">
+                                @(IsInRoom(c.Id) ? "🎭" : "＋") @c.Name
+                                @if (CharacterLibrary.ResolveVoice(c, _savedVoices) != null)
+                                {
+                                    <span class="charvoice">🗣️</span>
+                                }
+                            </button>
+                            <button class="chip tiny" @onclick="() => EditCharacter(c)" title="@($"Edit {c.Name}")">✎</button>
+                            <button class="chip tiny" @onclick="() => DeleteCharacterAsync(c.Id)"
+                                    title="@($"Delete {c.Name} from this device")">🗑️</button>
+                        </span>
+                    }
+                </div>
+            </div>
+
+            <div class="setrow">
+                <label class="setlbl">
+                    @(string.IsNullOrEmpty(_editingCharId) ? "New character" : $"Editing {_charName}")
+                </label>
+                <div class="setgrid">
+                    <label class="setlbl">
+                        Name
+                        <input class="voice-name wide" @bind="_charName" disabled="@_savingCharacter"
+                               placeholder="e.g. Uzi, N, Doll" />
+                    </label>
+                    <label class="setlbl">
+                        Model
+                        <select @bind="_charModel" disabled="@_savingCharacter">
+                            <option value="">(the room&#39;s model — @_model)</option>
+                            @foreach (var m in _models)
+                            {
+                                <option value="@m">@m</option>
+                            }
+                        </select>
+                        <span class="sethint">
+                            Only one model stays resident, so characters on different models make the room
+                            reload one per turn. The same model for everyone is much faster.
+                        </span>
+                    </label>
+                    <label class="setlbl">
+                        Voice
+                        <select @bind="_charVoiceId" disabled="@_savingCharacter">
+                            <option value="">(no voice — text only)</option>
+                            @foreach (var v in _savedVoices)
+                            {
+                                <option value="@v.Id">🗣️ @v.DisplayName</option>
+                            }
+                            @foreach (var v in BundledVoices.All)
+                            {
+                                <option value="@v.Id" title="@($"{v.Licence} — {v.Attribution}")">🎧 @v.DisplayName</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+                <label class="setlbl">
+                    How they act
+                    <span class="sethint">Written into their system turn, exactly as you type it.</span>
+                </label>
+                <textarea class="sysbox" @bind="_charPersona" rows="3" disabled="@_savingCharacter"
+                          placeholder="e.g. You are Uzi Doorman: sardonic, defensive, and secretly loyal. You speak in short, cutting sentences."></textarea>
+                <div class="setactions">
+                    <button class="primary" @onclick="SaveCharacterAsync"
+                            disabled="@(_savingCharacter || string.IsNullOrWhiteSpace(_charName))">
+                        @(_savingCharacter ? "Saving…" : string.IsNullOrEmpty(_editingCharId) ? "Create" : "Save changes")
+                    </button>
+                    @if (!string.IsNullOrEmpty(_editingCharId))
+                    {
+                        <button class="linkbtn" @onclick="NewCharacter" disabled="@_savingCharacter">New character</button>
+                    }
+                </div>
             </div>
         </div>
     }
@@ -105,7 +230,8 @@
             @foreach (var msg in _messages)
             {
                 <div class="msg @msg.Role">
-                    <div class="who">@(msg.Role == "user" ? "You" : msg.Role == "system" ? "System" : "Assistant")</div>
+                    <div class="who">@(!string.IsNullOrEmpty(msg.Who) ? msg.Who
+                                        : msg.Role == "user" ? "You" : msg.Role == "system" ? "System" : "Assistant")</div>
                     <div class="text">@RenderRich(msg.Text)</div>
                     @foreach (var img in msg.Images)
                     {
@@ -126,7 +252,7 @@
             @if (_busy)
             {
                 <div class="msg assistant">
-                    <div class="who">Assistant</div>
+                    <div class="who">@(string.IsNullOrEmpty(_streamingWho) ? "Assistant" : _streamingWho)</div>
                     <div class="text">@RenderRich(_streaming)<span class="caret">▋</span></div>
                     @if (!string.IsNullOrEmpty(_busyNote))
                     {
@@ -174,18 +300,23 @@
                reply - re-sending the reference PCM over the worker, making the engine re-derive prompt
                features that never change, and cloning from the recogniser's transcript rather than a clean
                one. A saved voice is derived once, persists in OPFS across reloads, and is chosen here. *@
-            @if (_savedVoices.Count > 0)
-            {
-                <select class="voice-picker" disabled="@_savingVoice"
-                        title="Which voice replies are spoken in"
-                        @onchange="e => SelectVoiceAsync(e.Value?.ToString() ?? string.Empty)">
-                    <option value="" selected="@string.IsNullOrEmpty(_voiceId)">🗣️ Your last turn</option>
-                    @foreach (var v in _savedVoices)
-                    {
-                        <option value="@v.Id" selected="@(_voiceId == v.Id)">🗣️ @v.DisplayName</option>
-                    }
-                </select>
-            }
+            <select class="voice-picker" disabled="@_savingVoice"
+                    title="Which voice replies are spoken in"
+                    @onchange="e => SelectVoiceAsync(e.Value?.ToString() ?? string.Empty)">
+                <option value="" selected="@string.IsNullOrEmpty(_voiceId)">🗣️ Your last turn</option>
+                @foreach (var v in _savedVoices)
+                {
+                    <option value="@v.Id" selected="@(_voiceId == v.Id)">🗣️ @v.DisplayName</option>
+                }
+                @* Included voices need nothing recorded first, so the picker is useful on a fresh install.
+                   Each carries its licence in BundledVoices.cs. *@
+                @foreach (var v in BundledVoices.All)
+                {
+                    <option value="@v.Id" selected="@(_voiceId == v.Id)" title="@($"{v.Licence} — {v.Attribution}")">
+                        🎧 @v.DisplayName
+                    </option>
+                }
+            </select>
             @if (_lastHeardSamples != null && _lastHeardSamples.Length > 0)
             {
                 <button class="primary" disabled="@_savingVoice"
@@ -413,6 +544,90 @@
         .setgrid {
             grid-template-columns: 1fr;
         }
+    }
+
+    /* ── GROUP CHAT ─────────────────────────────────────────────────────────── */
+    .settings.room .setgrid {
+        grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    @@media (max-width: 760px) {
+        .settings.room .setgrid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .settings select,
+    .settings input[type=text] {
+        background: #131926;
+        border: 1px solid #273043;
+        color: #d6dbe4;
+        border-radius: 8px;
+        padding: .35rem .5rem;
+        font-size: .78rem;
+        font-family: inherit;
+        margin-top: .2rem;
+        max-width: 100%;
+    }
+
+    .setlbl.inline {
+        flex: 1;
+    }
+
+    .charlist {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .4rem;
+        margin-top: .35rem;
+    }
+
+    /* A chip is one character: the name toggles them in and out of the room, the two small buttons
+       edit and delete. Grouped in one bordered span so it reads as one thing rather than three. */
+    .charchip {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid #273043;
+        border-radius: 999px;
+        background: #0d121c;
+        padding: 0 .15rem 0 0;
+    }
+
+        /* IN THE ROOM has to be visible at a glance - it is the difference between a character who
+           will speak on the next message and one who will not. */
+        .charchip.in {
+            border-color: #7c3aed;
+            background: #191033;
+        }
+
+        .charchip .chip {
+            border: none;
+            background: none;
+            margin: 0;
+        }
+
+        .charchip.in .chip {
+            color: #d6dbe4;
+        }
+
+        .charchip .chip.tiny {
+            padding: .3rem .4rem;
+            font-size: .7rem;
+            opacity: .6;
+        }
+
+            .charchip .chip.tiny:hover {
+                opacity: 1;
+            }
+
+    .charvoice {
+        font-size: .65rem;
+        opacity: .75;
+        margin-left: .15rem;
+    }
+
+    .voice-name.wide {
+        width: 100%;
+        box-sizing: border-box;
     }
 
     .hero {

@@ -1,14 +1,21 @@
-namespace SpawnDev.AI.Demo.Tests;
+namespace SpawnDev.AI.Demo;
 
 /// <summary>
-/// Decodes the WAV fixtures the speech and voice tests share.
+/// Reads and writes PCM WAV: the one decoder this app uses, for fixtures and for shipped audio alike.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Extracted from AiSpeechTests so the voice tests use the SAME decoder rather than a second one. Two
 /// decoders is how "the model is wrong" and "the audio arrived differently than I think" become
 /// indistinguishable across two test files.
+/// </para>
+/// <para>
+/// ⚠️ It moved OUT of Tests/ when the app itself needed to decode a bundled voice. Copying it into the app
+/// and leaving a second copy behind would have reintroduced exactly the two-decoder ambiguity it was
+/// extracted to remove - and the shipped path and the tested path would have been different code.
+/// </para>
 /// </remarks>
-internal static class WavFixture
+internal static class WavCodec
 {
     /// <summary>
     /// Decode a PCM WAV to mono float in [-1, 1].

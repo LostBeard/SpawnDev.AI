@@ -27,6 +27,9 @@ public static class AiTestSuiteRunner
         // suite's own count is the only tell (READY: N tests), which is why a new class gets added in the
         // same change that creates it.
         typeof(VoiceLibraryTests),
+        typeof(AgentRoomTests),
+        typeof(CharacterLibraryTests),
+        typeof(BundledVoiceTests),
     };
 
     /// <summary>Milliseconds a test may run before it is reported as timed out. Overridable per test.</summary>

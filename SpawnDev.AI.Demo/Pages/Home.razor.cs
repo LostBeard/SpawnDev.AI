@@ -63,9 +63,21 @@ public partial class Home : IDisposable
         /// <summary>The user pressed Stop during this turn, so the text is deliberately partial.
         /// Distinct from <see cref="Truncated"/>, which is the model hitting the output-token cap.</summary>
         public bool Stopped;
+        /// <summary>
+        /// Display name of the speaker. Empty falls back to the role label ("Assistant").
+        /// </summary>
+        /// <remarks>
+        /// ⚠️ In a room EVERY member is role "assistant", so the role alone cannot say who spoke and a
+        /// three-way conversation renders as one assistant talking to itself. The name is carried on the
+        /// message rather than looked up later because a character can be renamed or removed from the room
+        /// afterwards, and the transcript must still say who said it at the time.
+        /// </remarks>
+        public string Who = "";
     }
     readonly List<Msg> _messages = new();
     string _input = "", _streaming = "";
+    /// <summary>Who the in-progress bubble belongs to. Empty = the solo assistant.</summary>
+    string _streamingWho = "";
     ElementReference _scrollRef;
 
     async Task StartAsync()
@@ -99,6 +111,8 @@ public partial class Home : IDisposable
             // Metadata only - no clip is read and nothing is prepared here. Preparing happens when a voice
             // is actually chosen, so a page load never pays for voices the user may not use.
             await LoadSavedVoicesAsync();
+            // Characters are metadata only - no audio, no model - so listing them costs a directory read.
+            await LoadCharactersAsync();
         }
         catch (Exception ex) { _status = $"Failed: {ex.Message}"; }
         finally { _starting = false; StateHasChanged(); }
@@ -141,6 +155,11 @@ public partial class Home : IDisposable
             await ScrollToBottom();
             return;
         }
+
+        // With characters in the room the turn belongs to THEM: each replies in order, hearing the ones
+        // before it. The solo path below sends one message to one model with the page's system prompt,
+        // which is a different conversation entirely - not a special case of the same one.
+        if (RoomActive) { await RunRoomRoundAsync(text); return; }
 
         _messages.Add(new Msg { Role = "user", Text = text });
         _busy = true; _streaming = "";
@@ -535,6 +554,8 @@ public partial class Home : IDisposable
     /// </remarks>
     async Task SelectVoiceAsync(string id)
     {
+        if (BundledVoices.Find(id) is { } bundled) { await SelectBundledVoiceAsync(bundled); return; }
+
         var saved = _savedVoices.FirstOrDefault(v => v.Id == id);
         if (saved == null) { ClearSavedVoice(); return; }
 
@@ -566,6 +587,53 @@ public partial class Home : IDisposable
         catch (Exception ex)
         {
             SpeechFailed($"Could not use “{saved.DisplayName}”: {ex.Message}");
+        }
+        finally
+        {
+            _savingVoice = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Choose one of the voices included with the app, fetching and preparing it the first time.
+    /// </summary>
+    /// <remarks>
+    /// The point of these is that a user has something to speak with BEFORE recording anyone: the per-turn
+    /// cloning path needs the user to have just spoken, and a saved voice needs someone to have trained one.
+    /// A bundled clip needs neither.
+    /// <para>
+    /// ⚠️ Prepared from <see cref="BundledVoice.Transcript"/>, which must be verbatim. A transcript
+    /// containing words the clip does not say makes ZipVoice speak those words at the start of every line
+    /// it generates - see the remarks on <see cref="BundledVoices"/>.
+    /// </para>
+    /// </remarks>
+    async Task SelectBundledVoiceAsync(BundledVoice bundled)
+    {
+        _savingVoice = true;
+        _status = _preparedVoices.Contains(bundled.Id) ? $"Switching to “{bundled.DisplayName}”…"
+                                                       : $"Preparing “{bundled.DisplayName}” (once)…";
+        StateHasChanged();
+        try
+        {
+            if (!_preparedVoices.Contains(bundled.Id))
+            {
+                var wav = await Http.GetByteArrayAsync(bundled.Url);
+                var (samples, rate) = WavCodec.Decode(wav);
+                if (samples.Length == 0)
+                    throw new Exception($"{bundled.Url} decoded to zero samples");
+                await Ai.PrepareVoiceAsync(bundled.Id, bundled.DisplayName, bundled.Transcript, samples, rate);
+                _preparedVoices.Add(bundled.Id);
+                Console.WriteLine($"[voices] prepared bundled voice {bundled.DisplayName} "
+                                + $"({samples.Length / (double)rate:F1}s, {bundled.Licence})");
+            }
+            _voiceId = bundled.Id;
+            _voiceName = bundled.DisplayName;
+            _status = $"Speaking as “{_voiceName}”.";
+        }
+        catch (Exception ex)
+        {
+            SpeechFailed($"Could not use “{bundled.DisplayName}”: {ex.Message}");
         }
         finally
         {
@@ -770,16 +838,20 @@ public partial class Home : IDisposable
     /// <summary>Cancels the current spoken reply - both the chunk loop and the audio.</summary>
     CancellationTokenSource? _speakCts;
 
-    /// <summary>Synthesise one chunk, in the saved voice when there is one.</summary>
-    async Task<(float[] Samples, int Rate, double Ms)> SynthesizeChunkAsync(string chunk)
+    /// <summary>
+    /// Synthesise one chunk. <paramref name="voiceId"/> null falls back to the page's selected voice, so a
+    /// room member speaks in ITS voice rather than whoever the page last picked.
+    /// </summary>
+    async Task<(float[] Samples, int Rate, double Ms)> SynthesizeChunkAsync(string chunk, string? voiceId = null)
     {
+        var useVoice = voiceId ?? _voiceId;
         // A saved voice speaks from features derived ONCE. The per-turn path re-sends the reference PCM as a
         // JSON number array and makes the engine re-derive those features every time, and it clones from
         // whatever the recogniser THOUGHT was said - a transcript that is not verbatim bleeds into the start
         // of every generated line.
-        var (samples, rate, _, ms, _) = string.IsNullOrEmpty(_voiceId)
+        var (samples, rate, _, ms, _) = string.IsNullOrEmpty(useVoice)
             ? await Ai.SpeakAsync(chunk, _lastHeardText, _lastHeardSamples!, WhisperRate)
-            : await Ai.SpeakInVoiceAsync(chunk, _voiceId);
+            : await Ai.SpeakInVoiceAsync(chunk, useVoice);
         return (samples, rate, ms);
     }
 
@@ -800,13 +872,29 @@ public partial class Home : IDisposable
     }
 
     /// <summary>Speak one reply, then hand the microphone back.</summary>
-    async Task SpeakReplyAsync(string text)
+    /// <param name="text">What to say.</param>
+    /// <param name="voiceId">
+    /// The voice to say it in. Null uses the page's selected voice; a room member passes its OWN, which is
+    /// what makes several characters distinguishable by ear rather than all sounding like the last voice
+    /// the page happened to pick.
+    /// </param>
+    /// <param name="resumeListening">
+    /// Whether to reopen the microphone when this utterance ends. A solo reply IS the turn, so it does.
+    /// </param>
+    /// <remarks>
+    /// 🔴 <paramref name="resumeListening"/> exists because a GROUP round speaks several times in one turn.
+    /// Reopening the mic after each member would start recording the user while the next character is still
+    /// to speak - so the recording captures that character's synthesised voice, and the room is talking to
+    /// itself through the microphone. The round reopens it ONCE, at the end.
+    /// </remarks>
+    async Task SpeakReplyAsync(string text, string? voiceId = null, bool resumeListening = true)
     {
         _speakCts?.Dispose();
         _speakCts = new CancellationTokenSource();
+        var voice = voiceId ?? _voiceId;
         // A PREPARED voice needs no reference for this turn - that is the whole point of preparing it.
         // Only the per-turn cloning path depends on having just heard something.
-        if (string.IsNullOrEmpty(_voiceId) && (_lastHeardSamples == null || _lastHeardSamples.Length == 0))
+        if (string.IsNullOrEmpty(voice) && (_lastHeardSamples == null || _lastHeardSamples.Length == 0))
         {
             // Nothing to clone from. Say so rather than falling silent: a hands-free loop that stops
             // talking for no stated reason is indistinguishable from one that crashed.
@@ -874,14 +962,14 @@ public partial class Home : IDisposable
             int spokenChunks = 0;
 
             // Chunk 0 is synthesised up front; from then on the NEXT one renders while the current plays.
-            var pending = SynthesizeChunkAsync(chunks[0]);
+            var pending = SynthesizeChunkAsync(chunks[0], voice);
             for (int i = 0; i < chunks.Count; i++)
             {
                 if (_speakCts?.IsCancellationRequested ?? false) break;
 
                 var (samples, rate, ms) = await pending;
                 // Kick the next synthesis BEFORE playing this one - that overlap is the whole point.
-                pending = i + 1 < chunks.Count ? SynthesizeChunkAsync(chunks[i + 1]) : null!;
+                pending = i + 1 < chunks.Count ? SynthesizeChunkAsync(chunks[i + 1], voice) : null!;
 
                 if (_speakCts?.IsCancellationRequested ?? false) break;
                 if (i == 0)
@@ -928,8 +1016,10 @@ public partial class Home : IDisposable
             StateHasChanged();
         }
 
-        // Back to listening for the next turn - only now, with the speakers quiet.
-        if (_handsFree && !_listening) await ResumeListeningAsync("after speaking the reply");
+        // Back to listening for the next turn - only now, with the speakers quiet, and only when this
+        // utterance was the whole turn. See resumeListening.
+        if (resumeListening && _handsFree && !_listening)
+            await ResumeListeningAsync("after speaking the reply");
     }
 
     /// <summary>True while a reply is being synthesised or played.</summary>
