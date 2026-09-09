@@ -161,6 +161,29 @@
                     title="@(_handsFree ? "Stop hands-free conversation" : "Hands-free: talk, and it talks back in your voice")">
                 @(_handsFree ? "🛑 Hands-free" : "💬🔊")
             </button>
+            @* SAVE A VOICE. Without this the reply is cloned from the user's LAST TURN on every single
+               reply - which re-sends the reference PCM over the worker and makes the engine re-derive the
+               prompt features each time, and clones from the recogniser's transcript rather than a clean
+               one. Saving keeps a voice and speaks from it directly. Shown only once there is audio to
+               save, and swapped for a "back to last turn" control while a voice is held. *@
+            @if (string.IsNullOrEmpty(_voiceId))
+            {
+                @if (_lastHeardSamples != null && _lastHeardSamples.Length > 0)
+                {
+                    <button class="primary" disabled="@_savingVoice"
+                            @onclick='() => SaveCurrentVoiceAsync("My voice")'
+                            title="Keep this voice and stop re-cloning it on every reply">
+                        @(_savingVoice ? "…" : "💾🗣️")
+                    </button>
+                }
+            }
+            else
+            {
+                <button class="primary" @onclick="ClearSavedVoice"
+                        title="@($"Speaking as {_voiceName} - click to use your last turn's voice again")">
+                    🗣️ @_voiceName
+                </button>
+            }
             @* Stop REPLACES Send while a generation is in flight, and is bound to _generationCts rather
                than _busy: _busy is also true while transcribing or generating an image, where there is
                no chat generation to cancel and the button would be dead. *@

@@ -490,6 +490,67 @@ public partial class Home : IDisposable
     float[]? _lastHeardSamples;
     string _lastHeardText = "";
 
+    // ── SAVED VOICES ───────────────────────────────────────────────────────────────────────────────────
+    // Empty = the original behaviour: clone from whatever the user last said, every turn. Set = speak from
+    // a voice whose reference was turned into features ONCE.
+    //
+    // 🔴 WHY THIS IS A CHOICE AND NOT THE DEFAULT PATH. Cloning per turn costs on every reply: the
+    // reference PCM crosses the worker as a JSON number array (a six-figure array for a few seconds at
+    // 24 kHz), the engine re-trims it and re-runs the mel to rebuild prompt features that never change for
+    // a voice, and the clone is taken from the RECOGNISER'S transcript of the user - which must be verbatim
+    // or it bleeds into the start of every generated line. Saving a voice pays all of that once.
+    string _voiceId = "";
+    string _voiceName = "";
+    bool _savingVoice;
+
+    /// <summary>
+    /// Keep the voice just heard, so every later reply speaks in it without re-deriving anything.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Uses the turn's OWN transcript as the reference text, which is the best available and still only
+    /// as good as the recogniser. That is a reason to let a person save a voice deliberately from a clean
+    /// utterance rather than re-cloning silently from whatever the last turn happened to be.
+    /// </remarks>
+    async Task SaveCurrentVoiceAsync(string displayName)
+    {
+        if (_lastHeardSamples == null || _lastHeardSamples.Length == 0)
+        {
+            SpeechFailed("No audio to save a voice from yet — say something first.");
+            return;
+        }
+        _savingVoice = true;
+        _status = $"Saving the voice “{displayName}”…";
+        StateHasChanged();
+        try
+        {
+            var id = "voice-" + Guid.NewGuid().ToString("n")[..8];
+            var prepared = await Ai.PrepareVoiceAsync(id, displayName, _lastHeardText,
+                _lastHeardSamples, WhisperRate);
+            _voiceId = prepared.VoiceId;
+            _voiceName = string.IsNullOrWhiteSpace(prepared.DisplayName) ? displayName : prepared.DisplayName;
+            _status = $"Saved “{_voiceName}” ({prepared.ReferenceSeconds:F1}s reference). "
+                    + "Replies now speak in it without re-cloning.";
+        }
+        catch (Exception ex)
+        {
+            SpeechFailed($"Saving the voice failed: {ex.Message}");
+        }
+        finally
+        {
+            _savingVoice = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Go back to cloning from whatever was last heard.</summary>
+    void ClearSavedVoice()
+    {
+        _voiceId = "";
+        _voiceName = "";
+        _status = "Using the voice from your last turn again.";
+        StateHasChanged();
+    }
+
     /// <summary>Turn the hands-free conversation on or off.</summary>
     async Task ToggleHandsFreeAsync()
     {
@@ -606,12 +667,14 @@ public partial class Home : IDisposable
     /// <summary>Speak one reply, then hand the microphone back.</summary>
     async Task SpeakReplyAsync(string text)
     {
-        if (_lastHeardSamples == null || _lastHeardSamples.Length == 0)
+        // A PREPARED voice needs no reference for this turn - that is the whole point of preparing it.
+        // Only the per-turn cloning path depends on having just heard something.
+        if (string.IsNullOrEmpty(_voiceId) && (_lastHeardSamples == null || _lastHeardSamples.Length == 0))
         {
             // Nothing to clone from. Say so rather than falling silent: a hands-free loop that stops
             // talking for no stated reason is indistinguishable from one that crashed.
             SpeechFailed("Nothing to speak with — the voice is cloned from what you said, and I have no "
-                       + "audio for this turn.");
+                       + "audio for this turn. Use \"Save this voice\" to keep one instead.");
             return;
         }
 
@@ -658,8 +721,13 @@ public partial class Home : IDisposable
                 catch (Exception ex) { Console.WriteLine($"[HF-SPEAK] ticker stopped: {ex.Message}"); }
             });
 
-            var (samples, rate, _, ms, spokenText) = await Ai.SpeakAsync(text, _lastHeardText,
-                _lastHeardSamples, WhisperRate);
+            // A saved voice speaks from features derived ONCE. The per-turn path re-sends the reference PCM
+            // as a JSON number array and makes the engine re-derive those features on every single reply,
+            // and it clones from whatever the recogniser THOUGHT was said - a transcript that is not
+            // verbatim bleeds into the start of every generated line.
+            var (samples, rate, _, ms, spokenText) = string.IsNullOrEmpty(_voiceId)
+                ? await Ai.SpeakAsync(text, _lastHeardText, _lastHeardSamples!, WhisperRate)
+                : await Ai.SpeakInVoiceAsync(text, _voiceId);
             // Say so when the brevity cap shortened the reply. The page shows the FULL text while the voice
             // reads part of it, and without this line that gap is invisible - the reply just sounds like it
             // stops early, which is indistinguishable from the voice breaking down at length.
