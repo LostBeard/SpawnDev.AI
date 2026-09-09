@@ -114,17 +114,22 @@ public sealed class HubModelProvider : IAiModelProvider
     /// file '' len=675710816 downloaded=188743680 done=False</c>.
     /// </para>
     /// <para>
-    /// Two things in that line matter. <c>TorrentFileInfo.Name</c> is EMPTY - the name lives on the torrent
-    /// for a single-file torrent, so matching on the file name never matches. And 162 pieces at the usual
-    /// piece size accounts for the whole reported <c>Length</c>, which means that length is PIECE-ALIGNED
-    /// rather than the true file size (the published GGUF is ~531 MB, not 675 MB). So <c>Downloaded</c> can
-    /// never reach <c>Length</c>, <c>Done</c> can never be true, and a size taken from here overstates the
-    /// download by ~140 MB - worse than the configured figure, not better.
+    /// <c>TorrentFileInfo.Name</c> is EMPTY there - the name lives on the torrent for a single-file
+    /// torrent, so matching on the file name never matches anything. Match on <c>Torrent.Name</c>.
     /// </para>
     /// <para>
-    /// 🔴 SO THE DOWNLOAD GUARD IS BUILT ON CONSENT, NOT ON THIS. Whether the user AGREED to a model is a
-    /// fact the app owns and can persist; whether the bytes are still cached is not answerable here yet.
-    /// This value is fine for showing progress, and nothing decides anything on it.
+    /// ⚠️ I PREVIOUSLY WROTE, IN THIS COMMENT, THAT THE REPORTED <c>Length</c> WAS PIECE-ALIGNED AND
+    /// OVERSTATED THE FILE. That was wrong, and it is retracted. The hub's own cache holds
+    /// <c>qwen2.5-0.5b-instruct-q8_0.gguf</c> at exactly 675,710,816 bytes - the same figure the torrent
+    /// reports - so <c>Length</c> is the true size. What was actually wrong was the hand-entered
+    /// <c>ApproxSizeBytes</c> in the demo (531,067,136), and the sizes there now come from the hub cache.
+    /// </para>
+    /// <para>
+    /// 🔴 THE GUARD IS STILL BUILT ON CONSENT, NOT ON THIS - but for a narrower reason than I first gave.
+    /// <c>Done</c> read false on a model that had loaded and answered, at 27.9%, and I do not yet know why
+    /// (lazy-hash piece verification lagging behind cached data is the likeliest explanation, since a
+    /// lazy-hash torrent computes its hashes as it goes). Until that is understood, whether the user
+    /// AGREED is the fact the app can actually answer. This value is fine for showing progress.
     /// </para>
     /// </remarks>
     public double? CachedFraction(string name)

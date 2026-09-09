@@ -48,10 +48,13 @@ builder.Services.AddSpawnDevAI(options =>
     options.MaxSeqLen = 4096;
     // ── THE MODEL CATALOGUE ────────────────────────────────────────────────────────────────────────
     //
-    // 🔴 NOTHING HERE DOWNLOADS BY ITSELF. Every size below is shown in the picker before the user
-    // commits, and `GET /ai/models` reports whether this device already has each one (read from the
-    // torrent client, not from a note the app keeps about itself). A wrong size in this list misinforms
-    // exactly the consent it exists to obtain, so these are measured, not estimated.
+    // 🔴 NOTHING HERE DOWNLOADS BY ITSELF, and every size below is shown in the picker before the user
+    // commits. A wrong size misinforms exactly the consent it exists to obtain.
+    //
+    // ⚠️ THESE ARE READ FROM THE HUB'S OWN CACHE (`W:\srv\spawndev_hub\hf-cache` and `ollama-cache`),
+    // which holds the exact files it serves - not estimated, and not taken from a model card. The
+    // hand-entered figures they replaced were wrong: qwen2.5-0.5b was listed at 531,067,136 when the
+    // file it serves is 675,710,816, understating the DEFAULT model's download by 144 MB.
     //
     // The Description is what the picker shows. It says what the model is FOR and what it costs, because
     // a name and a byte count do not tell anyone whether a model can hold a character.
@@ -59,14 +62,14 @@ builder.Services.AddSpawnDevAI(options =>
         "qwen2.5:0.5b-instruct-q8_0",
         "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
         "qwen2.5-0.5b-instruct-q8_0.gguf",
-        ApproxSizeBytes: 531_067_136,
+        ApproxSizeBytes: 675_710_816,
         Description: "Smallest useful chat model - the quickest way to see the demo work. Out of its "
                    + "depth in a group scene: it restates the scene back at you instead of acting in it."));
     options.Models.Add(new HubModelOption(
         "smollm2:360m-instruct-q8_0",
         "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF",
         "smollm2-360m-instruct-q8_0.gguf",
-        ApproxSizeBytes: 386_404_352,
+        ApproxSizeBytes: 386_404_992,
         Description: "Tiny and near-instant. Useful for checking the plumbing; loses the thread fast."));
     options.Models.Add(new HubModelOption(
         "qwen3:0.6b-q8_0",
@@ -86,7 +89,7 @@ builder.Services.AddSpawnDevAI(options =>
         "qwen2.5:1.5b-instruct-q4_k_m",
         "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
         "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-        ApproxSizeBytes: 1_117_320_000,
+        ApproxSizeBytes: 1_117_320_736,
         Description: "Knows appreciably more than the 0.5B and still decodes interactively."));
     // ── The role-play tier ─────────────────────────────────────────────────────────────────────────
     // Same "qwen3" architecture as the 0.6B, so no engine work - a size step, not a port. Both are
@@ -126,7 +129,7 @@ builder.Services.AddSpawnDevAI(options =>
         "gemma4:12b",
         "gemma4",
         "12b",
-        approxSizeBytes: 7_381_382_048,   // MEASURED from the hub webseed, not estimated
+        approxSizeBytes: 7_381_382_048,
         description: "Text + image + audio in, text out - the multimodal path for Reachy snapshots and "
                    + "microphone input. LARGE: ~6.9 GB for the text decoder alone, and it needs a WebGPU "
                    + "GPU with the VRAM to match. Text-only in this demo so far."));

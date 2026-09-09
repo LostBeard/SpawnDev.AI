@@ -30,11 +30,11 @@ Library changes since 1.1.0-preview.1. Not published yet.
   tag, …)` plus a `Description` for the picker. That is how multi-layer models are published (gemma4
   ships its weights and its vision/audio projector as separate layers), and it is the same path the
   ILGPU.ML demo uses.
-- **`HubModelProvider.CachedFraction`** reports how much of a model is local, and documents why it is
-  progress rather than a verdict: the loader opens with `deselect: true` so a torrent's progress is
-  partial by design; `TorrentFileInfo.Name` is empty for the hub's single-file lazy-hash torrents; and
-  the reported `Length` is piece-aligned and overstates the file (162 pieces read as 675,710,816 for a
-  ~531 MB GGUF). Nothing decides anything on it.
+- **`HubModelProvider.CachedFraction`** reports how much of a model is local, as progress rather than a
+  verdict. `TorrentFileInfo.Name` is empty for the hub's single-file lazy-hash torrents (the name lives
+  on the torrent), the loader opens with `deselect: true` so progress is partial by design, and `Done`
+  read false on a model that had loaded and answered - so the download guard rests on the user's
+  recorded consent instead. Nothing decides anything on this value.
 
 ## 1.0.0-preview.1 - Initial extraction
 
