@@ -3,6 +3,25 @@
 Notable changes per release. Preview - APIs will change.
 
 ## Unreleased - the shared-worker fixes, and two instruments for a path no gate could see
+### Changed - the demo defaults to a DEDICATED worker
+
+🔴 Captain's call, 2026-09-10: *"we'll default to dedicated for now. this load time is bullshit and there
+is a major bug somewhere that is being overlooked."*
+
+`PreferSharedWorker` now defaults to **false**. This is a MITIGATION, not a design change - the shared
+worker is the intended architecture ("multiple pages share a single AI server, just like ollama on the
+desktop") and `?worker=shared` opts back in, because a path that cannot be reached cannot be fixed.
+
+A shared worker has no `createSyncAccessHandle` at all, so every storage operation takes the
+`createWritable`/Blob fallback. Three real defects on that path are fixed in SpawnDev.WebTorrent 4.2.7 and
+it is STILL not fast enough to meet a visitor on: 626 s for a 1.8 GB model against 92.8 s for the same
+model in a dedicated worker.
+
+⚠️ **The remaining gap is NOT explained.** Naming it here rather than implying the fixes closed it.
+
+⚠️ What is given up: two tabs each load their own copy of a model, paying the load and the VRAM
+separately. That is the trade, made deliberately, for a demo that answers in a minute and a half.
+
 
 ### Changed - consumes SpawnDev.WebTorrent 4.2.7
 

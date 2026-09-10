@@ -115,6 +115,11 @@ public partial class Home : IDisposable
         var location = JS.Get<string>("location.href");
         if (location.Contains("worker=dedicated", StringComparison.OrdinalIgnoreCase))
             Ai.PreferSharedWorker = false;
+        // ?worker=shared opts BACK IN to the shared worker, which is no longer the default - see
+        // AiWorkerClient.PreferSharedWorker for the measurement that changed it and what is still
+        // unexplained. Keeping a way in matters: the path cannot be fixed if it cannot be reached.
+        if (location.Contains("worker=shared", StringComparison.OrdinalIgnoreCase))
+            Ai.PreferSharedWorker = true;
         // ?bench=1 runs the window-vs-worker cost benchmarks once, before anything is loaded.
         if (location.Contains("bench=1", StringComparison.OrdinalIgnoreCase))
             Ai.RunStartupBenchmarks = true;

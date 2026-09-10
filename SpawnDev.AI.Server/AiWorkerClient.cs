@@ -27,10 +27,29 @@ public sealed class AiWorkerClient
     /// <summary>Worker status line from the last <see cref="InitAsync"/>.</summary>
     public string Status { get; private set; } = "";
 
-    /// <summary>False forces a DEDICATED worker even when SharedWorker is supported. Diagnostic +
-    /// mitigation switch: the model-piece download loop reproduced ONLY under SharedWorker
-    /// (2026-07-04, same client/OPFS store works on the main thread and desktop).</summary>
-    public bool PreferSharedWorker { get; set; } = true;
+    /// <summary>
+    /// True prefers a SharedWorker - one AI server shared by every tab, the way ollama serves a desktop.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 DEFAULTS TO FALSE SINCE 2026-09-10, ON CAPTAIN'S CALL, AND THIS IS A MITIGATION NOT A DESIGN
+    /// CHANGE. The shared-worker design is the intended one - "multiple pages share a single AI server,
+    /// just like ollama on the desktop" - and it stays available. But a shared worker has NO
+    /// <c>createSyncAccessHandle</c> (it is dedicated-worker only), so all storage falls back to
+    /// <c>createWritable</c>/Blob, and on that path a 1.8 GB model load measured **626 s** against 92.8 s
+    /// for the same model in a dedicated worker. Three real storage defects have been fixed underneath it
+    /// (SpawnDev.WebTorrent 4.2.7) and it is still not good enough to meet a visitor on.
+    /// <para>
+    /// ⚠️ THE REMAINING GAP IS NOT EXPLAINED, and it is not honest to imply otherwise. Captain, seeing it:
+    /// "this load time is bullshit and there is a major bug somewhere that is being overlooked." Set this
+    /// true (or pass <c>?worker=shared</c>) to work on it; the cost is visible immediately.
+    /// </para>
+    /// <para>
+    /// ⚠️ What is given up meanwhile: two tabs each load their own copy of a model, so they each pay the
+    /// load and each hold VRAM - which is why the shared design existed. That is the trade being made
+    /// deliberately, in exchange for a demo that answers in a minute and a half rather than ten.
+    /// </para>
+    /// </remarks>
+    public bool PreferSharedWorker { get; set; } = false;
 
     /// <summary>
     /// Run the window-vs-worker cost benchmarks during <see cref="InitAsync"/>. Diagnostic; default OFF.
