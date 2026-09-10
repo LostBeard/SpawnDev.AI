@@ -38,7 +38,7 @@
 		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.2.12" />
 		<!-- DIRECT, not transitive: this project names WebTorrentClient and OpfsLayoutProbe itself, so
 		     it must pin the version it compiles against rather than inherit whatever ILGPU.ML pins. -->
-		<PackageReference Include="SpawnDev.WebTorrent" Version="4.2.7-local.6" />
+		<PackageReference Include="SpawnDev.WebTorrent" Version="4.2.7" />
 		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.10" />
 	</ItemGroup>
 

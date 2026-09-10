@@ -2,6 +2,32 @@
 
 Notable changes per release. Preview - APIs will change.
 
+## Unreleased - the shared-worker fixes, and two instruments for a path no gate could see
+
+### Changed - consumes SpawnDev.WebTorrent 4.2.7
+
+4.2.6 shipped three defects that only bite in a SHARED worker, which is what a normal visitor gets.
+The user-visible symptoms were all here: `Transcription failed: POST /api/transcribe -> 500` with
+`Unknown wire type: 6`, the same call failing with "permission problems ... after a reference to a file
+was acquired", and hands-free listening, saying "transcribing", then going back to listening - which was
+a model load taking **626 seconds** and timing the turn out. See that package's 4.2.7 notes.
+
+### Added - `tools/tap-shared-worker.cs` and `tools/eval-in-shared-worker.cs`
+
+🔴 THE REASON THOSE DEFECTS SURVIVED A FULL DAY OF GREEN GATES. `createSyncAccessHandle` is
+DEDICATED-worker only, so the storage fallback runs exactly where a shared worker runs - and a shared
+worker's console does not reach `page.Console`. Every gate in `tools/` passes `?worker=dedicated` **in
+order to be able to read anything at all**, so the gates systematically select the configuration in which
+the bug cannot occur.
+
+CDP lists shared workers as their own targets with a `webSocketDebuggerUrl`, so those logs were always
+readable - nobody had asked. `tap-shared-worker.cs` streams the console and exceptions;
+`eval-in-shared-worker.cs` evaluates an expression inside the worker, which is how the browser's own
+`FileSystemFileHandle.prototype` was instrumented to find a 5.2-second `createWritable`.
+
+⚠️ Cancelling a `ReceiveAsync` ABORTS a WebSocket rather than timing it out, so a per-read timeout kills
+the tap on the first quiet moment - exactly when watching a stalled worker matters. One token per session.
+
 ## Unreleased - the demo meets you on a model that can hold a character
 
 ### Removed - `qwen2.5:0.5b-instruct-q8_0`, which had been the default
