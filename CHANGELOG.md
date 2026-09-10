@@ -2,6 +2,58 @@
 
 Notable changes per release. Preview - APIs will change.
 
+## Unreleased - the demo meets you on a model that can hold a character
+
+### Removed - `qwen2.5:0.5b-instruct-q8_0`, which had been the default
+
+Captain, on seeing the room gate transcript: "remove it entirely". Two measurements, not a preference:
+
+- **In the room it had one voice.** Two characters with opposite personas ("terse and suspicious" /
+  "warm and curious, and you ask one question back") answered `I *look around* for any survivors.` and
+  `I *looks around* for any survivors.` - a transcript that reads like a conversation and contains one
+  speaker.
+- **With tools available it over-called them.** Asked "what colour is a ripe banana?" it called the
+  IMAGE GENERATOR and narrated that instead of answering.
+
+The window now defaults to `qwen3:1.7b-q8_0`. Measured on the same gate immediately after the swap:
+Zephrin stayed terse, and Qualla asked its question back - two characters, two voices.
+
+### Fixed - a member that repeats another member is asked again
+
+The anti-echo clause was ALREADY in the system prompt when the pair above was produced, so prompting was
+not enough. Every other speaker's line arrives as the most recent `user` turn, and restating the last user
+turn is the commonest failure of a small model.
+
+`AgentRoom.RunRoundAsync` now re-asks a member whose reply repeats an existing line, **naming the line that
+is taken** - without the line itself in the prompt the model is told to differ from nothing.
+
+- The retry's answer is used even if it echoes again: losing a speaker from the round is worse than a
+  repeat, because a user can see a repeat and change model but cannot see an absence. When it echoes
+  twice the console says the model is too weak for role-play, rather than hiding it.
+- `AgentRoom.IsEcho` compares normalised WORD SETS, not strings - the observed pair differed by one
+  letter. ⚠️ Apostrophes are dropped rather than split, or "I don't know." and "I don't care." share
+  three tokens of four and a real answer is thrown away and re-rolled.
+- Gated by `AgentRoomEchoTests` (4 tests, no model). They were watched to FAIL first, which caught three
+  real defects in the change: the round runs four turns by default, not two; and both of the above.
+
+### Fixed - the Start button could not state the size it was obtaining consent for
+
+`Home.razor`'s comment claimed "starting the server IS the agreement for the model it will run - the size
+is on the button". It was not. `_catalogue` is fetched inside `StartAsync`, so on the landing page it was
+empty, `ChoiceFor(_model)` returned null, and the button silently read plain "Start the AI server" while
+the click recorded consent. `SizeOfModel` now falls back to the registered `AiWorkerServerOptions.Models`,
+which the window scope holds already because the same Program.cs runs in both scopes.
+
+⚠️ This was already wrong at 675 MB; it became the difference between a stated and an unstated 1.8 GB the
+moment the default changed.
+
+### Changed - `tools/drive-hands-free.cs` prints the app's own system messages
+
+Captain read `chat (InvalidOperationException: attention slot count mismatch 28/32) did not preload` off
+the screen of a window this gate had opened, and it appeared in no log the gate produced - a warm failure
+renders as a `.msg.system` bubble, never a console line. The gate hooked only `page.Console`, so it was
+blind to exactly the failures the page took the trouble to explain, and reported PASS throughout.
+
 ## Unreleased - the model cache stores files AS files
 
 ### Changed - the demo caches models in SpawnDev.WebTorrent's content-file layout
