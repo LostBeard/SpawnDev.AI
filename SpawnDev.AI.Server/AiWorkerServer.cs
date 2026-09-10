@@ -91,6 +91,24 @@ public interface IAiWorkerApi
     /// <param name="configsJson">JSON array of <c>{ entryCount, entryBytes, heldHandles }</c>. Empty or
     /// null runs the default sweep.</param>
     Task<string> BenchmarkOpfsLayoutAsync(string? configsJson, CancellationToken ct = default);
+
+    /// <summary>
+    /// Does a concurrent OPFS writer slow ranged reads on an already-open handle? Diagnostic.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE LAST UNTESTED CANDIDATE FOR A REAL OBSERVATION. A model load measured 172 ms per file open
+    /// while its torrent was still downloading, against 0.39-0.46 ms for the same code path idle. Directory
+    /// size, held exclusive locks and entry size were each measured and cleared; concurrent writing was
+    /// what remained, and it had never been tested - so it stayed a guess and was recorded as one rather
+    /// than asserted.
+    /// <para>
+    /// ⚠️ It asks the version of the question that still matters. Under the content-file layout a load does
+    /// ONE open and then hundreds of ranged reads on that handle, so an inflated OPEN cost no longer
+    /// matters - an inflated READ cost does, because the demo loads a model while its remaining pieces are
+    /// still arriving.
+    /// </para>
+    /// </remarks>
+    Task<string> BenchmarkOpfsContentionAsync(CancellationToken ct = default);
 }
 
 /// <summary>Configuration for the in-browser (worker) AI server - register in DI in ALL scopes
@@ -209,6 +227,24 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     }
 
     private sealed record LayoutConfigDto(int EntryCount, int EntryBytes, int HeldHandles);
+
+    /// <summary>Runs <see cref="OpfsLayoutProbe.MeasureWriteContentionAsync"/> here. See IAiWorkerApi.</summary>
+    public async Task<string> BenchmarkOpfsContentionAsync(CancellationToken ct = default)
+    {
+        var fs = _webTorrent.AsyncFileSystem
+            ?? throw new InvalidOperationException(
+                "the WebTorrent client has no AsyncFileSystem, so there is no OPFS to measure");
+
+        // 310 x 2 MB is the shape a real qwen2.5:0.5b load actually performs (310 ranged reads of
+        // 638.5 MB), so the result describes the load rather than an invented access pattern.
+        var m = await OpfsLayoutProbe.MeasureWriteContentionAsync(fs, reads: 310, readBytes: 2 * 1024 * 1024,
+            writeBytes: 4 * 1024 * 1024, log: Console.WriteLine, ct: ct).ConfigureAwait(false);
+        Console.WriteLine($"[contend] {m.Reads} x {m.ReadBytes} B reads, sync "
+            + (m.SyncAvailable ? "available" : "UNAVAILABLE")
+            + $": idle {m.IdleReadMs:F0} ms, under write load {m.LoadedReadMs:F0} ms "
+            + $"({m.Ratio:F2}x) while {m.WritesCompleted} write(s) completed");
+        return JsonSerializer.Serialize(m, LayoutJson);
+    }
 
     public async Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame,
         CancellationToken ct = default)

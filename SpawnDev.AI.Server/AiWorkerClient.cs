@@ -138,6 +138,16 @@ public sealed class AiWorkerClient
     }
 
     /// <summary>
+    /// Measure whether a concurrent OPFS writer slows ranged reads, in the worker. Diagnostic.
+    /// </summary>
+    /// <remarks>See <see cref="IAiWorkerApi.BenchmarkOpfsContentionAsync"/> for why it runs over there.</remarks>
+    public async Task<string> BenchmarkOpfsContentionAsync(CancellationToken ct = default)
+    {
+        if (_worker == null) await InitAsync();
+        return await _worker!.Run<IAiWorkerApi, string>(s => s.BenchmarkOpfsContentionAsync(ct));
+    }
+
+    /// <summary>
     /// Route one protocol request to the worker server (same method/path/body as the HTTP surface).
     /// <paramref name="onFrame"/> receives every <see cref="AiWireFrame"/>; returns after the
     /// terminal frame. Most callers want <see cref="RequestJsonAsync"/> or <see cref="ChatStreamAsync"/>.

@@ -39,6 +39,7 @@ public static class AiTestSuiteRunner
         typeof(ToolPlumbingTests),
         typeof(OllamaSourcedModelTests),
         typeof(OpfsLayoutBenchmarkTests),
+        typeof(OpfsContentionTests),
     };
 
     /// <summary>Milliseconds a test may run before it is reported as timed out. Overridable per test.</summary>
