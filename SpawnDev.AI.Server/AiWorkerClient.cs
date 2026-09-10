@@ -121,6 +121,23 @@ public sealed class AiWorkerClient
     }
 
     /// <summary>
+    /// Run the OPFS layout probe IN THE WORKER and return its measurements as JSON. Diagnostic.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ It has to run over there. <c>createSyncAccessHandle()</c> - the API the model loader's read path
+    /// takes - throws outside a worker, so measuring from this side would time the Blob fallback and
+    /// report a cost production does not pay. See <see cref="IAiWorkerApi.BenchmarkOpfsLayoutAsync"/>.
+    /// </remarks>
+    /// <param name="configsJson">JSON array of <c>{ entryCount, entryBytes, heldHandles }</c>, or null
+    /// for the default sweep.</param>
+    /// <param name="ct">Cancellation - passed as a real parameter so the dispatcher can marshal it.</param>
+    public async Task<string> BenchmarkOpfsLayoutAsync(string? configsJson = null, CancellationToken ct = default)
+    {
+        if (_worker == null) await InitAsync();
+        return await _worker!.Run<IAiWorkerApi, string>(s => s.BenchmarkOpfsLayoutAsync(configsJson, ct));
+    }
+
+    /// <summary>
     /// Route one protocol request to the worker server (same method/path/body as the HTTP surface).
     /// <paramref name="onFrame"/> receives every <see cref="AiWireFrame"/>; returns after the
     /// terminal frame. Most callers want <see cref="RequestJsonAsync"/> or <see cref="ChatStreamAsync"/>.

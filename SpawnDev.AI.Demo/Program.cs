@@ -37,8 +37,23 @@ builder.Services.AddSingleton<SpawnDev.AI.Demo.ReachyDriver>();
 builder.Services.AddSingleton<SpawnDev.AI.Demo.ModelConsent>();
 builder.Services.AddSingleton<WebTorrentClient>(sp =>
 {
-    var client = new WebTorrentClient(new WebTorrentClientOptions { AsyncFileSystem = sp.GetRequiredService<IAsyncFS>() });
-    _ = client.RestoreFromStorageAsync();
+    var client = new WebTorrentClient(new WebTorrentClientOptions
+    {
+        AsyncFileSystem = sp.GetRequiredService<IAsyncFS>(),
+        // ── WHY THE CONTENT-FILE LAYOUT ───────────────────────────────────────────────────────────────
+        // 🔴 MODEL LOAD TIME IS ALMOST ENTIRELY FILE OPENS, measured rather than assumed. The piece
+        // layout stores every 4 MB piece as its own OPFS file, so a 2375 MB model is 681 of them and each
+        // read pays getFileHandle + createSyncAccessHandle + close. SpawnDev.WebTorrent's OpfsLayoutProbe
+        // (dedicated worker, warm) put that at 1733 ms against 66 ms for the same bytes in one file at 681
+        // entries - 26x - and the gap GROWS with model size (33x at 1362). The reads themselves are not the
+        // problem: 9.5 GB/s at the real piece size.
+        StorageLayout = TorrentStorageLayout.ContentFiles,
+    });
+    // ⚠️ InitStorageAsync, NOT a bare RestoreFromStorageAsync. It restores AND migrates, and - the part
+    // that matters - every later AddAsync waits for it. MEASURED 2026-09-09 with the fire-and-forget
+    // version: layout migration finished AFTER a model load had already completed, which is the window in
+    // which a cached model gets re-downloaded because restore had not put it in the list yet.
+    _ = client.InitStorageAsync();
     return client;
 });
 

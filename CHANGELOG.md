@@ -2,6 +2,39 @@
 
 Notable changes per release. Preview - APIs will change.
 
+## Unreleased - the model cache stores files AS files
+
+### Changed - the demo caches models in SpawnDev.WebTorrent's content-file layout
+
+`StorageLayout = TorrentStorageLayout.ContentFiles` (SpawnDev.WebTorrent 4.2.6). The piece layout stores
+every 4 MB piece as its own OPFS file, and every read of one pays `getFileHandle` +
+`createSyncAccessHandle` + `close`.
+
+**MEASURED A/B**, same model, same machine, cached both ways, only the layout differing
+(qwen2.5:0.5b-instruct-q8_0, 638.5 MB of weights, dedicated worker):
+
+| | `PieceFiles` | `ContentFiles` |
+|---|---|---|
+| stream READ (OPFS) | 3745 ms (170.5 MB/s) | **647 ms (986.5 MB/s)** |
+| sync-handle OPENS | 171, costing 2835 ms | one per content file |
+| model-load to ready | 20.6 s | **8.8 s** |
+
+2835 of the 3745 ms were the 171 opens. Host-materialised stayed 0.3 MB of 638.7 MB in both.
+
+⚠️ Existing caches MIGRATE rather than re-download - `client.InitStorageAsync()` restores and then copies
+any piece-layout cache into the new layout OPFS-to-OPFS. Verified on a real profile: 438 pieces of
+Qwen3-1.7B, 175 of LFM2-1.2B and 163 of an ONNX model moved with no network fetch.
+
+### Added - `IAiWorkerApi.BenchmarkOpfsLayoutAsync`
+
+Runs SpawnDev.WebTorrent's `OpfsLayoutProbe` IN THE WORKER, sweeping entry count, lock pressure and entry
+size. It has to run there: `createSyncAccessHandle()` does not exist outside a dedicated worker, so a
+window-scope benchmark measures the Blob fallback instead of the path production takes.
+
+`OpfsLayoutBenchmarkTests` was rewritten to drive it. The previous version ran in the window over
+`GetReadStream` - which reads the ENTIRE file into memory - so it could never have measured the cost being
+investigated.
+
 ## Unreleased - reasoning models, model-driven tools, and an opt-in model catalogue
 
 Library changes since 1.1.0-preview.1. Not published yet.

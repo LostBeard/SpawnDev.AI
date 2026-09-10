@@ -1,157 +1,108 @@
-using System.Diagnostics;
-using SpawnDev.AsyncFileSystem;
+using System.Text.Json;
+using SpawnDev.AI.Server;
 
 namespace SpawnDev.AI.Demo.Tests;
 
 /// <summary>
-/// What it costs to store a model as 4 MB torrent pieces instead of as the one file it really is.
+/// What it costs to store a model as 4 MB torrent pieces instead of as the file it really is.
 /// </summary>
 /// <remarks>
 /// <para>
-/// 🔴 THIS EXISTS TO INFORM A DESIGN DECISION WITH A NUMBER RATHER THAN AN OPINION. SpawnDev.WebTorrent
-/// currently caches to OPFS as one file per PIECE - the demo's profile holds 6398 files, mostly exactly
-/// 4,194,304 bytes - so a 6.87 GB model is ~1758 separate files. TJ's question is whether that costs
-/// enough on every load to be worth changing to one file per torrent CONTENT file, which is what mature
-/// torrent clients do (sparse writes into the destination file).
+/// 🔴 THIS EXISTS TO SETTLE A DESIGN DECISION WITH NUMBERS. SpawnDev.WebTorrent caches to OPFS as one
+/// file per PIECE, so a 2375 MB model is 681 files. Instrumenting a real qwen3:4b load measured the reads
+/// themselves at 1051 ms across 1337 reads - about 2.2 GB/s - while OPENING those 681 files cost
+/// 121,571 ms, of which 117,192 ms was <c>getFileHandle</c>. That is ~99% of the load, and the question is
+/// whether writing the torrent's files as actual files removes it.
 /// </para>
 /// <para>
-/// ⚠️ RANDOM ACCESS IS THE HALF THAT MATTERS MOST, and the reason this measures it separately. A GGUF
-/// load is not one sequential pass: the parser reads a header, then seeks tensor by tensor. Under a
-/// piece layout every seek can mean locating and opening a DIFFERENT file; under a single-file layout it
-/// is a seek on a handle that is already open. Sequential throughput alone would understate the gap.
+/// ⚠️ IT DELEGATES TO THE WORKER, and that is the whole point of the rewrite. The previous version of this
+/// test ran in the window over <c>GetReadStream</c>, which reads the ENTIRE file into memory and is not a
+/// path production takes; and <c>createSyncAccessHandle()</c> - the API the production read path actually
+/// uses - throws outside a worker, so a window-scope benchmark could never have measured the cost being
+/// investigated. <see cref="IAiWorkerApi.BenchmarkOpfsLayoutAsync"/> runs
+/// <c>SpawnDev.WebTorrent.Storage.OpfsLayoutProbe</c> in the worker that hosts the model loader.
 /// </para>
 /// <para>
-/// ⚠️ Heavy: it writes and reads a few hundred MB of OPFS. It also cleans up after itself, because
-/// leaving benchmark data in the same store the models cache into would eat a user's quota.
+/// ⚠️ THESE ARE WARM NUMBERS. The probe writes each layout and reads it back in the same pass, so the
+/// entries are as hot as OPFS ever makes them, while the 172 ms figure above is a COLD load after a page
+/// reload. A warm run therefore UNDERSTATES the piece layout's cost - which makes a warm result that
+/// still shows a large gap conclusive, and a warm result showing no gap inconclusive rather than
+/// exonerating. The assertion below reflects that: it fails only if the measurement did not happen.
+/// </para>
+/// <para>
+/// ⚠️ Heavy: writes and reads a few hundred MB of OPFS. The probe removes its own directory afterwards,
+/// because leaving that in the store models cache into would eat the user's quota.
 /// </para>
 /// </remarks>
 public sealed class OpfsLayoutBenchmarkTests
 {
-    private readonly IAsyncFS _fs;
+    private readonly AiWorkerClient _ai;
 
-    /// <summary>New instance over the app's OPFS filesystem.</summary>
-    public OpfsLayoutBenchmarkTests(IAsyncFS fs) => _fs = fs;
+    /// <summary>New instance over the window-side worker client.</summary>
+    public OpfsLayoutBenchmarkTests(AiWorkerClient ai) => _ai = ai;
 
-    private const string Dir = "layout-bench";
-    private const int PieceSize = 4 * 1024 * 1024;   // what SpawnDev.WebTorrent actually uses
-    private const int PieceCount = 64;               // 256 MB - representative without being slow
-    private const long TotalBytes = (long)PieceSize * PieceCount;
-
-    /// <summary>Piece-per-file versus one-file, sequentially and at random offsets.</summary>
-    [AiTest(Heavy = true, Timeout = 1_200_000)]
+    /// <summary>Piece-per-file versus one file, swept over entry count, lock pressure and entry size.</summary>
+    [AiTest(Heavy = true, Timeout = 1_800_000)]
     public async Task PieceFilesVersusOneFile()
     {
-        var buffer = new byte[1024 * 1024];
-        new Random(1234).NextBytes(buffer);
+        var json = await _ai.BenchmarkOpfsLayoutAsync(null);
+        var results = JsonSerializer.Deserialize<List<LayoutRow>>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new Exception($"the probe returned unparseable JSON: {json}");
+        if (results.Count == 0) throw new Exception("the probe returned no measurements");
 
-        try
+        foreach (var r in results)
         {
-            if (!await _fs.DirectoryExists(Dir)) await _fs.CreateDirectory(Dir);
+            // 🔴 A ZERO HERE MEANS THE PASS DID NOT RUN. Without this the suite would go green on a probe
+            // that silently measured nothing - the exact shape of a test that cannot fail.
+            if (r.PieceTotalMs <= 0 || r.FileTotalMs <= 0)
+                throw new Exception($"{r.EntryCount}x{r.EntryBytes}: a pass completed in no measurable time "
+                    + $"(piece {r.PieceTotalMs} ms, file {r.FileTotalMs} ms) - the benchmark did not run");
+            if (r.PieceResolveMs <= 0)
+                throw new Exception($"{r.EntryCount}x{r.EntryBytes}: getFileHandle took no measurable time "
+                    + "across every entry, which cannot be true - the probe measured the wrong thing");
 
-            // ── Lay the same bytes out both ways ────────────────────────────────────────────────────
-            var writePieces = Stopwatch.StartNew();
-            for (int i = 0; i < PieceCount; i++)
-            {
-                await using var w = await _fs.GetWriteStream($"{Dir}/piece-{i:D5}.bin");
-                for (int written = 0; written < PieceSize; written += buffer.Length)
-                    await w.WriteAsync(buffer, 0, Math.Min(buffer.Length, PieceSize - written));
-            }
-            writePieces.Stop();
-
-            var writeOne = Stopwatch.StartNew();
-            {
-                await using var w = await _fs.GetWriteStream($"{Dir}/whole.bin");
-                for (long written = 0; written < TotalBytes; written += buffer.Length)
-                    await w.WriteAsync(buffer, 0, (int)Math.Min(buffer.Length, TotalBytes - written));
-            }
-            writeOne.Stop();
-
-            Report("write, 64 piece files", writePieces.Elapsed);
-            Report("write, one file      ", writeOne.Elapsed);
-
-            // ── Sequential read: the whole thing, front to back ─────────────────────────────────────
-            var readPieces = Stopwatch.StartNew();
-            long got = 0;
-            for (int i = 0; i < PieceCount; i++)
-            {
-                await using var r = await _fs.GetReadStream($"{Dir}/piece-{i:D5}.bin");
-                int n;
-                while ((n = await r.ReadAsync(buffer, 0, buffer.Length)) > 0) got += n;
-            }
-            readPieces.Stop();
-            if (got != TotalBytes) throw new Exception($"piece read returned {got} of {TotalBytes} bytes");
-
-            var readOne = Stopwatch.StartNew();
-            got = 0;
-            {
-                await using var r = await _fs.GetReadStream($"{Dir}/whole.bin");
-                int n;
-                while ((n = await r.ReadAsync(buffer, 0, buffer.Length)) > 0) got += n;
-            }
-            readOne.Stop();
-            if (got != TotalBytes) throw new Exception($"whole read returned {got} of {TotalBytes} bytes");
-
-            Report("read sequential, 64 piece files", readPieces.Elapsed);
-            Report("read sequential, one file      ", readOne.Elapsed);
-
-            // ── Random access: what a GGUF load actually does ───────────────────────────────────────
-            // 200 reads of 1 MB at random offsets. Under the piece layout each one may land in a
-            // different file, so it pays an open; under one file it is a seek on an open handle.
-            const int Hops = 200;
-            var rng = new Random(99);
-            var offsets = new long[Hops];
-            for (int i = 0; i < Hops; i++)
-                offsets[i] = (long)(rng.NextDouble() * (TotalBytes - buffer.Length));
-
-            var randPieces = Stopwatch.StartNew();
-            foreach (var off in offsets)
-            {
-                var piece = (int)(off / PieceSize);
-                var within = off % PieceSize;
-                await using var r = await _fs.GetReadStream($"{Dir}/piece-{piece:D5}.bin");
-                r.Seek(within, SeekOrigin.Begin);
-                await r.ReadAsync(buffer, 0, (int)Math.Min(buffer.Length, PieceSize - within));
-            }
-            randPieces.Stop();
-
-            var randOne = Stopwatch.StartNew();
-            {
-                await using var r = await _fs.GetReadStream($"{Dir}/whole.bin");
-                foreach (var off in offsets)
-                {
-                    r.Seek(off, SeekOrigin.Begin);
-                    await r.ReadAsync(buffer, 0, buffer.Length);
-                }
-            }
-            randOne.Stop();
-
-            Console.WriteLine($"[layout] random {Hops}x1MB, piece files: {randPieces.ElapsedMilliseconds} ms "
-                + $"({randPieces.Elapsed.TotalMilliseconds / Hops:F1} ms per hop)");
-            Console.WriteLine($"[layout] random {Hops}x1MB, one file   : {randOne.ElapsedMilliseconds} ms "
-                + $"({randOne.Elapsed.TotalMilliseconds / Hops:F1} ms per hop)");
-
-            var seqRatio = readPieces.Elapsed.TotalMilliseconds / Math.Max(1, readOne.Elapsed.TotalMilliseconds);
-            var randRatio = randPieces.Elapsed.TotalMilliseconds / Math.Max(1, randOne.Elapsed.TotalMilliseconds);
-            Console.WriteLine($"[layout] VERDICT: pieces are {seqRatio:F2}x the sequential time and "
-                + $"{randRatio:F2}x the random-access time of a single file");
-            Console.WriteLine($"[layout] extrapolated to a 6.87 GB model (~1758 pieces), the sequential "
-                + $"difference alone is {(readPieces.Elapsed - readOne.Elapsed).TotalSeconds * (6.87 * 1024 / 256):F0} s");
-
-            // ⚠️ Deliberately NOT asserted as a threshold. This is a measurement to inform a decision,
-            // and a number that varies with disk and browser has no business failing a build. It fails
-            // only if the measurement itself did not happen.
-            if (readOne.Elapsed.TotalMilliseconds <= 0 || readPieces.Elapsed.TotalMilliseconds <= 0)
-                throw new Exception("a read completed in no measurable time; the benchmark did not run");
+            Console.WriteLine($"[layout] {r.EntryCount,5} x {r.EntryBytes,9} B, {r.HeldHandles} held: "
+                + $"pieces {r.PieceTotalMs,8:F0} ms (resolve {r.PieceResolveMs,8:F0}, "
+                + $"{(r.EntryCount > 0 ? r.PieceResolveMs / r.EntryCount : 0),6:F2} ms/open) | "
+                + $"one file {r.FileTotalMs,7:F0} ms | ratio {r.PieceTotalMs / r.FileTotalMs,6:F2}x");
         }
-        finally
+
+        // The two rows that answer "is it the directory size?" - same entry size, 128 vs 1362 entries.
+        var small = results.FirstOrDefault(r => r is { EntryCount: 128, EntryBytes: 65_536 });
+        var large = results.FirstOrDefault(r => r is { EntryCount: 1362, EntryBytes: 65_536 });
+        if (small != null && large != null)
         {
-            // Leaving a few hundred MB behind would eat the quota the models cache into.
-            try { if (await _fs.DirectoryExists(Dir)) await _fs.Remove(Dir, recursive: true); }
-            catch (Exception ex) { Console.WriteLine($"[layout] cleanup failed: {ex.Message}"); }
+            var perOpenSmall = small.PieceResolveMs / small.EntryCount;
+            var perOpenLarge = large.PieceResolveMs / large.EntryCount;
+            Console.WriteLine($"[layout] getFileHandle per open: {perOpenSmall:F3} ms at 128 entries -> "
+                + $"{perOpenLarge:F3} ms at 1362 entries ({(perOpenSmall > 0 ? perOpenLarge / perOpenSmall : 0):F1}x "
+                + "for 10.6x the entries)");
         }
+
+        // The row pair that answers "is it the exclusive locks?" - 681 entries, 8 held vs 0 held.
+        var held8 = results.FirstOrDefault(r => r is { EntryCount: 681, HeldHandles: 8 });
+        var held0 = results.FirstOrDefault(r => r is { EntryCount: 681, HeldHandles: 0 });
+        if (held8 != null && held0 != null)
+            Console.WriteLine($"[layout] 681 entries, getFileHandle total: {held8.PieceResolveMs:F0} ms with 8 "
+                + $"sync locks held vs {held0.PieceResolveMs:F0} ms with none "
+                + $"({(held0.PieceResolveMs > 0 ? held8.PieceResolveMs / held0.PieceResolveMs : 0):F2}x)");
     }
 
-    private static void Report(string what, TimeSpan took)
-        => Console.WriteLine($"[layout] {what}: {took.TotalMilliseconds:F0} ms "
-            + $"({TotalBytes / 1048576.0 / Math.Max(0.001, took.TotalSeconds):F0} MB/s)");
+    /// <summary>Mirror of <c>OpfsLayoutProbe.LayoutMeasurement</c> for the window side.</summary>
+    private sealed class LayoutRow
+    {
+        public int EntryCount { get; set; }
+        public int EntryBytes { get; set; }
+        public int HeldHandles { get; set; }
+        public double PieceResolveMs { get; set; }
+        public double PieceCreateMs { get; set; }
+        public double PieceReadMs { get; set; }
+        public double PieceCloseMs { get; set; }
+        public double FileResolveMs { get; set; }
+        public double FileCreateMs { get; set; }
+        public double FileReadMs { get; set; }
+        public double FileCloseMs { get; set; }
+        public double PieceTotalMs => PieceResolveMs + PieceCreateMs + PieceReadMs + PieceCloseMs;
+        public double FileTotalMs => FileResolveMs + FileCreateMs + FileReadMs + FileCloseMs;
+    }
 }
