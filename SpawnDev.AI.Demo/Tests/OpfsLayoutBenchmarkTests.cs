@@ -52,25 +52,43 @@ public sealed class OpfsLayoutBenchmarkTests
 
         foreach (var r in results)
         {
-            // 🔴 A ZERO HERE MEANS THE PASS DID NOT RUN. Without this the suite would go green on a probe
-            // that silently measured nothing - the exact shape of a test that cannot fail.
-            if (r.PieceTotalMs <= 0 || r.FileTotalMs <= 0)
-                throw new Exception($"{r.EntryCount}x{r.EntryBytes}: a pass completed in no measurable time "
-                    + $"(piece {r.PieceTotalMs} ms, file {r.FileTotalMs} ms) - the benchmark did not run");
-            if (r.PieceResolveMs <= 0)
-                throw new Exception($"{r.EntryCount}x{r.EntryBytes}: getFileHandle took no measurable time "
-                    + "across every entry, which cannot be true - the probe measured the wrong thing");
+            // A ZERO HERE MEANS THE PASS DID NOT RUN. Without this the suite would go green on a probe that
+            // silently measured nothing - the exact shape of a test that cannot fail.
+            //
+            // WARNING: the SYNC columns are asserted only when sync was available. They are legitimately
+            // zero in a shared worker or on the main thread, because createSyncAccessHandle() does not
+            // exist there - asserting them unconditionally would turn "this context cannot use the fast
+            // path" into a test failure and hide the Blob numbers that are the whole point of running here.
+            if (r.PieceBlobTotalMs <= 0 || r.FileBlobTotalMs <= 0)
+                throw new Exception($"{r.EntryCount}x{r.EntryBytes}: a Blob pass completed in no measurable "
+                    + $"time (piece {r.PieceBlobTotalMs} ms, file {r.FileBlobTotalMs} ms) - it did not run");
+            if (r.PieceBlobOpenMs <= 0)
+                throw new Exception($"{r.EntryCount}x{r.EntryBytes}: getFile took no measurable time across "
+                    + $"{r.EntryCount} pieces, which cannot be true - the probe measured the wrong thing");
+            if (r.SyncAvailable)
+            {
+                if (r.PieceTotalMs <= 0 || r.FileTotalMs <= 0)
+                    throw new Exception($"{r.EntryCount}x{r.EntryBytes}: sync was reported available but a "
+                        + $"sync pass took no time (piece {r.PieceTotalMs}, file {r.FileTotalMs})");
+                if (r.PieceResolveMs <= 0)
+                    throw new Exception($"{r.EntryCount}x{r.EntryBytes}: getFileHandle took no measurable "
+                        + "time across every entry, which cannot be true");
+            }
 
-            Console.WriteLine($"[layout] {r.EntryCount,5} x {r.EntryBytes,9} B, {r.HeldHandles} held: "
-                + $"pieces {r.PieceTotalMs,8:F0} ms (resolve {r.PieceResolveMs,8:F0}, "
-                + $"{(r.EntryCount > 0 ? r.PieceResolveMs / r.EntryCount : 0),6:F2} ms/open) | "
-                + $"one file {r.FileTotalMs,7:F0} ms | ratio {r.PieceTotalMs / r.FileTotalMs,6:F2}x");
+            var sync = r.SyncAvailable
+                ? $"sync pieces {r.PieceTotalMs,8:F0} ms ({(r.EntryCount > 0 ? r.PieceResolveMs / r.EntryCount : 0),5:F2} ms/open)"
+                  + $" | sync one file {r.FileTotalMs,7:F0} ms | {r.PieceTotalMs / r.FileTotalMs,6:F2}x"
+                : "sync UNAVAILABLE (not a dedicated worker)";
+            Console.WriteLine($"[layout] {r.EntryCount,5} x {r.EntryBytes,9} B: {sync}");
+            Console.WriteLine($"[layout] {"",5}   {"",9}   blob pieces {r.PieceBlobTotalMs,8:F0} ms "
+                + $"(getFile {r.PieceBlobOpenMs,7:F0}) | blob one file {r.FileBlobTotalMs,7:F0} ms "
+                + $"(getFile {r.FileBlobOpenMs,5:F1}) | {r.PieceBlobTotalMs / r.FileBlobTotalMs,6:F2}x");
         }
 
-        // The two rows that answer "is it the directory size?" - same entry size, 128 vs 1362 entries.
+        // Does the directory get slower the more entries it holds? Same entry size, 128 vs 1362 entries.
         var small = results.FirstOrDefault(r => r is { EntryCount: 128, EntryBytes: 65_536 });
         var large = results.FirstOrDefault(r => r is { EntryCount: 1362, EntryBytes: 65_536 });
-        if (small != null && large != null)
+        if (small is { SyncAvailable: true } && large is { SyncAvailable: true })
         {
             var perOpenSmall = small.PieceResolveMs / small.EntryCount;
             var perOpenLarge = large.PieceResolveMs / large.EntryCount;
@@ -79,13 +97,23 @@ public sealed class OpfsLayoutBenchmarkTests
                 + "for 10.6x the entries)");
         }
 
-        // The row pair that answers "is it the exclusive locks?" - 681 entries, 8 held vs 0 held.
-        var held8 = results.FirstOrDefault(r => r is { EntryCount: 681, HeldHandles: 8 });
-        var held0 = results.FirstOrDefault(r => r is { EntryCount: 681, HeldHandles: 0 });
+        // Do the held exclusive locks matter? 681 entries, 8 held vs 0 held.
+        var held8 = results.FirstOrDefault(r => r is { EntryCount: 681, HeldHandles: 8, SyncAvailable: true });
+        var held0 = results.FirstOrDefault(r => r is { EntryCount: 681, HeldHandles: 0, SyncAvailable: true });
         if (held8 != null && held0 != null)
             Console.WriteLine($"[layout] 681 entries, getFileHandle total: {held8.PieceResolveMs:F0} ms with 8 "
                 + $"sync locks held vs {held0.PieceResolveMs:F0} ms with none "
                 + $"({(held0.PieceResolveMs > 0 ? held8.PieceResolveMs / held0.PieceResolveMs : 0):F2}x)");
+
+        // THE SHARED-WORKER QUESTION. Once the layout is one file, what does losing the sync API actually
+        // cost? That is the penalty a normal visitor pays for PreferSharedWorker = true, isolated from the
+        // layout change - and it is the number that decides whether that default needs to change.
+        var ref681 = results.FirstOrDefault(r => r is { EntryCount: 681, HeldHandles: 8 });
+        if (ref681 is { SyncAvailable: true, FileTotalMs: > 0 })
+            Console.WriteLine($"[layout] one-file layout at 681 reads, blob vs sync: "
+                + $"{ref681.FileBlobTotalMs:F0} ms vs {ref681.FileTotalMs:F0} ms "
+                + $"({ref681.FileBlobTotalMs / ref681.FileTotalMs:F2}x) - the whole cost of a shared worker "
+                + "once the layout is fixed");
     }
 
     /// <summary>Mirror of <c>OpfsLayoutProbe.LayoutMeasurement</c> for the window side.</summary>
@@ -94,6 +122,7 @@ public sealed class OpfsLayoutBenchmarkTests
         public int EntryCount { get; set; }
         public int EntryBytes { get; set; }
         public int HeldHandles { get; set; }
+        public bool SyncAvailable { get; set; }
         public double PieceResolveMs { get; set; }
         public double PieceCreateMs { get; set; }
         public double PieceReadMs { get; set; }
@@ -102,7 +131,13 @@ public sealed class OpfsLayoutBenchmarkTests
         public double FileCreateMs { get; set; }
         public double FileReadMs { get; set; }
         public double FileCloseMs { get; set; }
+        public double PieceBlobOpenMs { get; set; }
+        public double PieceBlobReadMs { get; set; }
+        public double FileBlobOpenMs { get; set; }
+        public double FileBlobReadMs { get; set; }
         public double PieceTotalMs => PieceResolveMs + PieceCreateMs + PieceReadMs + PieceCloseMs;
         public double FileTotalMs => FileResolveMs + FileCreateMs + FileReadMs + FileCloseMs;
+        public double PieceBlobTotalMs => PieceBlobOpenMs + PieceBlobReadMs;
+        public double FileBlobTotalMs => FileBlobOpenMs + FileBlobReadMs;
     }
 }

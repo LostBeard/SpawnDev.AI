@@ -32,6 +32,16 @@ Runs SpawnDev.WebTorrent's `OpfsLayoutProbe` IN THE WORKER, sweeping entry count
 size. It has to run there: `createSyncAccessHandle()` does not exist outside a dedicated worker, so a
 window-scope benchmark measures the Blob fallback instead of the path production takes.
 
+The probe now also runs in a SHARED worker (it used to throw there) and times the Blob fallback for both
+layouts, which answers what `PreferSharedWorker = true` actually costs. MEASURED: **10.8x on the read
+path even after the layout is fixed** - 540 ms vs 50 ms for 681 reads of the same single file, or ~8 s
+instead of 0.65 s on a 638 MB model. The ContentFiles layout is worth 29-32x with sync handles but only
+1.9x without them, because under Blob `slice` + `arrayBuffer` per read becomes the floor.
+
+⚠️ **So worker kind is now the dominant cost, and that default is an open decision.** Dedicated gives
+~11x faster model reads and a console the page can see; shared keeps ONE resident model across tabs,
+which is why it exists - two tabs each loading their own model would exceed the 4 GB browser VRAM budget.
+
 `OpfsLayoutBenchmarkTests` was rewritten to drive it. The previous version ran in the window over
 `GetReadStream` - which reads the ENTIRE file into memory - so it could never have measured the cost being
 investigated.
