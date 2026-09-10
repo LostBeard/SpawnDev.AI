@@ -266,7 +266,20 @@ public sealed class AgentRoom
             // by "I *looks around* for any survivors." - two characters, two personas, one voice. Asking
             // once more, this time NAMING the line that is taken, costs one generation on the rare turn
             // that needs it and nothing at all on the turns that do not.
-            var echoed = Transcript.LastOrDefault(l => l.SpeakerId != agent.Id && IsEcho(text, l.Text));
+            // ⚠️ RECENT lines only, and that is both cheaper and more correct. The failure is restating
+            // what was JUST said - a character reusing its own phrase from twenty turns ago is a
+            // catchphrase, not a parrot. Scanning the whole transcript would also normalise every line
+            // ever said on every turn, so the cost of a round would grow with the length of the
+            // conversation for no gain.
+            RoomLine? echoed = null;
+            var oldest = Math.Max(0, Transcript.Count - EchoLookback);
+            for (var i = Transcript.Count - 1; i >= oldest; i--)
+            {
+                var l = Transcript[i];
+                if (l.SpeakerId == agent.Id || !IsEcho(text, l.Text)) continue;
+                echoed = l;
+                break;
+            }
             if (echoed != null)
             {
                 var retryPrompt = BuildPromptFor(agent);
@@ -328,6 +341,15 @@ public sealed class AgentRoom
         return shared / (double)Math.Max(a.Distinct().Count(), b.Distinct().Count()) >= 0.8;
     }
 
+    /// <summary>
+    /// How many recent lines a new reply is checked against for being a repeat.
+    /// </summary>
+    /// <remarks>
+    /// Covers a full round of the maximum room size plus the user's turn, which is the span in which
+    /// "somebody already said that" actually means anything.
+    /// </remarks>
+    public int EchoLookback { get; set; } = 6;
+
     /// <summary>Lower-case words with punctuation and action markers removed.</summary>
     /// <remarks>
     /// ⚠️ AN APOSTROPHE IS DROPPED, NOT TURNED INTO A SPACE, and that one character decided a real case.
@@ -335,13 +357,20 @@ public sealed class AgentRoom
     /// four tokens - 75% - and a genuine answer gets thrown away and re-rolled as though it were a
     /// repeat. Contractions are one word.
     /// </remarks>
-    private static List<string> NormaliseWords(string? text) =>
-        (text ?? "")
-            .ToLowerInvariant()
-            .Replace("'", "").Replace("’", "")
-            .Select(c => char.IsLetterOrDigit(c) ? c : ' ')
-            .Aggregate(new System.Text.StringBuilder(), (sb, c) => sb.Append(c))
-            .ToString()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .ToList();
+    private static List<string> NormaliseWords(string? text)
+    {
+        var words = new List<string>();
+        if (string.IsNullOrEmpty(text)) return words;
+        var sb = new System.Text.StringBuilder(16);
+        foreach (var ch in text)
+        {
+            // An apostrophe joins, everything else that is not a letter or digit separates. Straight and
+            // curly are both apostrophes; a model writes either.
+            if (ch == '\'' || ch == '\u2019') continue;
+            if (char.IsLetterOrDigit(ch)) { sb.Append(char.ToLowerInvariant(ch)); continue; }
+            if (sb.Length > 0) { words.Add(sb.ToString()); sb.Clear(); }
+        }
+        if (sb.Length > 0) words.Add(sb.ToString());
+        return words;
+    }
 }
