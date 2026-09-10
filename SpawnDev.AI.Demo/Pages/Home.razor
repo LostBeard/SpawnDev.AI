@@ -20,11 +20,20 @@
                 <label>
                     Chat model
                     @* A tick means it is on this device; a size means choosing it starts that download. *@
+                    @* 🔴 `selected` IS REQUIRED, not decoration. Captain, off the deployed build: "the app
+                       says the default model is qwen3-1.7b and it even uses that when you chat, but the
+                       model drop down has smollm2 shown as if it is the selected model." MEASURED over CDP
+                       on that page: `_model` really was qwen3:1.7b-q8_0 - its option even rendered "✓
+                       approved" - while the DOM select read `selectedIndex=0, value="smollm2..."`. The
+                       options arrive from the worker AFTER the select first renders, and a browser resets a
+                       select to index 0 when its options are replaced; @bind sees its own value unchanged
+                       and never re-applies it. So the picker named a model the app was not using, on the
+                       one control whose entire job is to say which model is running. *@
                     <select @bind="_model" disabled="@_busy">
                         @foreach (var m in _models)
                         {
                             var choice = ChoiceFor(m);
-                            <option value="@m">
+                            <option value="@m" selected="@(m == _model)">
                                 @(choice == null ? m
                                   : IsApproved(m) ? $"✓ {m}"
                                   : $"⬇ {m} ({FormatSize(choice.SizeBytes)})")
@@ -34,10 +43,11 @@
                 </label>
                 <label>
                     Image model
+                    @* Same reason as the chat picker above - options arrive after the first render. *@
                     <select @bind="_imageModel" disabled="@_busy">
                         @foreach (var (name, _) in _imageModels)
                         {
-                            <option value="@name">@name</option>
+                            <option value="@name" selected="@(name == _imageModel)">@name</option>
                         }
                     </select>
                 </label>
@@ -347,13 +357,13 @@
 
     @if (!_ready)
     {
+        @* Captain, 2026-09-10: "the main landing page can go. it's not really helpful." It was three
+           sentences of marketing standing between the user and the app, describing things the app shows
+           for itself a moment later.
+           🔴 WHAT COULD NOT GO IS THE BUTTON. Pressing it IS the agreement for the model the server will
+           run, and its SIZE is on the button - remove it and the app starts a 1.8 GB download nobody was
+           asked about. So the prose went and the consent stayed. *@
         <div class="hero">
-            <h2>Your browser is the AI server</h2>
-            <p>
-                One click starts a shared-worker model server on WebGPU. Weights stream peer-to-peer
-                and cache in your browser — every tab shares the same resident model. Ask for a
-                picture and the chat model will paint one with the on-device diffusion model.
-            </p>
             @* Starting the server IS the agreement for the model it will run - the size is on the
                button, so nothing large is ever fetched without having been named first. Every OTHER model
                is agreed to separately in the model panel. *@
@@ -366,7 +376,7 @@
             {
                 <p class="status">@_status</p>
             }
-            <p class="hint">Requires a WebGPU browser (Chrome/Edge). First model use downloads once, then it's cached.</p>
+            <p class="hint">Runs entirely on your GPU — nothing leaves your device. Needs WebGPU (Chrome/Edge); the model downloads once, then it's cached.</p>
         </div>
     }
     else
@@ -374,6 +384,18 @@
         @* THE STAGE. Characters with a body stand here, above the conversation, and act out what they
            wrote while they say it. Drawn only when somebody actually has a body - an empty strip above a
            normal chat would be clutter. *@
+        @* THE DEFAULT AI HAS A BODY TOO. With no characters made yet the room is empty by design, and the
+           stage used to be empty with it - so a first visit showed neither of the two things this demo
+           exists to show. Nova stands here instead, and reacts while it speaks, exactly as a character
+           does. One body, drawn only when the room is NOT in use, so it never competes with the cast. *@
+        @if (!RoomActive)
+        {
+            <div class="stage">
+                <div class="stage-slot" title="@DefaultAgentName">
+                    <ReachyAvatar Name="@DefaultAgentName" Speaking="@_speaking" />
+                </div>
+            </div>
+        }
         @if (RoomActive && EmbodiedAgents().Any())
         {
             <div class="stage">
@@ -453,9 +475,31 @@
             }
         </div>
 
+        @* 🔴 TWO ROWS, and the top one is ONLY the message box. Captain, off the deployed build: "the
+           bottom bar is so packed now that the user has zero room to type (the input box is maybe 20
+           pixels wide)." MEASURED over CDP on that page: an 848 px composer holding NINE controls in one
+           flex row left the textarea **59 px**. Typing is the primary action of a chat app and it had
+           become the smallest target on the screen. Every control that is not "type" or "send" now sits
+           on a second row that WRAPS, so nothing can squeeze the message box again as features are
+           added - which is exactly how it got to nine. *@
         <div class="composer">
-            <textarea @bind="_input" @bind:event="oninput" @onkeydown="OnKeyDown" rows="1"
-                      placeholder="Message — or /model, /image-model, or ask for a picture…" disabled="@_busy"></textarea>
+            <div class="composer-main">
+                <textarea @bind="_input" @bind:event="oninput" @onkeydown="OnKeyDown" rows="1"
+                          placeholder="Message — or /model, /image-model, or ask for a picture…" disabled="@_busy"></textarea>
+                @* Stop REPLACES Send while a generation is in flight, and is bound to _generationCts rather
+                   than _busy: _busy is also true while transcribing or generating an image, where there is
+                   no chat generation to cancel and the button would be dead. *@
+                @if (_generationCts != null)
+                {
+                    <button class="primary stop" @onclick="StopGeneration"
+                            title="Stop generating. The reply so far is kept.">■ Stop</button>
+                }
+                else
+                {
+                    <button class="primary send" @onclick="SendAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))">Send</button>
+                }
+            </div>
+            <div class="composer-tools">
             <button class="primary @(_listening ? "listening" : "")" @onclick="ToggleMicAsync" disabled="@_busy"
                     title="@(_listening ? "Stop and transcribe" : "Speak your message")">
                 @(_listening ? $"⏹️ {_listenSeconds:F1}s" : "🎤")
@@ -510,20 +554,9 @@
                 <button class="primary" @onclick="() => DeleteVoiceAsync(_voiceId)"
                         title="@($"Delete the saved voice {_voiceName} from this device")">🗑️🗣️</button>
             }
-            @* Stop REPLACES Send while a generation is in flight, and is bound to _generationCts rather
-               than _busy: _busy is also true while transcribing or generating an image, where there is
-               no chat generation to cancel and the button would be dead. *@
-            @if (_generationCts != null)
-            {
-                <button class="primary stop" @onclick="StopGeneration"
-                        title="Stop generating. The reply so far is kept.">■ Stop</button>
-            }
-            else
-            {
-                <button class="primary" @onclick="SendAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))">Send</button>
-            }
             <button class="primary" @onclick="DirectImageFromPromptAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))" title="Generate an image directly from your prompt (bypass the LLM)">🖼️</button>
             <button class="primary" @onclick="TestDirectImageAsync" disabled="@_busy" title="IMGTEST: direct SD-Turbo, fixed lighthouse prompt (bypass LLM)">🔬</button>
+            </div>
         </div>
         @* Two bars, because "it is not hearing me" has two independent halves and one bar cannot
            separate them. INPUT is the microphone level after conversion to 16 kHz - the signal actually
@@ -609,9 +642,16 @@
         color: #7c8798;
     }
 
+    /* ⚠️ WRAPS. MEASURED at a 405px viewport: this row was 526px wide and was the ONLY thing making the
+       whole page scroll sideways on a phone - two model dropdowns and three panel buttons that could not
+       give way. A model NAME is long by nature (`qwen2.5:1.5b-instruct-q4_k_m`), so the select must be
+       allowed to shrink and the row to break, or the header sets a floor the page can never go below. */
     .pickers {
         display: flex;
-        gap: .9rem;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: .9rem .6rem;
+        min-width: 0;
     }
 
         .pickers label {
@@ -620,7 +660,10 @@
             display: flex;
             flex-direction: column;
             gap: .15rem;
+            min-width: 0;
         }
+
+        .pickers select { max-width: 100%; }
 
     select {
         background: #131926;
@@ -1099,13 +1142,24 @@
 
     .composer {
         display: flex;
-        gap: .5rem;
+        flex-direction: column;
+        gap: .45rem;
         padding-top: .6rem;
         border-top: 1px solid #1d2430;
     }
 
+    /* The message box and Send, alone on their own row. */
+    .composer-main { display: flex; gap: .5rem; align-items: stretch; }
+
+    /* Everything else, wrapping instead of stealing width from the message box. */
+    .composer-tools { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+
+        /* ⚠️ `min-width: 0` is what actually makes `flex: 1` work here. A flex item's default
+           `min-width: auto` refuses to shrink below its content, so the siblings win every squeeze and
+           the textarea collapses - which is how it reached 59 px. */
         .composer textarea {
-            flex: 1;
+            flex: 1 1 auto;
+            min-width: 0;
             resize: none;
             background: #131926;
             border: 1px solid #273043;
@@ -1115,6 +1169,13 @@
             font-size: .92rem;
             font-family: inherit;
         }
+
+        .composer .send { min-width: 5rem; }
+
+        /* The voice name is the only free-text field down here; let it take the slack on a wide row and
+           shrink on a narrow one rather than forcing the row to overflow. */
+        .composer-tools .voice-name { flex: 1 1 9rem; min-width: 0; }
+        .composer-tools .voice-picker { max-width: 14rem; }
 
     .levels { display: flex; flex-direction: column; gap: 3px; margin: 4px 0 0; }
     .lvl-row { display: flex; align-items: center; gap: 6px; font-size: 11px; opacity: .85; }

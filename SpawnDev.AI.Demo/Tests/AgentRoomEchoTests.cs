@@ -140,6 +140,15 @@ public sealed class AgentRoomEchoTests
             ("I *look around* for any survivors.", "I *looks around* for any survivors.", true),
             // Same words, different punctuation, casing and action markers.
             ("We should go now", "*We should go, now!*", true),
+            // 🔴 MEASURED on the room gate, and the reason IsEcho compares dialogue separately. As whole
+            // strings these share 8 distinct words of 16 - half - and slipped through. But the asterisk
+            // spans are LIFTED OUT before synthesis, so both characters SAY the identical sentence.
+            ("*looks around*  We need to find a way to stay alive.",
+             "*glances at the broken lights, then at the empty room*  We need to find a way to stay alive.",
+             true),
+            // The other side of that: different dialogue must stay different however similar the ACTION is.
+            ("*looks around* We should split up and search the east wing.",
+             "*looks around* I am not going anywhere near that door.", false),
             // Verbatim.
             ("Stay close.", "Stay close.", true),
             // Short and genuinely different - must NOT be treated as a repeat.

@@ -17,6 +17,7 @@ dotnet run tools/<name>.cs -- [url]
 | `drive-ai-reachy.cs` | HARDWARE gate: a character whose body is the real Reachy Mini. Reads the daemon's actual head pose out of band (baseline taken AWAKE, since wake_up alone lifts it ~0.5 rad) and requires a real classified gesture. Always parks in a finally: home, sleep, motors off. |
 | `drive-chat-voice.cs` | The 🎤 button: records, transcribes in the worker, and lands an editable transcript in the composer. Asserts content words plus a 70% word-overlap floor. |
 | `drive-hands-free.cs` | The 💬🔊 button, whole turn: **when** the loop stops listening (endpointing), when the reply lands, and whether the page **actually played audio** - `AudioBufferSourceNode.start` is hooked, so "it spoke" is a browser event, not a status string. Also prints the endpointer's ms/frame against its 32 ms realtime budget, and every transcription time across turns. |
+| `check-ui-layout.cs` | **Is the app still usable?** Message-box width against the composer, the model picker naming the model actually selected, a default avatar on the stage, and no horizontal scroll - at 1040px AND at 420px. Every check is a defect Captain found by LOOKING, that every functional gate passed. |
 | `drive-ai-imgtest.cs` | Direct SD-Turbo image generation, bypassing the LLM. |
 | `drive-ai-model.cs` · `drive-ai-coreside.cs` | Model selection / core-side paths. |
 | `check-webgpu-adapter.cs` | Which WebGPU adapter the browser actually gave us. |

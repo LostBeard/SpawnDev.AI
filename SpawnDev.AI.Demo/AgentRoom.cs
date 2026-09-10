@@ -331,6 +331,21 @@ public sealed class AgentRoom
     /// <param name="existing">A line already in the transcript.</param>
     /// <returns>True when the two say the same thing.</returns>
     public static bool IsEcho(string? candidate, string? existing)
+        // 🔴 COMPARED TWICE: whole lines, and DIALOGUE ONLY. The second is not a refinement - it is the
+        // form the listener actually receives. MEASURED on the room gate after the first fix went in:
+        //
+        //   Zephrin  *looks around*  We need to find a way to stay alive.
+        //   Qualla   *glances at the broken lights, then at the empty room*  We need to find a way to stay alive.
+        //
+        // As whole strings those share 8 distinct words of 16 - half - and passed cleanly. But stage
+        // directions are LIFTED OUT before synthesis (that is the entire point of the asterisk convention),
+        // so what came out of the speakers was the same sentence twice in two different voices. A longer,
+        // more inventive stage direction was hiding an identical line, and the richer the action a model
+        // writes, the better it hides it.
+        => IsEchoOf(candidate, existing) || IsEchoOf(Dialogue(candidate), Dialogue(existing));
+
+    /// <summary>Word-set comparison of two forms of a line.</summary>
+    private static bool IsEchoOf(string? candidate, string? existing)
     {
         var a = NormaliseWords(candidate);
         var b = NormaliseWords(existing);
@@ -339,6 +354,27 @@ public sealed class AgentRoom
         if (a.Count < 4 || b.Count < 4) return false;
         var shared = a.Distinct().Count(w => b.Contains(w));
         return shared / (double)Math.Max(a.Distinct().Count(), b.Distinct().Count()) >= 0.8;
+    }
+
+    /// <summary>
+    /// What is left of a line once the <c>*...*</c> stage directions are taken out - what gets SPOKEN.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Deliberately simple and local rather than reusing the SDK splitter: this is a COMPARISON aid, so
+    /// it may be approximate, and it must never alter what is stored or said. A line with no asterisks
+    /// comes back unchanged, and so is compared exactly once by the caller.
+    /// </remarks>
+    private static string Dialogue(string? text)
+    {
+        if (string.IsNullOrEmpty(text) || text.IndexOf('*') < 0) return text ?? "";
+        var sb = new System.Text.StringBuilder(text.Length);
+        var inAction = false;
+        foreach (var ch in text)
+        {
+            if (ch == '*') { inAction = !inAction; sb.Append(' '); continue; }
+            if (!inAction) sb.Append(ch);
+        }
+        return sb.ToString();
     }
 
     /// <summary>

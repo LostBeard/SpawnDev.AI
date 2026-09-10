@@ -45,8 +45,31 @@ public partial class Home : IDisposable
     // The system prompt shapes how the model behaves. Image REQUESTS no longer depend on this text - the
     // server forces the generate_image tool on clear visual intent (AiChatEngine.ForceImageToolOnIntent) - but
     // the prompt still steers tone, refusal behavior, and when the model volunteers an image on its own.
+    /// <summary>
+    /// What the app calls itself when nobody has made a character yet.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE DEFAULT AI IS A CHARACTER TOO (Captain, 2026-09-10: "the default ai should be a default
+    /// persona right and have a default avatar also"). Before this, a first visit showed a nameless
+    /// "Assistant" and an empty stage, so the two things the demo is FOR - personas and avatars - were
+    /// invisible until the user went and built one. The default now has a name, a personality, and a body
+    /// that reacts while it talks, which is the demo demonstrating itself.
+    /// <para>
+    /// ⚠️ It is NOT put in the room. The room is the multi-character feature and starts empty on purpose;
+    /// this is the ordinary one-on-one chat, wearing the same clothes.
+    /// </para>
+    /// </remarks>
+    const string DefaultAgentName = "Nova";
+
+    /// <summary>The default AI's personality, appended to its instructions.</summary>
+    const string DefaultPersona =
+        "Your name is " + DefaultAgentName + ". You are warm, direct and a little curious; you keep "
+        + "answers short unless asked for depth, and you say plainly when you do not know something "
+        + "rather than inventing it. ";
+
     const string DefaultSystemPrompt =
-        "You are a helpful assistant running entirely on the user's own GPU in their browser. Answer "
+        DefaultPersona
+        + "You are a helpful assistant running entirely on the user's own GPU in their browser. Answer "
         + "questions, facts, math, explanations, stories, and poems clearly in plain text. When the user asks "
         + "about the SpawnDev open-source libraries, the apps built with them, or the crew, authoritative "
         + "reference information from GitHub is added to the conversation automatically - answer from it and "
@@ -867,6 +890,7 @@ public partial class Home : IDisposable
     async Task<(float[] Samples, int Rate, double Ms)> SynthesizeChunkAsync(string chunk, string? voiceId = null)
     {
         var useVoice = voiceId ?? _voiceId;
+        if (string.IsNullOrEmpty(useVoice)) useVoice = await EnsureTurnVoiceAsync();
         // A saved voice speaks from features derived ONCE. The per-turn path re-sends the reference PCM as a
         // JSON number array and makes the engine re-derive those features every time, and it clones from
         // whatever the recogniser THOUGHT was said - a transcript that is not verbatim bleeds into the start
@@ -875,6 +899,72 @@ public partial class Home : IDisposable
             ? await Ai.SpeakAsync(chunk, _lastHeardText, _lastHeardSamples!, WhisperRate)
             : await Ai.SpeakInVoiceAsync(chunk, useVoice);
         return (samples, rate, ms);
+    }
+
+    /// <summary>Id of the voice derived automatically from what the user last said, or empty.</summary>
+    string _turnVoiceId = "";
+
+    /// <summary>The reference this automatic voice was derived from, so it is re-derived only when that changes.</summary>
+    float[]? _turnVoiceFrom;
+
+    /// <summary>
+    /// Make sure a PREPARED voice exists for the current reference, so a reply is cloned ONCE, not once
+    /// per sentence.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THE DEFECT THIS FIXES, reported by Captain off the deployed build: "the pause between when it
+    /// pauses reading and starts again is very large", and "it still seems to be doing voice cloning
+    /// without me actually having saved my voice which could be why the tts is so slow". Both are one
+    /// mechanism. Speaking is chunked so sentence N plays while N+1 renders - but with no SAVED voice
+    /// every chunk took the cloning path, which ships the reference PCM over the worker as a JSON number
+    /// array and re-runs the mel to rebuild prompt features that are IDENTICAL for all of them. MEASURED
+    /// on that build: a six-chunk reply, 26.1 s for the first chunk, and the turn had not finished 90 s
+    /// later ("Speaking 3/6… (30.6s)"). The chunking made the per-clone cost happen SIX times instead of
+    /// once, so the feature that was meant to cut time-to-first-audio multiplied the total.
+    /// </para>
+    /// <para>
+    /// ⭐ Nothing new was needed - `PreparedVoice` already exists for exactly this, and its own docs say
+    /// the reference features are "the expensive, unchanging part of a voice, so a speaking robot computes
+    /// them once per voice rather than once per sentence". It was simply never used on the path a user
+    /// who has not saved a voice actually takes, which is everyone by default.
+    /// </para>
+    /// <para>
+    /// ⚠️ Re-derived only when the REFERENCE changes - identity, not equality, because the mic path hands
+    /// over a fresh array per turn and comparing hundreds of thousands of samples to save one preparation
+    /// would cost more than it saves. A new utterance means a new voice; the same utterance re-used across
+    /// chunks means one.
+    /// </para>
+    /// <para>
+    /// ⚠️ Returns EMPTY rather than throwing when preparation fails, so the caller falls back to the old
+    /// per-chunk cloning. Slow speech is a far better failure than silence, and this is a performance
+    /// path, not a correctness one.
+    /// </para>
+    /// </remarks>
+    async Task<string> EnsureTurnVoiceAsync()
+    {
+        if (_lastHeardSamples == null || _lastHeardSamples.Length == 0) return "";
+        if (_turnVoiceId.Length > 0 && ReferenceEquals(_turnVoiceFrom, _lastHeardSamples)) return _turnVoiceId;
+        try
+        {
+            var id = "turn-voice";
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await Ai.PrepareVoiceAsync(id, "This turn", _lastHeardText ?? "", _lastHeardSamples, WhisperRate);
+            clock.Stop();
+            _turnVoiceId = id;
+            _turnVoiceFrom = _lastHeardSamples;
+            Console.WriteLine($"[HF-SPEAK] prepared the turn voice once in {clock.ElapsedMilliseconds} ms; "
+                + "every sentence of this reply now speaks from those features");
+            return id;
+        }
+        catch (Exception ex)
+        {
+            // Say why, then carry on the slow way. A silent fallback would make the next person measuring
+            // this conclude the preparation is not helping, when in fact it never ran.
+            Console.WriteLine($"[HF-SPEAK] could not prepare a turn voice ({ex.Message}); "
+                + "falling back to cloning per sentence");
+            return "";
+        }
     }
 
     /// <summary>
