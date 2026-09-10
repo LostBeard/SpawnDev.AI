@@ -14,7 +14,7 @@ public sealed class AgentRoomTests
     private static AgentRoom ThreeWayRoom()
     {
         var room = new AgentRoom();
-        room.Agents.Add(new ChatAgent("ada", "Ada", "qwen2.5:0.5b-instruct-q8_0", "You like precision."));
+        room.Agents.Add(new ChatAgent("ada", "Ada", "qwen3:0.6b-q8_0", "You like precision."));
         room.Agents.Add(new ChatAgent("bo", "Bo", "qwen3:0.6b-q8_0", "You like big ideas."));
         return room;
     }
@@ -117,7 +117,7 @@ public sealed class AgentRoomTests
     public async Task EachSpeakerHearsTheOnesBeforeItInTheSameRound()
     {
         var room = ThreeWayRoom();
-        room.Agents.Add(new ChatAgent("cy", "Cy", "qwen2.5:0.5b-instruct-q8_0", "You like questions."));
+        room.Agents.Add(new ChatAgent("cy", "Cy", "qwen3:0.6b-q8_0", "You like questions."));
         room.MaxAgentTurnsPerRound = 3;
         room.Say(AgentRoom.UserId, "TJ", "Say something.");
 

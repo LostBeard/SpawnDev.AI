@@ -29,7 +29,7 @@ public sealed class AiChatTests
     /// was on the default. A test that covers a cheaper path than the product's own default is testing the
     /// wrong thing; the download cost is paid once into the OPFS-cached browser profile.
     /// </remarks>
-    private const string Model = "qwen2.5:0.5b-instruct-q8_0";
+    private const string Model = "qwen3:0.6b-q8_0";
 
     /// <summary>New instance.</summary>
     /// <param name="client">The window-side client the UI itself uses.</param>
@@ -244,10 +244,6 @@ public sealed class AiChatTests
     [AiTest(Heavy = true, Timeout = 1_800_000)]
     public Task MultiTurn_Lfm2_1_2b() => MultiTurnBody("lfm2:1.2b-q4_k_m");
 
-    /// <summary>Multi-turn against qwen2.5 0.5B - the demo's usual default.</summary>
-    [AiTest(Heavy = true, Timeout = 1_800_000)]
-    public Task MultiTurn_Qwen25_0_5b() => MultiTurnBody("qwen2.5:0.5b-instruct-q8_0");
-
     /// <summary>Multi-turn against qwen3 0.6B.</summary>
     [AiTest(Heavy = true, Timeout = 1_800_000)]
     public Task MultiTurn_Qwen3_0_6b() => MultiTurnBody("qwen3:0.6b-q8_0");
@@ -344,7 +340,7 @@ public sealed class AiChatTests
         await _client.InitAsync();
 
         const string a = "smollm2:360m-instruct-q8_0";
-        const string b = "qwen2.5:0.5b-instruct-q8_0";
+        const string b = "qwen2.5:1.5b-instruct-q4_k_m";
 
         var messages = new List<AiChatMessage>();
         // model, prompt - the swap points are turns 3 and 5.

@@ -40,6 +40,7 @@ public static class AiTestSuiteRunner
         typeof(OllamaSourcedModelTests),
         typeof(OpfsLayoutBenchmarkTests),
         typeof(OpfsContentionTests),
+        typeof(AgentRoomEchoTests),
     };
 
     /// <summary>Milliseconds a test may run before it is reported as timed out. Overridable per test.</summary>

@@ -473,6 +473,20 @@ catch (Exception ex)
 finally
 {
     Console.WriteLine();
+    // 🔴 THE APP'S OWN ERROR MESSAGES, which the console does NOT carry. Captain read
+    // "chat (InvalidOperationException: attention slot count mismatch 28/32) did not preload" off the
+    // screen of a window THIS GATE opened, and it appeared nowhere in the gate's log - because a warm
+    // failure is reported as a system BUBBLE in the transcript, not as a console line. A gate that cannot
+    // see what the page is telling the user is blind to exactly the failures the page took the trouble to
+    // explain.
+    try
+    {
+        var sys = await page.Locator(".msg.system").AllInnerTextsAsync();
+        Console.WriteLine($"    --- system messages the page showed ({sys.Count}) ---");
+        foreach (var m in sys) Console.WriteLine("      | " + m.Trim().ReplaceLineEndings(" "));
+    }
+    catch (Exception ex) { Console.WriteLine($"    (could not read system messages: {ex.Message})"); }
+    Console.WriteLine();
     Console.WriteLine("    --- page console (last 40) ---");
     foreach (var l in log.TakeLast(40)) Console.WriteLine($"      | {l}");
     await page.CloseAsync();

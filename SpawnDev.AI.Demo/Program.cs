@@ -73,13 +73,13 @@ builder.Services.AddSpawnDevAI(options =>
     //
     // The Description is what the picker shows. It says what the model is FOR and what it costs, because
     // a name and a byte count do not tell anyone whether a model can hold a character.
-    options.Models.Add(new HubModelOption(
-        "qwen2.5:0.5b-instruct-q8_0",
-        "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
-        "qwen2.5-0.5b-instruct-q8_0.gguf",
-        ApproxSizeBytes: 675_710_816,
-        Description: "Smallest useful chat model - the quickest way to see the demo work. Out of its "
-                   + "depth in a group scene: it restates the scene back at you instead of acting in it."));
+    // 🔴 qwen2.5:0.5b-instruct-q8_0 WAS THE DEFAULT AND IS DELIBERATELY GONE (Captain, 2026-09-10:
+    // "remove it entirely"). It was the wrong model to meet the demo on. MEASURED, twice: in the room
+    // gate two characters with opposite personas returned "I *look around* for any survivors." and
+    // "I *looks around* for any survivors." - one voice wearing two names; and asked "what colour is a
+    // ripe banana?" with tools available it called the IMAGE GENERATOR and narrated that instead of
+    // answering. A default is a claim about what the demo is, and that one under-sold every feature the
+    // page exists to show. Do not re-add it as the default without re-measuring both.
     options.Models.Add(new HubModelOption(
         "smollm2:360m-instruct-q8_0",
         "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF",

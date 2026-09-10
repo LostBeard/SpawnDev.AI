@@ -32,7 +32,11 @@ public partial class Home : IDisposable
     /// <c>done_reason "stop"</c> (see AiWorkerClient.ChatStreamAsync).</summary>
     bool _stoppedByUser;
     string _status = "", _busyNote = "";
-    string _model = "qwen2.5:0.5b-instruct-q8_0";
+    // The default is the model the demo is ABOUT, not the smallest one that runs. MEASURED here:
+    // the only model in the catalogue that held a persona through a room round rather than
+    // restating the scene back at the user. It costs a 1.8 GB first fetch, which the picker
+    // states before anything downloads - see the catalogue note in Program.cs.
+    string _model = "qwen3:1.7b-q8_0";
     string _imageModel = "sd-turbo";
     readonly List<string> _models = new();
     List<(string Name, string Note)> _imageModels = new();

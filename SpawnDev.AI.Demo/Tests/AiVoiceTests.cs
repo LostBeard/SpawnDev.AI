@@ -1,4 +1,4 @@
-﻿using System.Linq;
+using System.Linq;
 using System.Diagnostics;
 using SpawnDev.AI.Server;
 
@@ -49,7 +49,7 @@ public sealed class AiVoiceTests
     /// ⚠️ Must be a model the demo actually serves. A hardcoded guess fails with "model not found" AFTER
     /// paying for a full transcription, which reads as a speech failure and is not one.
     /// </remarks>
-    private const string Model = "qwen2.5:0.5b-instruct-q8_0";
+    private const string Model = "qwen3:0.6b-q8_0";
 
     /// <summary>Fixed flow-matching noise draw, so this gate is repeatable across runs and backends.</summary>
     private const int NoiseSeed = 12345;

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components;
 using SpawnDev.AI;
+using SpawnDev.AI.Server;
 
 namespace SpawnDev.AI.Demo.Pages;
 
@@ -51,6 +52,35 @@ public partial class Home
 
     /// <summary>What the catalogue says about a model, or null when it says nothing.</summary>
     AiModelChoice? ChoiceFor(string name) => _catalogue.FirstOrDefault(c => c.Name == name);
+
+    /// <summary>
+    /// The registered options - the SAME model list the worker serves, readable with no worker running.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 WHY THIS IS INJECTED SEPARATELY FROM THE CATALOGUE. Program.cs runs in BOTH scopes, so the
+    /// window holds the identical <see cref="AiWorkerServerOptions.Models"/> the worker will serve. That
+    /// matters for exactly one moment: the landing page, where <see cref="_catalogue"/> is still empty
+    /// because it is fetched from a worker that has not been started yet.
+    /// </remarks>
+    [Inject] AiWorkerServerOptions AiOptions { get; set; } = default!;
+
+    /// <summary>
+    /// Download size of a model, from the catalogue if the worker is up and from the registered options
+    /// if it is not. Zero when nothing knows.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE CONSENT CLAIM DEPENDS ON THIS. "Pressing Start the AI server is the agreement for the model
+    /// that server will run - its size is on the button" is only true if a size can be shown BEFORE the
+    /// button is pressed, and <see cref="ChoiceFor"/> alone cannot: the catalogue is loaded inside
+    /// StartAsync, so on the landing page it is empty and the button silently dropped the size and read
+    /// plain "Start the AI server". A first-time visitor agreed to a download whose size they were never
+    /// told - the precise thing this file exists to prevent - and it got worse the moment the default
+    /// model became the 1.8 GB one that can actually hold a character.
+    /// </remarks>
+    long SizeOfModel(string name)
+        => ChoiceFor(name)?.SizeBytes
+           ?? AiOptions.Models.FirstOrDefault(m => m.Name == name)?.ApproxSizeBytes
+           ?? 0;
 
     /// <summary>
     /// True when picking this model would start a download.

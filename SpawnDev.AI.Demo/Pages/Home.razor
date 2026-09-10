@@ -359,7 +359,7 @@
                is agreed to separately in the model panel. *@
             <button class="primary big" @onclick="StartAsync" disabled="@_starting">
                 @(_starting ? "Starting worker + WebGPU…"
-                  : ChoiceFor(_model) is { } c ? $"Start the AI server ({FormatSize(c.SizeBytes)} model)"
+                  : SizeOfModel(_model) is > 0 and var sz ? $"Start the AI server ({FormatSize(sz)} model)"
                   : "Start the AI server")
             </button>
             @if (!string.IsNullOrEmpty(_status))

@@ -259,6 +259,36 @@ public sealed class AgentRoom
             var text = (await generate(agent, BuildPromptFor(agent)) ?? "").Trim();
             if (text.Length == 0) continue;
 
+            // 🔴 A PARROT IS NOT A CONVERSATION, AND THE PROMPT CLAUSE ALONE DOES NOT STOP IT.
+            // Every other speaker's line arrives as the most recent `user` turn, and restating the last
+            // user turn is a small model's single most common failure. MEASURED on the room gate with the
+            // anti-echo clause already in the system prompt: "I *look around* for any survivors." followed
+            // by "I *looks around* for any survivors." - two characters, two personas, one voice. Asking
+            // once more, this time NAMING the line that is taken, costs one generation on the rare turn
+            // that needs it and nothing at all on the turns that do not.
+            var echoed = Transcript.LastOrDefault(l => l.SpeakerId != agent.Id && IsEcho(text, l.Text));
+            if (echoed != null)
+            {
+                var retryPrompt = BuildPromptFor(agent);
+                retryPrompt.Add(new AiChatMessage("system",
+                    $"{echoed.SpeakerName} already said \"{echoed.Text}\". That line is taken. Say "
+                    + "something of your own instead - react to it, disagree with it, or add to it, but "
+                    + "do not repeat it."));
+                var retry = (await generate(agent, retryPrompt) ?? "").Trim();
+                // ⚠️ The retry is used whenever it produced anything, even if it echoes again. Dropping a
+                // second echo would silently remove a member from the round, and a room that loses a
+                // speaker is a worse failure than one that repeats itself - the user can see a repeat and
+                // change model; they cannot see an absence. When it still echoes, SAY so, because that is
+                // the model being too weak for role-play and no prompt fixes it.
+                if (retry.Length > 0)
+                {
+                    if (IsEcho(retry, echoed.Text))
+                        Console.WriteLine($"[room] {agent.Name} ({agent.Model}) echoed {echoed.SpeakerName} "
+                            + "twice - this model is too weak to hold a separate voice in a room");
+                    text = retry;
+                }
+            }
+
             var line = new RoomLine(agent.Id, agent.Name, text);
             Transcript.Add(line);
             said.Add(line);
@@ -266,4 +296,52 @@ public sealed class AgentRoom
         }
         return said;
     }
+
+    /// <summary>
+    /// Is <paramref name="candidate"/> the same line as <paramref name="existing"/>, said again?
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ STRING EQUALITY IS NOT ENOUGH, which is the whole reason this exists rather than an <c>==</c>.
+    /// The observed failure differed by one letter: "I *look around* for any survivors." against
+    /// "I *looks around* for any survivors." - byte-different, identical to a reader, and a plain
+    /// comparison waves it straight through.
+    /// </para>
+    /// <para>
+    /// So: normalise away case, punctuation and the asterisks that mark stage directions, then compare
+    /// word sets. Identical after normalising is an echo at any length. Otherwise it takes four words or
+    /// more AND three quarters of them shared, because short replies overlap by coincidence - "I don't
+    /// know." and "I don't care." share two words of three and are different answers.
+    /// </para>
+    /// </remarks>
+    /// <param name="candidate">The reply just generated.</param>
+    /// <param name="existing">A line already in the transcript.</param>
+    /// <returns>True when the two say the same thing.</returns>
+    public static bool IsEcho(string? candidate, string? existing)
+    {
+        var a = NormaliseWords(candidate);
+        var b = NormaliseWords(existing);
+        if (a.Count == 0 || b.Count == 0) return false;
+        if (a.Count == b.Count && a.SequenceEqual(b)) return true;
+        if (a.Count < 4 || b.Count < 4) return false;
+        var shared = a.Distinct().Count(w => b.Contains(w));
+        return shared / (double)Math.Max(a.Distinct().Count(), b.Distinct().Count()) >= 0.8;
+    }
+
+    /// <summary>Lower-case words with punctuation and action markers removed.</summary>
+    /// <remarks>
+    /// ⚠️ AN APOSTROPHE IS DROPPED, NOT TURNED INTO A SPACE, and that one character decided a real case.
+    /// Splitting on it makes "don't" two tokens, so "I don't know." and "I don't care." share three of
+    /// four tokens - 75% - and a genuine answer gets thrown away and re-rolled as though it were a
+    /// repeat. Contractions are one word.
+    /// </remarks>
+    private static List<string> NormaliseWords(string? text) =>
+        (text ?? "")
+            .ToLowerInvariant()
+            .Replace("'", "").Replace("’", "")
+            .Select(c => char.IsLetterOrDigit(c) ? c : ' ')
+            .Aggregate(new System.Text.StringBuilder(), (sb, c) => sb.Append(c))
+            .ToString()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
 }

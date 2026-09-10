@@ -27,7 +27,7 @@ public sealed class CharacterLibraryTests
         try
         {
             await _characters.SaveAsync(id, "Test Character", "You are terse and precise.",
-                "qwen2.5:0.5b-instruct-q8_0", "voice-abc");
+                "qwen3:0.6b-q8_0", "voice-abc");
 
             var listed = await _characters.ListAsync();
             var mine = listed.FirstOrDefault(c => c.Id == id);
@@ -40,7 +40,7 @@ public sealed class CharacterLibraryTests
             if (mine.Name != "Test Character") throw new Exception($"name came back '{mine.Name}'");
             if (mine.Persona != "You are terse and precise.")
                 throw new Exception($"persona came back '{mine.Persona}' - this is the whole behaviour");
-            if (mine.Model != "qwen2.5:0.5b-instruct-q8_0") throw new Exception($"model came back '{mine.Model}'");
+            if (mine.Model != "qwen3:0.6b-q8_0") throw new Exception($"model came back '{mine.Model}'");
             if (mine.VoiceId != "voice-abc") throw new Exception($"voice came back '{mine.VoiceId}'");
         }
         finally

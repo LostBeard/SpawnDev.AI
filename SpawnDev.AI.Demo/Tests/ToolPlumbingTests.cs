@@ -28,7 +28,7 @@ public sealed class ToolPlumbingTests
     /// <summary>New instance.</summary>
     public ToolPlumbingTests(AiWorkerClient client) => _client = client;
 
-    private const string Model = "qwen2.5:0.5b-instruct-q8_0";
+    private const string Model = "qwen3:0.6b-q8_0";
 
     /// <summary>The server publishes its tools in the shape a generation can consume.</summary>
     /// <remarks>
