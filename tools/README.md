@@ -17,12 +17,30 @@ dotnet run tools/<name>.cs -- [url]
 | `drive-ai-reachy.cs` | HARDWARE gate: a character whose body is the real Reachy Mini. Reads the daemon's actual head pose out of band (baseline taken AWAKE, since wake_up alone lifts it ~0.5 rad) and requires a real classified gesture. Always parks in a finally: home, sleep, motors off. |
 | `drive-chat-voice.cs` | The 🎤 button: records, transcribes in the worker, and lands an editable transcript in the composer. Asserts content words plus a 70% word-overlap floor. |
 | `drive-hands-free.cs` | The 💬🔊 button, whole turn: **when** the loop stops listening (endpointing), when the reply lands, and whether the page **actually played audio** - `AudioBufferSourceNode.start` is hooked, so "it spoke" is a browser event, not a status string. Also prints the endpointer's ms/frame against its 32 ms realtime budget, and every transcription time across turns. |
+| `tap-shared-worker.cs` | **Reads a SHARED worker's console**, which never reaches `page.Console`. Start Chrome with `--remote-debugging-port=9222`, open the app, then tap it. CDP lists shared workers as their own targets, so their logs were always readable - we just never asked. This is the instrument that found a 626-second model load. |
 | `check-ui-layout.cs` | **Is the app still usable?** Message-box width against the composer, the model picker naming the model actually selected, a default avatar on the stage, and no horizontal scroll - at 1040px AND at 420px. Every check is a defect Captain found by LOOKING, that every functional gate passed. |
 | `drive-ai-imgtest.cs` | Direct SD-Turbo image generation, bypassing the LLM. |
 | `drive-ai-model.cs` · `drive-ai-coreside.cs` | Model selection / core-side paths. |
 | `check-webgpu-adapter.cs` | Which WebGPU adapter the browser actually gave us. |
 | `build-index.cs` | Site index generation. |
 | `serve-published.cs` | Serves a `dotnet publish` output statically with PMT's COOP/COEP headers - **the only correct way to measure the demo**, see below. |
+
+## 🔴 The thing that hid two real bugs for a day: every gate runs `?worker=dedicated`
+
+Sync access handles are **dedicated-worker only**. So SpawnDev.WebTorrent's `createWritable`/Blob fallback
+runs in exactly the configuration a normal visitor gets - a SHARED worker - and a shared worker's console
+does not reach `page.Console`. Every gate here passes `?worker=dedicated` **in order to be able to read
+anything at all**, which means the gates systematically select the configuration that HIDES any
+shared-worker-only defect.
+
+Three real ones lived there while every gate was green: a content file sized by how much had arrived
+rather than its true length (a half-downloaded model was just a shorter file, and the ONNX parser threw
+`Unknown wire type: 6`), a cached Blob snapshot going stale mid-read (reported by the browser as
+"permission problems ... after a reference to a file was acquired"), and a `getFile()` per read while
+downloading that turned a model load into **626 seconds**.
+
+Use `tap-shared-worker.cs` to read that console, and `AsyncFSFileStore.ForceWritableFallback` to exercise
+the fallback path in a dedicated worker where a gate can assert on it.
 
 ## Two things that will cost you an hour otherwise
 
