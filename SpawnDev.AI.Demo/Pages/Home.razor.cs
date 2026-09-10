@@ -880,6 +880,61 @@ public partial class Home : IDisposable
     /// </remarks>
     const int SpeakChunkCharacters = 160;
 
+    /// <summary>
+    /// Characters per chunk AFTER the first one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 EQUAL CHUNKS WERE THE WRONG SHAPE, and it is the mechanism behind Captain's "the pause between
+    /// when it pauses reading and starts again is very large". A synthesis is not proportional to its
+    /// text: MEASURED, a chunk cost ~31 s to render **1.9 s of speech**, of which the first Euler step
+    /// alone was 8.7 s of 20 s - a FIXED cost paid once per synthesis. Four equal chunks therefore pay
+    /// that toll four times, and since rendering is ~15x slower than realtime, no amount of pipelining can
+    /// hide it: the voice speaks 1.9 s and then stalls for half a minute, every time.
+    /// </para>
+    /// <para>
+    /// So the first chunk stays SHORT - that one is about time-to-first-audio, which chunking really does
+    /// fix - and everything after it is merged into far fewer, larger renders. Same audio, same order, a
+    /// fraction of the fixed cost.
+    /// </para>
+    /// <para>
+    /// ⚠️ 320 is not arbitrary: it is the length ZipVoice is MEASURED clean to (the old
+    /// <c>MaxSpokenCharacters</c>, and `AiVoiceTests` gates intelligibility at five lengths up to 343).
+    /// Raising it further is a question for that gate, not for this file.
+    /// </para>
+    /// </remarks>
+    const int SpeakChunkCharactersAfterFirst = 320;
+
+    /// <summary>
+    /// Split for speech, then merge everything after the first chunk into larger renders.
+    /// </summary>
+    /// <remarks>
+    /// Sentence boundaries come from the engine's own splitter; this only decides how many of those pieces
+    /// share one synthesis. See <see cref="SpeakChunkCharactersAfterFirst"/> for why that is not uniform.
+    /// </remarks>
+    internal static List<string> SpeakableChunks(string speakable)
+    {
+        var fine = AiVoiceEngine.SplitIntoSpeakableChunks(speakable, SpeakChunkCharacters);
+        if (fine.Count <= 1) return fine;
+
+        var merged = new List<string> { fine[0] };
+        var sb = new System.Text.StringBuilder();
+        for (var i = 1; i < fine.Count; i++)
+        {
+            // Start a new render only when adding this piece would exceed the measured-clean length, so a
+            // long reply becomes a couple of renders instead of one per sentence.
+            if (sb.Length > 0 && sb.Length + 1 + fine[i].Length > SpeakChunkCharactersAfterFirst)
+            {
+                merged.Add(sb.ToString());
+                sb.Clear();
+            }
+            if (sb.Length > 0) sb.Append(' ');
+            sb.Append(fine[i]);
+        }
+        if (sb.Length > 0) merged.Add(sb.ToString());
+        return merged;
+    }
+
     /// <summary>Cancels the current spoken reply - both the chunk loop and the audio.</summary>
     CancellationTokenSource? _speakCts;
 
@@ -1098,7 +1153,7 @@ public partial class Home : IDisposable
                 StateHasChanged();
                 return;
             }
-            var chunks = AiVoiceEngine.SplitIntoSpeakableChunks(speakable, SpeakChunkCharacters);
+            var chunks = SpeakableChunks(speakable);
             _speaker ??= new AudioPlayback(JS);
             double spokenSeconds = 0;
             int spokenChunks = 0;
