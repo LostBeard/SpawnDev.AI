@@ -22,8 +22,9 @@ every 4 MB piece as its own OPFS file, and every read of one pays `getFileHandle
 2835 of the 3745 ms were the 171 opens. Host-materialised stayed 0.3 MB of 638.7 MB in both.
 
 ⚠️ Existing caches MIGRATE rather than re-download - `client.InitStorageAsync()` restores and then copies
-any piece-layout cache into the new layout OPFS-to-OPFS. Verified on a real profile: 438 pieces of
-Qwen3-1.7B, 175 of LFM2-1.2B and 163 of an ONNX model moved with no network fetch.
+any piece-layout cache into the new layout OPFS-to-OPFS, then reclaims the old directory once every piece
+is verified present. Verified against a real model cache: **13 torrents, 3030 pieces, ~12 GB, zero network
+fetches**, including gemma4 at 1760 pieces and Qwen3-4B at 596.
 
 ### Added - `IAiWorkerApi.BenchmarkOpfsLayoutAsync`
 
