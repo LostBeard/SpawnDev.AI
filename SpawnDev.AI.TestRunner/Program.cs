@@ -33,6 +33,7 @@ var headed = false;
 var heavy = false;
 var cold = false;
 var dedicated = false;
+var shared = false;
 var verbose = false;
 var externalUrl = "";
 var wavDir = "";
@@ -45,6 +46,7 @@ for (var i = 0; i < args.Length; i++)
         case "--heavy": heavy = true; break;
         case "--cold": cold = true; break;
         case "--dedicated": dedicated = true; break;
+        case "--shared": shared = true; break;
         case "--verbose": verbose = true; break;
         case "--url": externalUrl = ++i < args.Length ? args[i] : ""; break;
         case "--filter": filter = ++i < args.Length ? args[i] : ""; break;
@@ -55,7 +57,7 @@ for (var i = 0; i < args.Length; i++)
         case "-h":
         case "--help":
             Console.WriteLine("usage: [filter] [--filter <text>] [--heavy] [--headed] [--verbose] "
-                            + "[--cold] [--dedicated] [--url <url>] [--wav <dir>] [--heartbeat <seconds>]");
+                            + "[--cold] [--dedicated] [--shared] [--url <url>] [--wav <dir>] [--heartbeat <seconds>]");
             return 0;
         default:
             if (!args[i].StartsWith("-")) filter = args[i];
@@ -91,6 +93,11 @@ try
     // A DEDICATED worker shares its console with the window, so Playwright can see model-load progress.
     // A shared worker's console is invisible to page.Console, which makes a slow load look like a hang.
     if (dedicated) query += "&worker=dedicated";
+    // --shared FORCES the shared worker. Needed because AiWorkerClient.PreferSharedWorker defaults to
+    // FALSE, so without this there is no way to measure the shared path - and whether it is viable again
+    // on HTTP+OPFS delivery is exactly the open question. Its console does NOT reach page.Console, so a
+    // slow load here looks like a hang; read the numbers the test itself reports.
+    if (shared) query += "&worker=shared";
     if (!string.IsNullOrEmpty(filter)) query += $"&filter={Uri.EscapeDataString(filter)}";
     // Only ask the page for audio when we have somewhere to put it - a synthesis is ~640 KB of base64.
     if (!string.IsNullOrEmpty(wavDir))
