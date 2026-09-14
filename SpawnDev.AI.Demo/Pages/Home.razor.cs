@@ -88,12 +88,26 @@ public partial class Home : IDisposable
     /// <see cref="StageDirections.SplitForBody"/> for the guard that keeps a stray "*not*" spoken.
     /// </para>
     /// </remarks>
+    /// <remarks>
+    /// 🔴 "ALWAYS ANSWER IN WORDS" IS THE MOST IMPORTANT SENTENCE HERE, and it was missing. Captain, on
+    /// the running demo: <c>"tilts head" not replying, not listenikng, hands free enabled</c> - the model
+    /// had been told it could act and replied with an action and NOTHING ELSE. That is not an answer to
+    /// anything, and in a hands-free turn it is worse than useless: there are no words to speak, so the
+    /// utterance is empty and the conversation has nothing to continue from.
+    /// <para>
+    /// ⚠️ A prompt is guidance, not a guarantee - the speak path must survive an action-only reply
+    /// whatever this says, which is why <see cref="SpeakReplyAsync"/> reopens the microphone from a
+    /// finally. Both halves are needed: this makes it rare, that makes it harmless.
+    /// </para>
+    /// </remarks>
     const string BodyInstructions =
         "You have a small robot body on screen: a head that nods, shakes, tilts, looks up and down, leans "
-        + "in and turns, and two antennae that perk up, wiggle or droop. Show what you mean with it - write "
-        + "a physical action between asterisks, on its own, like *tilts head* or *antennae perk up*, and it "
-        + "is performed rather than spoken. Use one when it genuinely adds something (curiosity, agreement, "
-        + "delight, sympathy) and not on every line. Never use asterisks for emphasis. ";
+        + "in and turns, and two antennae that perk up, wiggle or droop. You may show what you mean with it "
+        + "by writing one physical action between asterisks, like *tilts head* or *antennae perk up*, and it "
+        + "is performed rather than spoken. ALWAYS ANSWER IN WORDS AS WELL - an action is never a reply on "
+        + "its own, and a reply that contains only an action has not answered at all. Use at most one per "
+        + "reply, only when it genuinely adds something (curiosity, agreement, delight, sympathy), and not "
+        + "on most replies. Never use asterisks for emphasis. ";
 
     const string DefaultSystemPrompt =
         DefaultPersona
@@ -1106,6 +1120,34 @@ public partial class Home : IDisposable
     /// </remarks>
     async Task SpeakReplyAsync(string text, string? voiceId = null, bool resumeListening = true)
     {
+        // 🔴 THE MICROPHONE COMES BACK ON EVERY PATH. Captain, watching a hands-free session: "it is hung.
+        // it should be replying or listening as hands free is enabled. that is the definition of hung."
+        //
+        // It was. Reopening the microphone was the LAST STATEMENT of this method, after the try/finally -
+        // so every `return` inside it skipped the thing that keeps the conversation alive, and the loop
+        // stopped dead with no error and no listening. Two such returns existed: no voice to clone from,
+        // and nothing to say aloud.
+        //
+        // ⚠️ THE SECOND ONE IS NEW-ISH, and that is why this surfaced now. The assistant is now asked to
+        // write physical actions, so a reply CAN be all action and no dialogue ("*nods*") - `speakable` is
+        // then empty, which was a rare model quirk before and is a designed-for case today. Adding a
+        // feature made a latent dead end reachable.
+        try
+        {
+            await SpeakCoreAsync(text, voiceId);
+        }
+        finally
+        {
+            // Only now, with the speakers quiet, and only when this utterance was the whole turn - a group
+            // round speaks several times and reopens the mic once, at the end (see resumeListening).
+            if (resumeListening && _handsFree && !_listening)
+                await ResumeListeningAsync("after speaking the reply");
+        }
+    }
+
+    /// <summary>Speak one reply. Returning early is safe - <see cref="SpeakReplyAsync"/> owns the microphone.</summary>
+    async Task SpeakCoreAsync(string text, string? voiceId)
+    {
         _speakCts?.Dispose();
         _speakCts = new CancellationTokenSource();
         var voice = voiceId ?? _voiceId;
@@ -1209,7 +1251,20 @@ public partial class Home : IDisposable
             {
                 // The whole reply was action and no dialogue. Silence is correct - there is nothing to
                 // say - but say WHY, or it reads as the voice having failed.
+                // ⚠️ A SYSTEM BUBBLE, not just _status. Hands-free reopens the microphone immediately
+                // after this and StartListeningAsync overwrites the status line with "Listening…", so a
+                // status-only explanation is erased within a fraction of a second - the exact defect this
+                // file has already paid for twice. A bubble survives, and this one names a real problem:
+                // the model answered with a gesture instead of an answer.
                 _status = actions.Count > 0 ? "(action only - nothing said aloud)" : "Nothing to speak.";
+                if (actions.Count > 0)
+                    _messages.Add(new Msg
+                    {
+                        Role = "system",
+                        Text = $"That reply was only an action (*{string.Join("*, *", actions)}*) with "
+                             + "nothing said, so there was nothing to speak. Small models do this; a "
+                             + "larger one from the 📦 model panel holds a conversation better.",
+                    });
                 StateHasChanged();
                 return;
             }
@@ -1287,13 +1342,10 @@ public partial class Home : IDisposable
         {
             _speaking = false;
             _busyNote = "";
+            _progressInfo = null;
+            _progressPending = false;
             StateHasChanged();
         }
-
-        // Back to listening for the next turn - only now, with the speakers quiet, and only when this
-        // utterance was the whole turn. See resumeListening.
-        if (resumeListening && _handsFree && !_listening)
-            await ResumeListeningAsync("after speaking the reply");
     }
 
     /// <summary>True while a reply is being synthesised or played.</summary>
