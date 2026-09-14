@@ -31,25 +31,35 @@ public sealed class AiWorkerClient
     /// True prefers a SharedWorker - one AI server shared by every tab, the way ollama serves a desktop.
     /// </summary>
     /// <remarks>
-    /// 🔴 DEFAULTS TO FALSE SINCE 2026-09-10, ON CAPTAIN'S CALL, AND THIS IS A MITIGATION NOT A DESIGN
-    /// CHANGE. The shared-worker design is the intended one - "multiple pages share a single AI server,
-    /// just like ollama on the desktop" - and it stays available. But a shared worker has NO
-    /// <c>createSyncAccessHandle</c> (it is dedicated-worker only), so all storage falls back to
-    /// <c>createWritable</c>/Blob, and on that path a 1.8 GB model load measured **626 s** against 92.8 s
-    /// for the same model in a dedicated worker. Three real storage defects have been fixed underneath it
-    /// (SpawnDev.WebTorrent 4.2.7) and it is still not good enough to meet a visitor on.
+    /// ⭐ BACK TO TRUE 2026-09-14, on Captain's call, once the reason for turning it off stopped existing.
+    /// The shared-worker design is the intended one - multiple pages share a single AI server, the way
+    /// ollama serves a desktop - so two tabs load a model ONCE and hold ONE copy in VRAM.
     /// <para>
-    /// ⚠️ THE REMAINING GAP IS NOT EXPLAINED, and it is not honest to imply otherwise. Captain, seeing it:
-    /// "this load time is bullshit and there is a major bug somewhere that is being overlooked." Set this
-    /// true (or pass <c>?worker=shared</c>) to work on it; the cost is visible immediately.
+    /// ⚠️ THE HISTORY, because the numbers that forced the mitigation were real. Between 2026-09-10 and
+    /// this change the default was FALSE: a 1.8 GB model measured <b>626 s</b> in a shared worker against
+    /// <b>92.8 s</b> dedicated, and Captain's verdict was "this load time is bullshit and there is a major
+    /// bug somewhere that is being overlooked." He was right, and the bug was not the worker scope.
     /// </para>
     /// <para>
-    /// ⚠️ What is given up meanwhile: two tabs each load their own copy of a model, so they each pay the
-    /// load and each hold VRAM - which is why the shared design existed. That is the trade being made
-    /// deliberately, in exchange for a demo that answers in a minute and a half rather than ten.
+    /// 🔴 THE DIAGNOSIS WAS WRONG, and it is worth naming precisely. The reasoning was: a shared worker has
+    /// no <c>createSyncAccessHandle</c> (dedicated-worker only), so storage falls back to
+    /// <c>createWritable</c>/Blob, so it is slow. The second step does not follow. Model delivery ran
+    /// through WebTorrent's chunk store, which reads in PIECES - and it is the READ SIZE that costs, not
+    /// the absence of sync handles. MEASURED 2026-09-14 on the Blob path (window scope, where
+    /// <c>createSyncAccessHandle</c> is equally unavailable): <b>75-87 MB/s at 64 KiB reads and
+    /// 1559-1986 MB/s at 16 MiB</b>. The async path was never the problem.
     /// </para>
+    /// <para>
+    /// Delivery is now plain HTTP into a single OPFS file (<c>HubModelSource</c>), read in 16 MiB chunks.
+    /// A shared worker uses exactly the same code and the same non-sync path the window does, so there is
+    /// no mechanism left for it to be slower. A DEDICATED worker should still edge it out, because
+    /// <c>OPFSStream</c> takes the sync handle there even for async copies - that is an advantage, not a
+    /// requirement.
+    /// </para>
+    /// <para>Set false (or pass <c>?worker=dedicated</c>) to force one worker per tab - useful when you
+    /// want the worker's console in the page, which a shared worker does not give you.</para>
     /// </remarks>
-    public bool PreferSharedWorker { get; set; } = false;
+    public bool PreferSharedWorker { get; set; } = true;
 
     /// <summary>
     /// Run the window-vs-worker cost benchmarks during <see cref="InitAsync"/>. Diagnostic; default OFF.

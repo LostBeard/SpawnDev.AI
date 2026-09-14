@@ -110,14 +110,15 @@ public partial class Home : IDisposable
     async Task StartAsync()
     {
         _starting = true;
-        // ?worker=dedicated forces a dedicated worker (diagnostic: the piece-download loop
-        // reproduced only under SharedWorker, 2026-07-04).
+        // The SHARED worker is the default again (see AiWorkerClient.PreferSharedWorker) - one AI server
+        // for every tab, one copy of the model in VRAM.
+        // ?worker=dedicated forces one worker per tab. Two reasons to want it: a dedicated worker's console
+        // reaches the page (a shared worker's does not, so a slow load there reads as a hang), and
+        // OPFSStream takes the sync access handle there, which a shared worker cannot.
         var location = JS.Get<string>("location.href");
         if (location.Contains("worker=dedicated", StringComparison.OrdinalIgnoreCase))
             Ai.PreferSharedWorker = false;
-        // ?worker=shared opts BACK IN to the shared worker, which is no longer the default - see
-        // AiWorkerClient.PreferSharedWorker for the measurement that changed it and what is still
-        // unexplained. Keeping a way in matters: the path cannot be fixed if it cannot be reached.
+        // ?worker=shared is now a no-op against the default, kept so the choice is explicit either way.
         if (location.Contains("worker=shared", StringComparison.OrdinalIgnoreCase))
             Ai.PreferSharedWorker = true;
         // ?bench=1 runs the window-vs-worker cost benchmarks once, before anything is loaded.
