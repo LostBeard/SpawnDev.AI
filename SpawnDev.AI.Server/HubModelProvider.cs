@@ -48,7 +48,7 @@ public sealed record HubModelOption(string Name, string Repo, string File, long 
 /// </summary>
 public sealed class HubModelProvider : IAiModelProvider
 {
-    private readonly WebTorrentClient _webTorrent;
+    private readonly IModelSource _source;
     private readonly HttpClient _http;
     private readonly List<HubModelOption> _models;
 
@@ -58,9 +58,14 @@ public sealed class HubModelProvider : IAiModelProvider
     /// <summary>Hub preparation timeout (cold hub cache can take minutes for multi-GB models).</summary>
     public TimeSpan PrepareTimeout { get; set; } = TimeSpan.FromMinutes(8);
 
-    public HubModelProvider(WebTorrentClient webTorrent, HttpClient http, IEnumerable<HubModelOption> models)
+    /// <param name="source">
+    /// Model delivery. <see cref="HubModelSource"/> is plain HTTP through the hub cached in OPFS - no
+    /// WebTorrent. Pass a <c>HubModelStream</c> (SpawnDev.ILGPU.ML.WebTorrent) instead for torrent delivery;
+    /// it implements the same <see cref="IModelSource"/>.
+    /// </param>
+    public HubModelProvider(IModelSource source, HttpClient http, IEnumerable<HubModelOption> models)
     {
-        _webTorrent = webTorrent;
+        _source = source;
         _http = http;
         _models = models.ToList();
     }
@@ -132,44 +137,71 @@ public sealed class HubModelProvider : IAiModelProvider
     /// AGREED is the fact the app can actually answer. This value is fine for showing progress.
     /// </para>
     /// </remarks>
-    public double? CachedFraction(string name)
+    public async Task<double?> CachedFractionAsync(string name, CancellationToken ct = default)
     {
-        var hint = Find(name)?.CacheFileHint;
-        if (string.IsNullOrEmpty(hint)) return null;
+        var opt = Find(name);
+        if (opt == null) return null;
 
-        foreach (var torrent in _webTorrent.Torrents)
-        {
-            if (torrent.Name?.Contains(hint, StringComparison.OrdinalIgnoreCase) != true) continue;
-            return torrent.Progress;
-        }
-        return null;
+        // Cache state is a CAPABILITY, not a guarantee: a source that does not cache (a ranged reader, a
+        // local-file source) has nothing to report, and null already means "nothing has fetched it".
+        if (_source is not ICachingModelSource caching) return null;
+
+        var key = opt.IsOllama
+            ? HubModelSource.OllamaCacheKey(opt.OllamaModel!, opt.OllamaTag!, "model")
+            : caching.CacheKey(opt.Repo, opt.File);
+
+        // In flight: the downloader knows exactly how far it is.
+        foreach (var d in caching.ActiveDownloads)
+            if (d.Key == key) return d.Fraction ?? 0d;
+
+        // Otherwise ask the store. A COMPLETE entry is 1.0; a partial reports its real fraction of the
+        // expected total; absent is null.
+        if (caching.Store is not IResumableModelStore resumable)
+            return await caching.Store.ExistsAsync(key, ct).ConfigureAwait(false) ? 1d : null;
+
+        var state = await resumable.GetStateAsync(key, ct).ConfigureAwait(false);
+        if (!state.Exists) return null;
+        if (state.Complete) return 1d;
+        return state.TotalBytes > 0 ? Math.Clamp((double)state.BytesWritten / state.TotalBytes, 0d, 1d) : 0d;
     }
 
     /// <summary>Name, size, purpose and how much is cached - what a picker needs before asking.</summary>
     /// <remarks>
-    /// The size is the CONFIGURED figure. It is hand-entered and therefore worth checking against the
-    /// published file, but it is still the best number available: the torrent's own reported length is
-    /// piece-aligned and overstated (see <see cref="CachedFraction"/>).
+    /// The size is the CONFIGURED figure (<c>ApproxSizeBytes</c>), which is hand-entered and worth checking
+    /// against the published file.
     /// </remarks>
-    public IReadOnlyList<(string Name, long SizeBytes, string Description, double? CachedFraction)> Catalogue()
-        => _models.Select(m => (m.Name, m.ApproxSizeBytes, m.Description, CachedFraction(m.Name))).ToList();
-
+    public async Task<IReadOnlyList<(string Name, long SizeBytes, string Description, double? CachedFraction)>>
+        CatalogueAsync(CancellationToken ct = default)
+    {
+        var rows = new List<(string, long, string, double?)>(_models.Count);
+        foreach (var m in _models)
+            rows.Add((m.Name, m.ApproxSizeBytes, m.Description,
+                await CachedFractionAsync(m.Name, ct).ConfigureAwait(false)));
+        return rows;
+    }
     public async Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
         bool enableWebGPUDecodeCapture, CancellationToken ct = default)
     {
         var opt = Find(name)
             ?? throw new FileNotFoundException($"Model '{name}' is not in the hub model list.");
-        var hub = new HubModelStream(_webTorrent, _http) { PrepareTimeout = PrepareTimeout };
-        // deselect:true - fetch ONLY the pieces the weight-stream reads. deselect:false let the torrent
-        // background-download EVERY file in the repo (all quants, 10-15GB - Captain caught it live
-        // 2026-07-04) while the stream read its one file with priority.
-        var model = opt.IsOllama
-            ? await hub.OpenOllamaAsync(opt.OllamaModel!, opt.OllamaTag!, "model", deselect: true, ct)
-                .ConfigureAwait(false)
-            : await hub.OpenAsync(opt.Repo, opt.File, deselect: true, ct).ConfigureAwait(false);
+        // Plain HTTP into OPFS. The old torrent path needed deselect:true here, because deselect:false let
+        // WebTorrent background-download EVERY file in the repo (all quants, 10-15 GB - Captain caught it
+        // live 2026-07-04) behind the working stream. HTTP has no such trap: a range request fetches only
+        // what is read, so there is nothing to opt out of.
+        // Ollama addressing (model:tag/layer) is deliberately outside IModelSource - it is not repo/path, and
+        // pretending otherwise would force every implementer to honour a shape it does not have. So it is a
+        // capability test, with a message that names the actual limitation rather than a cast failure.
+        var stream = opt.IsOllama
+            ? _source is HubModelSource hub
+                ? await hub.OpenOllamaAsync(opt.OllamaModel!, opt.OllamaTag!, "model", cancellationToken: ct)
+                    .ConfigureAwait(false)
+                : throw new NotSupportedException(
+                    $"'{opt.Name}' comes from the ollama registry, which this model source does not serve " +
+                    $"({_source.GetType().Name}). Use HubModelSource, or configure the model by its " +
+                    "HuggingFace repo/file coordinates instead.")
+            : await _source.OpenAsync(opt.Repo, opt.File, ct).ConfigureAwait(false);
         try
         {
-            var stream = model.Stream;
             stream.Seek(0, SeekOrigin.Begin);
             var gguf = await GGUFParser.ParseHeaderAsync(stream, ct).ConfigureAwait(false);
             var tok = SentencePieceTokenizer.FromGGUF(gguf)
@@ -193,12 +225,12 @@ public sealed class HubModelProvider : IAiModelProvider
                 Generator = gen,
                 Tokenizer = tok,
                 Format = ChatTemplates.DetectChatFormat(gguf),
-                OwnedStream = model.Stream,   // hub stream lives (and dies) with the loaded model
+                OwnedStream = stream,   // delivery stream lives (and dies) with the loaded model
             };
         }
         catch
         {
-            model.Stream.Dispose();
+            stream.Dispose();
             throw;
         }
     }

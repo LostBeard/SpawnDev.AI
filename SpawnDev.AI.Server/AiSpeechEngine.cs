@@ -93,7 +93,7 @@ public sealed record AiInferenceSplit(int GraphRuns, double ExecutorMs, int Read
 /// </remarks>
 public sealed class AiSpeechEngine : IDisposable
 {
-    private readonly WebTorrentClient _webTorrent;
+    private readonly IModelSource _source;
     private readonly HttpClient _http;
     private readonly Accelerator _accelerator;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -120,9 +120,9 @@ public sealed class AiSpeechEngine : IDisposable
     /// <see cref="OpenModelStreamAsync"/> for why that and not a plain range stream.</param>
     /// <param name="http">Used by <c>HubModelStream</c> for its size probe and web-seed fetches.</param>
     /// <param name="accelerator">The shared accelerator.</param>
-    public AiSpeechEngine(WebTorrentClient webTorrent, HttpClient http, Accelerator accelerator)
+    public AiSpeechEngine(IModelSource source, HttpClient http, Accelerator accelerator)
     {
-        _webTorrent = webTorrent;
+        _source = source;
         _http = http;
         _accelerator = accelerator;
     }
@@ -367,12 +367,11 @@ public sealed class AiSpeechEngine : IDisposable
     /// <returns>A seekable stream over the model file.</returns>
     private async Task<Stream> OpenModelStreamAsync(string filename, CancellationToken ct)
     {
-        var hub = new HubModelStream(_webTorrent, _http);
-        // deselect:false - we need the weights, not just the structure.
-        var model = await hub.OpenAsync(ModelRepo, filename, deselect: false, ct).ConfigureAwait(false);
-        if (model.Length <= 0)
+        // Plain HTTP into OPFS - no WebTorrent. Seekable, resumable, cached across reloads.
+        var stream = await _source.OpenAsync(ModelRepo, filename, ct).ConfigureAwait(false);
+        if (stream.Length <= 0)
             throw new Exception($"hub returned a zero-length stream for {ModelRepo}/{filename}");
-        return model.Stream;
+        return stream;
     }
 
     /// <summary>

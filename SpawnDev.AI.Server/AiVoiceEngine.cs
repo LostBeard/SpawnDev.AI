@@ -98,7 +98,7 @@ public sealed record AiSpeech(float[] Samples, int SampleRate, string Model, dou
 /// </remarks>
 public sealed class AiVoiceEngine : IDisposable
 {
-    private readonly WebTorrentClient _webTorrent;
+    private readonly IModelSource _source;
     private readonly HttpClient _http;
     private readonly Accelerator _accelerator;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -126,9 +126,9 @@ public sealed class AiVoiceEngine : IDisposable
     private const int VocoderBytes = 54_157_409;
 
     /// <summary>New instance.</summary>
-    public AiVoiceEngine(WebTorrentClient webTorrent, HttpClient http, Accelerator accelerator)
+    public AiVoiceEngine(IModelSource source, HttpClient http, Accelerator accelerator)
     {
-        _webTorrent = webTorrent;
+        _source = source;
         _http = http;
         _accelerator = accelerator;
     }
@@ -794,14 +794,13 @@ public sealed class AiVoiceEngine : IDisposable
         return InferenceSession.CreateFromFile(_accelerator, bytes);
     }
 
-    /// <summary>Open a repo file as a seekable stream via the hub, as a lazy-hash torrent.</summary>
+    /// <summary>Open a repo file as a seekable stream via the hub - plain HTTP, cached in OPFS.</summary>
     private async Task<Stream> OpenModelStreamAsync(string filename, CancellationToken ct)
     {
-        var hub = new HubModelStream(_webTorrent, _http);
-        var model = await hub.OpenAsync(ModelRepo, filename, deselect: false, ct).ConfigureAwait(false);
-        if (model.Length <= 0)
+        var stream = await _source.OpenAsync(ModelRepo, filename, ct).ConfigureAwait(false);
+        if (stream.Length <= 0)
             throw new Exception($"hub returned a zero-length stream for {ModelRepo}/{filename}");
-        return model.Stream;
+        return stream;
     }
 
     private async Task<string> LoadTextAsync(string filename, CancellationToken ct)

@@ -9,7 +9,8 @@ public static class SpawnDevAiServiceCollectionExtensions
     /// Register the SpawnDev.AI worker server + client. Call in ALL scopes (the same Program.cs runs
     /// in Window and Worker): the worker instance hosts <see cref="AiWorkerServer"/> on its GPU; the
     /// window instance uses <see cref="AiWorkerClient"/> to reach it. Requires
-    /// <c>AddWebWorkerService()</c> and a registered <c>WebTorrentClient</c> + <c>HttpClient</c>.
+    /// <c>AddWebWorkerService()</c> and a registered <c>IModelSource</c> + <c>HttpClient</c>. A
+    /// <c>WebTorrentClient</c> is OPTIONAL and no longer delivers models - see AiWorkerServer.
     /// </summary>
     public static IServiceCollection AddSpawnDevAI(this IServiceCollection services,
         Action<AiWorkerServerOptions> configure)

@@ -1,5 +1,5 @@
 using SpawnDev.AI.Server;
-using SpawnDev.WebTorrent;
+using SpawnDev.ILGPU.ML.Hub;
 
 namespace SpawnDev.AI.Demo.Tests;
 
@@ -18,21 +18,21 @@ namespace SpawnDev.AI.Demo.Tests;
 /// </remarks>
 public sealed class ModelCatalogueTests
 {
-    private readonly WebTorrentClient _webTorrent;
+    private readonly HubModelSource _source;
     private readonly HttpClient _http;
     private readonly SpawnDev.AsyncFileSystem.IAsyncFS _fs;
 
     /// <summary>New instance, over the app's own torrent client, HTTP client and filesystem.</summary>
-    public ModelCatalogueTests(WebTorrentClient webTorrent, HttpClient http,
+    public ModelCatalogueTests(HubModelSource source, HttpClient http,
         SpawnDev.AsyncFileSystem.IAsyncFS fs)
     {
-        _webTorrent = webTorrent;
+        _source = source;
         _http = http;
         _fs = fs;
     }
 
     private HubModelProvider Provider(params HubModelOption[] models)
-        => new(_webTorrent, _http, models);
+        => new(_source, _http, models);
 
     /// <summary>Nothing is approved by default, and an approval survives a reload.</summary>
     /// <remarks>
@@ -77,13 +77,13 @@ public sealed class ModelCatalogueTests
 
     /// <summary>The catalogue carries the size and description the picker shows.</summary>
     [AiTest(Timeout = 30_000)]
-    public Task TheCatalogueCarriesSizeAndPurpose()
+    public async Task TheCatalogueCarriesSizeAndPurpose()
     {
         var p = Provider(
             new HubModelOption("a:one", "R/One", "one.gguf", ApproxSizeBytes: 500, Description: "the small one"),
             HubModelOption.FromOllama("b:two", "gemma4", "12b", 7_000, "the multimodal one"));
 
-        var rows = p.Catalogue();
+        var rows = await p.CatalogueAsync();
         if (rows.Count != 2) throw new Exception($"catalogue listed {rows.Count} of 2 models");
 
         var one = rows.First(r => r.Name == "a:one");
@@ -98,7 +98,7 @@ public sealed class ModelCatalogueTests
         var two = rows.First(r => r.Name == "b:two");
         if (two.SizeBytes != 7_000 || two.Description != "the multimodal one")
             throw new Exception("an ollama-registry model lost its size or description");
-        return Task.CompletedTask;
+
     }
 
     /// <summary>An ollama model keeps its coordinates and is distinguishable from a Hugging Face one.</summary>

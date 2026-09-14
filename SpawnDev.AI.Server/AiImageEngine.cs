@@ -19,16 +19,16 @@ public sealed record AiGeneratedImage(byte[] Rgba, int Width, int Height, int Se
 /// </summary>
 public sealed class AiImageEngine : IDisposable
 {
-    private readonly WebTorrentClient _webTorrent;
+    private readonly IModelSource _source;
     private readonly HttpClient _http;
     private readonly Accelerator _accelerator;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private ImageGenerationPipeline? _resident;
     private string? _residentName;
 
-    public AiImageEngine(WebTorrentClient webTorrent, HttpClient http, Accelerator accelerator)
+    public AiImageEngine(IModelSource source, HttpClient http, Accelerator accelerator)
     {
-        _webTorrent = webTorrent;
+        _source = source;
         _http = http;
         _accelerator = accelerator;
     }
@@ -82,8 +82,9 @@ public sealed class AiImageEngine : IDisposable
             {
                 _resident?.Dispose();
                 _resident = null;
-                var hub = new HubModelStream(_webTorrent, _http);
-                _resident = await ImageGenerationPipeline.CreateAsync(_accelerator, hub, opt.RepoId,
+                // HubModelSource: plain HTTP into OPFS, no WebTorrent. ImageGenerationPipeline takes
+                // IModelSource, so a HubModelStream can be swapped in here for torrent delivery.
+                _resident = await ImageGenerationPipeline.CreateAsync(_accelerator, _source, opt.RepoId,
                     onProgress: OnLoadProgress).ConfigureAwait(false);
                 _residentName = opt.Name;
             }

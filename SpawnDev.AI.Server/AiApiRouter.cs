@@ -95,7 +95,7 @@ public sealed class AiApiRouter
             case ("GET", "/ai/models") when HubModels != null:
                 await t.WriteJsonAsync(200, new
                 {
-                    models = HubModels.Catalogue().Select(m => new
+                    models = (await HubModels.CatalogueAsync()).Select(m => new
                     {
                         name = m.Name,
                         sizeBytes = m.SizeBytes,

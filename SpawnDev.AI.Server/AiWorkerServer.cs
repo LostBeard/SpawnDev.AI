@@ -2,6 +2,7 @@ using System.Text.Json;
 using ILGPU.Runtime;
 using SpawnDev.ILGPU;
 using SpawnDev.ILGPU.ML;
+using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.WebTorrent;
 using SpawnDev.WebTorrent.Storage;
 
@@ -132,7 +133,8 @@ public sealed class AiWorkerServerOptions
 public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
 {
     private static readonly JsonSerializerOptions LayoutJson = new(JsonSerializerDefaults.Web);
-    private readonly WebTorrentClient _webTorrent;
+    private readonly IModelSource _source;
+    private readonly WebTorrentClient? _webTorrent;
     private readonly HttpClient _http;
     private readonly AiWorkerServerOptions _options;
     private readonly SemaphoreSlim _initGate = new(1, 1);
@@ -157,8 +159,19 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     private GpuResidency? _residency;
     private AiToolRegistry? _tools;
 
-    public AiWorkerServer(WebTorrentClient webTorrent, HttpClient http, AiWorkerServerOptions options)
+    /// <param name="source">
+    /// Model delivery - plain HTTP through the hub, cached in OPFS. No WebTorrent.
+    /// </param>
+    /// <param name="webTorrent">
+    /// OPTIONAL, and NOT used to deliver models any more. It survives only so the OPFS layout/contention
+    /// PROBES (<see cref="BenchmarkOpfsLayoutAsync"/>, <see cref="BenchmarkOpfsContentionAsync"/>) can reach
+    /// an <c>IAsyncFS</c>; they are diagnostics for the storage shape, not part of serving. Null simply
+    /// disables them.
+    /// </param>
+    public AiWorkerServer(IModelSource source, HttpClient http, AiWorkerServerOptions options,
+        WebTorrentClient? webTorrent = null)
     {
+        _source = source;
         _webTorrent = webTorrent;
         _http = http;
         _options = options;
@@ -206,7 +219,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     /// <summary>Runs <see cref="OpfsLayoutProbe"/> in the worker. See IAiWorkerApi for why.</summary>
     public async Task<string> BenchmarkOpfsLayoutAsync(string? configsJson, CancellationToken ct = default)
     {
-        var fs = _webTorrent.AsyncFileSystem
+        var fs = _webTorrent?.AsyncFileSystem
             ?? throw new InvalidOperationException(
                 "the WebTorrent client has no AsyncFileSystem, so there is no OPFS layout to measure");
 
@@ -231,7 +244,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     /// <summary>Runs <see cref="OpfsLayoutProbe.MeasureWriteContentionAsync"/> here. See IAiWorkerApi.</summary>
     public async Task<string> BenchmarkOpfsContentionAsync(CancellationToken ct = default)
     {
-        var fs = _webTorrent.AsyncFileSystem
+        var fs = _webTorrent?.AsyncFileSystem
             ?? throw new InvalidOperationException(
                 "the WebTorrent client has no AsyncFileSystem, so there is no OPFS to measure");
 
@@ -293,7 +306,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             var context = builder.ToContext();
             _accelerator = await context.CreatePreferredAcceleratorAsync().ConfigureAwait(false)
                 ?? throw new NotSupportedException("No GPU accelerator is available in this browser (WebGPU required).");
-            var provider = new HubModelProvider(_webTorrent, _http, _options.Models);
+            var provider = new HubModelProvider(_source, _http, _options.Models);
             // 🔴 THE SAME DEFECT THE VOICE ENGINES ALREADY PAID FOR, in the place it hurts most. This hook
             // was declared and handed to CreateFromGGUFStreamAsync, and NOTHING SUBSCRIBED IT - so loading
             // a chat model reported nothing at all. MEASURED: gemma4:12b takes 7.4 minutes to become
@@ -311,11 +324,11 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             // hub onto the same WebGPU device (E2E-gated path); generate_image registers once and
             // serves the internal loop, /v1/images/generations, and /ai/artifacts over the worker
             // frames - the public page's chat can paint.
-            _images = new AiImageEngine(_webTorrent, _http, _accelerator);
+            _images = new AiImageEngine(_source, _http, _accelerator);
             // One large GPU model resident per device: each kind evicts the other before it loads/runs, so
             // the LLM and SD-Turbo never co-reside (co-residence OOM'd the WebGPU device -> page crash).
-            _speech = new AiSpeechEngine(_webTorrent, _http, _accelerator);
-            _voice = new AiVoiceEngine(_webTorrent, _http, _accelerator);
+            _speech = new AiSpeechEngine(_source, _http, _accelerator);
+            _voice = new AiVoiceEngine(_source, _http, _accelerator);
             // The endpointer. 643 KB, served from this app's own wwwroot rather than the hub, and the
             // reason a hands-free turn now ends when you stop talking instead of when a 30 s timer expires.
             _vad = new AiVadEngine(_http, _accelerator);

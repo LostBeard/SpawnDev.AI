@@ -35,6 +35,23 @@ builder.Services.AddSingleton<SpawnDev.AI.Demo.CharacterLibrary>();
 builder.Services.AddSingleton<SpawnDev.AI.Demo.ReachyDriver>();
 // Which model downloads the user has agreed to. Consent, not cache state - see ModelConsent.
 builder.Services.AddSingleton<SpawnDev.AI.Demo.ModelConsent>();
+// ── MODEL DELIVERY ────────────────────────────────────────────────────────────────────────────────
+// Plain HTTP through the hub, cached in OPFS. No WebTorrent, no pieces, no chunk store.
+// ⚠️ MUST be a singleton: the per-key gate that stops two callers racing the same download lives on the
+// shared downloader, and a cache UI asking "what is downloading" only gets a true answer from the shared
+// instance. Registered in EVERY scope - the same Program.cs runs in Window, Worker and SharedWorker, and
+// the worker instance is the one that actually loads models.
+builder.Services.AddSingleton(sp => new SpawnDev.ILGPU.ML.Hub.HubModelSource(
+    sp.GetRequiredService<SpawnJSRuntime>(), sp.GetRequiredService<HttpClient>()));
+// The SAME instance behind the interface - the engines depend on IModelSource so desktop can substitute
+// HttpClientModelSource. Resolving the concrete type again here would give a SECOND cache and a second
+// download gate, which is exactly the bug the singleton exists to prevent.
+builder.Services.AddSingleton<SpawnDev.ILGPU.ML.Hub.IModelSource>(
+    sp => sp.GetRequiredService<SpawnDev.ILGPU.ML.Hub.HubModelSource>());
+
+// ⚠️ WebTorrent is NO LONGER how models are delivered. It stays registered only because the OPFS
+// layout/contention PROBES reach an IAsyncFS through it, and because a HubModelStream can still be
+// swapped in as the IModelSource for P2P delivery. Nothing in the normal load path touches it.
 builder.Services.AddSingleton<WebTorrentClient>(sp =>
 {
     var client = new WebTorrentClient(new WebTorrentClientOptions

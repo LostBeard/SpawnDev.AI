@@ -116,9 +116,9 @@ internal static class ProbeHub
 
     public static async Task RunAsync(Accelerator accelerator, string modelName)
     {
-        await using var webTorrent = new SpawnDev.WebTorrent.WebTorrentClient();
         using var http = new HttpClient();
-        var provider = new HubModelProvider(webTorrent, http, new[]
+        var modelSource = new SpawnDev.ILGPU.ML.Hub.HttpClientModelSource(http);
+        var provider = new HubModelProvider(modelSource, http, new[]
         {
             new HubModelOption("qwen2.5:0.5b-instruct-q8_0", "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q8_0.gguf", 531_067_136),
             new HubModelOption("qwen2.5:1.5b-instruct-q4_k_m", "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "qwen2.5-1.5b-instruct-q4_k_m.gguf", 1_117_320_000),
@@ -170,9 +170,9 @@ internal static class ProbeHub
     /// answer use the fetched info? Runs the full agentic loop with the REAL GitHub tool (call-counted).</summary>
     public static async Task RunGitHubAsync(Accelerator accelerator, string modelName)
     {
-        await using var webTorrent = new SpawnDev.WebTorrent.WebTorrentClient();
         using var http = new HttpClient();
-        var provider = new HubModelProvider(webTorrent, http, new[]
+        var modelSource = new SpawnDev.ILGPU.ML.Hub.HttpClientModelSource(http);
+        var provider = new HubModelProvider(modelSource, http, new[]
         {
             new HubModelOption("qwen2.5:0.5b-instruct-q8_0", "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q8_0.gguf", 531_067_136),
             new HubModelOption("qwen2.5:1.5b-instruct-q4_k_m", "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "qwen2.5-1.5b-instruct-q4_k_m.gguf", 1_117_320_000),
@@ -236,10 +236,10 @@ internal static class ProbeHub
             + "do not say you need a repository name. When the user asks for a picture, photo, or drawing, the app "
             + "generates the image automatically - you don't need to do anything, so never say you can't make images.";
 
-        await using var webTorrent = new SpawnDev.WebTorrent.WebTorrentClient();
         using var http = new HttpClient();
+        var modelSource = new SpawnDev.ILGPU.ML.Hub.HttpClientModelSource(http);
         // Same model list the demo registers (SpawnDev.AI.Demo/Program.cs).
-        var provider = new HubModelProvider(webTorrent, http, new[]
+        var provider = new HubModelProvider(modelSource, http, new[]
         {
             new HubModelOption("qwen2.5:0.5b-instruct-q8_0", "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q8_0.gguf", 531_067_136),
             new HubModelOption("smollm2:360m-instruct-q8_0", "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF", "smollm2-360m-instruct-q8_0.gguf", 386_404_352),
@@ -251,7 +251,7 @@ internal static class ProbeHub
         // Engine + tools exactly as AiWorkerServer wires them (both tools registered; the demo's defaults
         // for ForceImageToolOnIntent/GroundGitHubOnIntent left untouched).
         var engine = new AiChatEngine(registry);
-        using var images = new AiImageEngine(webTorrent, http, accelerator);
+        using var images = new AiImageEngine(modelSource, http, accelerator);
         var tools = new AiToolRegistry();
         tools.Register(new GenerateImageTool(images, tools));
         tools.Register(new GitHubTool(http));

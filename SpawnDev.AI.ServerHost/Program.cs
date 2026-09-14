@@ -83,12 +83,17 @@ var engine = new AiChatEngine(registry)
     PerfLog = line => Console.WriteLine($"[perf] {line}"),
 };
 
-// Image generation: hub-streamed (WebTorrent + HF CDN), its own residency slot beside the LLM.
-// The generate_image tool lets any chatting model produce images; /v1/images/generations serves
-// DALL-E-compatible clients directly.
-await using var webTorrent = new SpawnDev.WebTorrent.WebTorrentClient();
-using var imageHttp = new HttpClient();
-using var images = new AiImageEngine(webTorrent, imageHttp, accelerator)
+// Model delivery on DESKTOP: HttpClientModelSource + FileModelStore - plain HTTP through the hub, cached
+// on local disk, resumable. No WebTorrent, and no OPFS (that is HubModelSource, which is browser-only);
+// both satisfy IModelSource, which is why the engines take the interface.
+using var imageHttp = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+var modelStore = SpawnDev.ILGPU.ML.Hub.FileModelStore.Default();
+var modelSource = new SpawnDev.ILGPU.ML.Hub.HttpClientModelSource(imageHttp, modelStore);
+Console.WriteLine($"[models] cache: {modelStore.RootDirectory}");
+
+// Image generation: hub-streamed, its own residency slot beside the LLM. The generate_image tool lets any
+// chatting model produce images; /v1/images/generations serves DALL-E-compatible clients directly.
+using var images = new AiImageEngine(modelSource, imageHttp, accelerator)
 {
     OnLoadProgress = (stage, pct) => { if (pct % 25 == 0) Console.WriteLine($"[image-load] {stage} {pct}%"); },
 };
@@ -100,11 +105,11 @@ engine.Tools = tools;
 // Speech in and voice out, so the whole hands-free loop is reachable over plain HTTP - no browser, no
 // Playwright. The browser worker wires the same two engines; having them here means /api/transcribe and
 // /api/speak can be exercised with curl, which is how they get verified before anyone clicks anything.
-using var speech = new AiSpeechEngine(webTorrent, imageHttp, accelerator)
+using var speech = new AiSpeechEngine(modelSource, imageHttp, accelerator)
 {
     OnLoadProgress = (stage, pct) => { if (pct % 25 == 0) Console.WriteLine($"[speech-load] {stage} {pct}%"); },
 };
-using var voice = new AiVoiceEngine(webTorrent, imageHttp, accelerator)
+using var voice = new AiVoiceEngine(modelSource, imageHttp, accelerator)
 {
     OnLoadProgress = (stage, pct) => Console.WriteLine($"[voice-load] {stage} {pct}%"),
 };
