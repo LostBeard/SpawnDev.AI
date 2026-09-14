@@ -11,10 +11,10 @@ namespace SpawnDev.AI.Demo.Tests;
 /// ignored me" look identical from the outside.
 /// </para>
 /// <para>
-/// ⚠️ THE EMPTY-STRING CASE IS THE WHOLE POINT, not an edge. Empty is a REAL voice choice ("clone me
-/// each turn"), so a store that treats empty as "nothing saved" silently converts that deliberate choice
-/// back into the default on every single reload - which is the same class of bug as the one that made
-/// cloning the default in the first place.
+/// ⚠️ THE EMPTY-STRING CASE IS NOT AN EDGE. "Stored, and empty" and "never stored" are different facts,
+/// and a store that cannot tell them apart makes every caller invent a sentinel for one of them - which
+/// is exactly how the voice picker came to have an empty id that silently meant "clone the user on every
+/// reply". Keeping the distinction is what stops the next caller doing the same thing.
 /// </para>
 /// <para>
 /// ⚠️ Real OPFS through the app's own <c>IAsyncFS</c>, and a SECOND instance reading it back, because
@@ -47,14 +47,15 @@ public sealed class AppPreferencesTests
         if (reloaded.Get(key) != "bundled:something")
             throw new Exception($"the choice did not survive a reload (got '{reloaded.Get(key) ?? "null"}')");
 
-        // 🔴 EMPTY IS A CHOICE. For the voice it means "clone me each turn"; a store that loses it puts
-        // the user back on the default voice at every reload.
+        // 🔴 "STORED AND EMPTY" IS NOT "NOT STORED". A store that collapses the two forces every caller to
+        // invent a sentinel for one of them, and that is precisely how the voice picker acquired an empty
+        // id that silently meant "clone the user on every reply".
         await reloaded.SetAsync(key, "");
         var again = new AppPreferences(_fs);
         await again.LoadAsync();
         if (again.Get(key) != "")
-            throw new Exception($"an empty choice came back as '{again.Get(key) ?? "null"}' - a deliberate "
-                + "\"clone me each turn\" selection would be silently reset to the default voice");
+            throw new Exception($"an empty stored value came back as '{again.Get(key) ?? "null"}' - the "
+                + "store cannot distinguish \"set to nothing\" from \"never set\"");
 
         // And removal really removes, or a preference could never be un-set.
         await again.SetAsync(key, null);

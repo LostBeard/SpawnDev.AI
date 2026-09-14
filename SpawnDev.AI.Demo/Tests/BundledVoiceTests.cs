@@ -129,8 +129,9 @@ public sealed class BundledVoiceTests
     {
         var id = BundledVoices.DefaultId;
         if (string.IsNullOrEmpty(id))
-            throw new Exception("the default voice is the empty string, which MEANS \"clone the user's "
-                + "last turn on every reply\" - cloning somebody must be opt-in");
+            throw new Exception("there is no default voice, so the app has nothing to speak with until "
+                + "the user records something - and an app with nothing to speak with is how the empty-id "
+                + "\"clone whoever is talking\" path got invented in the first place");
         if (!BundledVoices.IsBundled(id))
             throw new Exception($"the default voice '{id}' is not a bundled voice, so a fresh install has "
                 + "nothing to speak with until the user records something");

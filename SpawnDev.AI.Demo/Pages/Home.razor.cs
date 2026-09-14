@@ -653,22 +653,21 @@ public partial class Home : IDisposable
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 🔴 THIS DEFAULTED TO EMPTY, AND EMPTY MEANS "CLONE THE USER". Captain: "we had already talked about
-    /// the Voice cloning being an opt-in and create a named voice that is saved to the OPFS and then it is
-    /// one of the selectable voices for personas. we never finshed that and it still seem to clone voice
-    /// of the user every time i think when it should only clone when 'add a voice' as selected manually".
-    /// He is right: with no selection, <see cref="SynthesizeChunkAsync"/> fell through to
-    /// <see cref="EnsureTurnVoiceAsync"/>, which derives a fresh voice from whatever the user last said -
-    /// on every turn, because every turn brings new audio.
+    /// 🔴 THIS DEFAULTED TO EMPTY, AND EMPTY USED TO MEAN "CLONE THE USER". Captain: "it still seem to
+    /// clone voice of the user every time ... when it should only clone when 'add a voice' as selected
+    /// manually", and then, on the fix: "nothing should ever mean 'clone me each turn' because that is
+    /// just asinine."
     /// </para>
     /// <para>
-    /// Cloning somebody is not a default. It is a thing a person asks for, once, and keeps under a name -
-    /// and it is also the slowest path in the app, since a per-turn voice re-derives prompt features that
-    /// a saved voice computes once and reuses forever.
+    /// He is right twice. Making the default a named voice stopped it happening by accident; deleting the
+    /// MODE stopped it being reachable by accident at all. A magic empty value that starts copying a
+    /// person's voice is not a setting anyone chose - it is what you get for leaving a control alone, and
+    /// no amount of relabelling fixes that.
     /// </para>
     /// <para>
-    /// ⚠️ Empty still MEANS clone-my-last-turn, and the picker still offers it - it is now a choice rather
-    /// than what happens when nobody chose anything.
+    /// ⚠️ EMPTY NOW MEANS NOTHING. Every id here names a real voice, bundled or saved; an empty one falls
+    /// back to <see cref="BundledVoices.DefaultId"/>. Cloning is what 💾🗣️ does - once, deliberately,
+    /// producing a voice with a name that is then selectable like any other, including by a persona.
     /// </para>
     /// </remarks>
     string _voiceId = BundledVoices.DefaultId;
@@ -869,12 +868,20 @@ public partial class Home : IDisposable
         }
     }
 
-    /// <summary>Go back to cloning from whatever was last heard - the deliberate opt-in.</summary>
+    /// <summary>
+    /// Fall back to the default named voice - used when the selected one has gone.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ This used to set the voice to the empty string, which MEANT "clone the user on every reply".
+    /// Losing a voice is not consent to copy somebody, and an empty value is not a setting anyone chose.
+    /// </remarks>
     async Task ClearSavedVoice()
     {
-        _voiceId = "";
-        _voiceName = "";
-        _status = "Cloning your voice from each turn again — slower than a named voice.";
+        _voiceId = BundledVoices.DefaultId;
+        _voiceName = BundledVoices.Find(_voiceId)?.DisplayName ?? "";
+        _status = string.IsNullOrEmpty(_voiceName)
+            ? "That voice is gone; no voice is available."
+            : $"That voice is gone — speaking as “{_voiceName}”.";
         await RememberVoiceAsync();
         StateHasChanged();
     }
@@ -1092,15 +1099,15 @@ public partial class Home : IDisposable
     /// </summary>
     async Task<(float[] Samples, int Rate, double Ms)> SynthesizeChunkAsync(string chunk, string? voiceId = null)
     {
+        // 🔴 ONE PATH. Captain: "nothing should ever mean 'clone me each turn' because that is just
+        // asinine." He is right, and it was worse than a naming problem: an EMPTY id used to fall through
+        // to cloning the user, so the absence of a choice silently started copying a person's voice on
+        // every reply - the one behaviour in this app that most deserves to be asked for out loud, reached
+        // by nobody doing anything. Cloning is now what the SAVE button does, once, producing a named
+        // voice; there is no mode in which it happens by itself.
         var useVoice = voiceId ?? _voiceId;
-        if (string.IsNullOrEmpty(useVoice)) useVoice = await EnsureTurnVoiceAsync();
-        // A saved voice speaks from features derived ONCE. The per-turn path re-sends the reference PCM as a
-        // JSON number array and makes the engine re-derive those features every time, and it clones from
-        // whatever the recogniser THOUGHT was said - a transcript that is not verbatim bleeds into the start
-        // of every generated line.
-        var (samples, rate, _, ms, _) = string.IsNullOrEmpty(useVoice)
-            ? await Ai.SpeakAsync(chunk, _lastHeardText, _lastHeardSamples!, WhisperRate)
-            : await Ai.SpeakInVoiceAsync(chunk, useVoice);
+        if (string.IsNullOrEmpty(useVoice)) useVoice = BundledVoices.DefaultId;
+        var (samples, rate, _, ms, _) = await Ai.SpeakInVoiceAsync(chunk, useVoice);
         return (samples, rate, ms);
     }
 
@@ -1119,11 +1126,13 @@ public partial class Home : IDisposable
     /// voice that cannot be prepared is reported.
     /// </para>
     /// </remarks>
-    /// <param name="voice">Voice id, or empty for the explicit clone-my-last-turn path.</param>
-    /// <returns>The same id, prepared where possible.</returns>
+    /// <param name="voice">Voice id. Empty is not a mode - it falls back to the default named voice.</param>
+    /// <returns>The id that will be spoken in, prepared where possible.</returns>
     async Task<string> EnsureVoiceReadyAsync(string voice)
     {
-        // Empty is the deliberate per-turn cloning choice; EnsureTurnVoiceAsync owns that path.
+        // ⚠️ Empty MEANS NOTHING here, deliberately. It used to mean "clone the user every turn", which is
+        // a thing nobody asks for by leaving a control alone.
+        if (string.IsNullOrEmpty(voice)) voice = BundledVoices.DefaultId;
         if (string.IsNullOrEmpty(voice) || _preparedVoices.Contains(voice)) return voice;
         try
         {
@@ -1155,72 +1164,6 @@ public partial class Home : IDisposable
             Console.WriteLine($"[HF-SPEAK] could not prepare voice '{voice}': {ex.Message}");
         }
         return voice;
-    }
-
-    /// <summary>Id of the voice derived automatically from what the user last said, or empty.</summary>
-    string _turnVoiceId = "";
-
-    /// <summary>The reference this automatic voice was derived from, so it is re-derived only when that changes.</summary>
-    float[]? _turnVoiceFrom;
-
-    /// <summary>
-    /// Make sure a PREPARED voice exists for the current reference, so a reply is cloned ONCE, not once
-    /// per sentence.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// 🔴 THE DEFECT THIS FIXES, reported by Captain off the deployed build: "the pause between when it
-    /// pauses reading and starts again is very large", and "it still seems to be doing voice cloning
-    /// without me actually having saved my voice which could be why the tts is so slow". Both are one
-    /// mechanism. Speaking is chunked so sentence N plays while N+1 renders - but with no SAVED voice
-    /// every chunk took the cloning path, which ships the reference PCM over the worker as a JSON number
-    /// array and re-runs the mel to rebuild prompt features that are IDENTICAL for all of them. MEASURED
-    /// on that build: a six-chunk reply, 26.1 s for the first chunk, and the turn had not finished 90 s
-    /// later ("Speaking 3/6… (30.6s)"). The chunking made the per-clone cost happen SIX times instead of
-    /// once, so the feature that was meant to cut time-to-first-audio multiplied the total.
-    /// </para>
-    /// <para>
-    /// ⭐ Nothing new was needed - `PreparedVoice` already exists for exactly this, and its own docs say
-    /// the reference features are "the expensive, unchanging part of a voice, so a speaking robot computes
-    /// them once per voice rather than once per sentence". It was simply never used on the path a user
-    /// who has not saved a voice actually takes, which is everyone by default.
-    /// </para>
-    /// <para>
-    /// ⚠️ Re-derived only when the REFERENCE changes - identity, not equality, because the mic path hands
-    /// over a fresh array per turn and comparing hundreds of thousands of samples to save one preparation
-    /// would cost more than it saves. A new utterance means a new voice; the same utterance re-used across
-    /// chunks means one.
-    /// </para>
-    /// <para>
-    /// ⚠️ Returns EMPTY rather than throwing when preparation fails, so the caller falls back to the old
-    /// per-chunk cloning. Slow speech is a far better failure than silence, and this is a performance
-    /// path, not a correctness one.
-    /// </para>
-    /// </remarks>
-    async Task<string> EnsureTurnVoiceAsync()
-    {
-        if (_lastHeardSamples == null || _lastHeardSamples.Length == 0) return "";
-        if (_turnVoiceId.Length > 0 && ReferenceEquals(_turnVoiceFrom, _lastHeardSamples)) return _turnVoiceId;
-        try
-        {
-            var id = "turn-voice";
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-            await Ai.PrepareVoiceAsync(id, "This turn", _lastHeardText ?? "", _lastHeardSamples, WhisperRate);
-            clock.Stop();
-            _turnVoiceId = id;
-            _turnVoiceFrom = _lastHeardSamples;
-            Console.WriteLine($"[HF-SPEAK] prepared the turn voice once in {clock.ElapsedMilliseconds} ms; "
-                + "every sentence of this reply now speaks from those features");
-            return id;
-        }
-        catch (Exception ex)
-        {
-            // Say why, then carry on the slow way. A silent fallback would make the next person measuring
-            // this conclude the preparation is not helping, when in fact it never ran.
-            Console.WriteLine($"[HF-SPEAK] could not prepare a turn voice ({ex.Message}); "
-                + "falling back to cloning per sentence");
-            return "";
-        }
     }
 
     /// <summary>
@@ -1287,21 +1230,11 @@ public partial class Home : IDisposable
     {
         _speakCts?.Dispose();
         _speakCts = new CancellationTokenSource();
-        var voice = voiceId ?? _voiceId;
-        // A PREPARED voice needs no reference for this turn - that is the whole point of preparing it.
-        // Only the per-turn cloning path depends on having just heard something, and that path is now
-        // something the user asked for rather than the default.
-        if (string.IsNullOrEmpty(voice) && (_lastHeardSamples == null || _lastHeardSamples.Length == 0))
-        {
-            // Nothing to clone from. Say so rather than falling silent: a hands-free loop that stops
-            // talking for no stated reason is indistinguishable from one that crashed.
-            SpeechFailed("Nothing to speak with — the voice picker is set to clone your last turn, and I "
-                       + "have no audio for this turn. Pick a named voice instead, or use 💾🗣️ to keep "
-                       + "the one you just spoke in.");
-            return;
-        }
+        // ⚠️ THE "NOTHING TO CLONE FROM" GUARD IS GONE WITH THE MODE IT GUARDED. Speaking no longer
+        // depends on having just heard the user: every voice is a named one, prepared from a clip that is
+        // already on disk. There is nothing left that can fail for want of a reference.
         // The selected voice may never have been prepared - the default is a bundled one nobody picked.
-        voice = await EnsureVoiceReadyAsync(voice);
+        var voice = await EnsureVoiceReadyAsync(voiceId ?? _voiceId);
 
         try
         {

@@ -64,10 +64,11 @@ public sealed class AppPreferences
     /// The stored value for <paramref name="key"/>, or null when there is none.
     /// </summary>
     /// <remarks>
-    /// ⚠️ An EMPTY stored value is returned as an empty string, not as null, and the difference matters
-    /// for the voice: "" is a real choice there (clone my last turn), so collapsing it to null would turn
-    /// a deliberate selection back into "nothing chosen" on every reload - the exact bug this class was
-    /// added to stop.
+    /// ⚠️ An EMPTY stored value is returned as an empty string, not as null. "Stored, and empty" and "not
+    /// stored" are different facts, and a key/value store that cannot tell them apart forces every caller
+    /// to invent a sentinel for one of them - which is how the voice picker ended up with an empty id that
+    /// silently meant "clone the user on every reply". A store that keeps the distinction is a store
+    /// nobody has to work around.
     /// </remarks>
     public string? Get(string key) => _values.TryGetValue(key, out var v) ? v : null;
 
