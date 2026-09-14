@@ -60,6 +60,19 @@ public static class BundledVoices
                        + "read by Shasta (Oakland, California); archive.org item jacko_and_jumpo_2007_librivox"),
     };
 
+    /// <summary>
+    /// The voice the app speaks in when the user has not chosen one.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 EXISTS SO "THE DEFAULT IS NOT CLONING" IS A TESTABLE FACT. The empty string means "clone whoever
+    /// is talking, every turn", and it used to be what you got by choosing nothing - Captain: "it still
+    /// seem to clone voice of the user every time ... when it should only clone when 'add a voice' as
+    /// selected manually". That was one uninitialised field, the kind of thing an unrelated edit restores
+    /// silently, so the intent is pinned here and asserted in VoiceLibraryTests rather than left implicit
+    /// in a component's field initialiser.
+    /// </remarks>
+    public static string DefaultId => All.Count > 0 ? All[0].Id : "";
+
     /// <summary>True when this id refers to a bundled voice rather than a saved one.</summary>
     public static bool IsBundled(string? id) => id != null && id.StartsWith(IdPrefix, StringComparison.Ordinal);
 

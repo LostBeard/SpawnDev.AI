@@ -538,11 +538,11 @@
             <select class="voice-picker" disabled="@_savingVoice"
                     title="Which voice replies are spoken in"
                     @onchange="e => SelectVoiceAsync(e.Value?.ToString() ?? string.Empty)">
-                <option value="" selected="@string.IsNullOrEmpty(_voiceId)">🗣️ Your last turn</option>
-                @foreach (var v in _savedVoices)
-                {
-                    <option value="@v.Id" selected="@(_voiceId == v.Id)">🗣️ @v.DisplayName</option>
-                }
+                @* 🔴 ORDER AND WORDING BOTH CHANGED. Cloning used to be the FIRST option and the default,
+                   so every reply cloned whoever was talking without anyone asking for it. Captain: "it
+                   still seem to clone voice of the user every time ... when it should only clone when
+                   'add a voice' as selected manually". Named voices come first now; cloning is last, and
+                   says what it does. *@
                 @* Included voices need nothing recorded first, so the picker is useful on a fresh install.
                    Each carries its licence in BundledVoices.cs. *@
                 @foreach (var v in BundledVoices.All)
@@ -551,6 +551,14 @@
                         🎧 @v.DisplayName
                     </option>
                 }
+                @foreach (var v in _savedVoices)
+                {
+                    <option value="@v.Id" selected="@(_voiceId == v.Id)">🗣️ @v.DisplayName</option>
+                }
+                <option value="" selected="@string.IsNullOrEmpty(_voiceId)"
+                        title="Clones your voice from each turn's audio. Slower than a named voice, because the reference has to be re-derived every time. To keep one instead, speak and press 💾🗣️.">
+                    ⧉ Clone me each turn (slow)
+                </option>
             </select>
             @if (_lastHeardSamples != null && _lastHeardSamples.Length > 0)
             {

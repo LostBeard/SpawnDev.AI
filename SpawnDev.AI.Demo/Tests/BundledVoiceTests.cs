@@ -101,4 +101,41 @@ public sealed class BundledVoiceTests
                             + $"({v.Licence})");
         }
     }
+
+    /// <summary>
+    /// The app's default voice is a NAMED voice, never "clone whoever is talking".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THE DEFECT THIS PINS. Captain: "we had already talked about the Voice cloning being an opt-in
+    /// and create a named voice that is saved to the OPFS and then it is one of the selectable voices for
+    /// personas. we never finshed that and it still seem to clone voice of the user every time i think
+    /// when it should only clone when 'add a voice' as selected manually."
+    /// </para>
+    /// <para>
+    /// He was right, and the cause was one uninitialised field: the selected voice started as the empty
+    /// string, empty means "clone the last turn", so every reply derived a fresh voice from whatever the
+    /// user had just said - nobody having asked for it, and on the slowest path in the app. Cloning a
+    /// person is a thing they opt into and keep under a name; it is not what happens when nobody chose
+    /// anything. A default is exactly the kind of thing an unrelated edit restores silently, which is why
+    /// it is asserted rather than left to a field initialiser.
+    /// </para>
+    /// <para>
+    /// ⚠️ Not heavy - nothing is loaded. It asserts the CHOICE, not the audio.
+    /// </para>
+    /// </remarks>
+    [AiTest(Timeout = 30_000)]
+    public Task CloningIsNotTheDefaultVoice()
+    {
+        var id = BundledVoices.DefaultId;
+        if (string.IsNullOrEmpty(id))
+            throw new Exception("the default voice is the empty string, which MEANS \"clone the user's "
+                + "last turn on every reply\" - cloning somebody must be opt-in");
+        if (!BundledVoices.IsBundled(id))
+            throw new Exception($"the default voice '{id}' is not a bundled voice, so a fresh install has "
+                + "nothing to speak with until the user records something");
+        if (BundledVoices.Find(id) == null)
+            throw new Exception($"the default voice '{id}' does not resolve to a real entry");
+        return Task.CompletedTask;
+    }
 }

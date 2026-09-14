@@ -623,7 +623,30 @@ public partial class Home : IDisposable
     // 24 kHz), the engine re-trims it and re-runs the mel to rebuild prompt features that never change for
     // a voice, and the clone is taken from the RECOGNISER'S transcript of the user - which must be verbatim
     // or it bleeds into the start of every generated line. Saving a voice pays all of that once.
-    string _voiceId = "";
+    /// <summary>
+    /// The voice replies are spoken in. Defaults to a BUNDLED voice, never to cloning.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THIS DEFAULTED TO EMPTY, AND EMPTY MEANS "CLONE THE USER". Captain: "we had already talked about
+    /// the Voice cloning being an opt-in and create a named voice that is saved to the OPFS and then it is
+    /// one of the selectable voices for personas. we never finshed that and it still seem to clone voice
+    /// of the user every time i think when it should only clone when 'add a voice' as selected manually".
+    /// He is right: with no selection, <see cref="SynthesizeChunkAsync"/> fell through to
+    /// <see cref="EnsureTurnVoiceAsync"/>, which derives a fresh voice from whatever the user last said -
+    /// on every turn, because every turn brings new audio.
+    /// </para>
+    /// <para>
+    /// Cloning somebody is not a default. It is a thing a person asks for, once, and keeps under a name -
+    /// and it is also the slowest path in the app, since a per-turn voice re-derives prompt features that
+    /// a saved voice computes once and reuses forever.
+    /// </para>
+    /// <para>
+    /// ⚠️ Empty still MEANS clone-my-last-turn, and the picker still offers it - it is now a choice rather
+    /// than what happens when nobody chose anything.
+    /// </para>
+    /// </remarks>
+    string _voiceId = BundledVoices.DefaultId;
     string _voiceName = "";
     bool _savingVoice;
 
@@ -1034,6 +1057,59 @@ public partial class Home : IDisposable
         return (samples, rate, ms);
     }
 
+    /// <summary>
+    /// Make sure the voice we are about to speak in is prepared in the worker, preparing it if not.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 NEEDED THE MOMENT THE DEFAULT STOPPED BEING "CLONE THE USER". A selected voice used to be
+    /// prepared by the PICKER, because the only way to have one selected was to pick it. Now
+    /// <see cref="_voiceId"/> starts on a bundled voice that nobody has touched, so the first reply would
+    /// ask the worker to speak in a voice it has never been given - and the failure would read as the
+    /// voice being broken rather than as never having been loaded.
+    /// <para>
+    /// ⚠️ NO FALLBACK TO CLONING. Falling back would quietly restore the behaviour this change exists to
+    /// remove, and it would do it exactly when the user is least likely to notice: on a failure path. A
+    /// voice that cannot be prepared is reported.
+    /// </para>
+    /// </remarks>
+    /// <param name="voice">Voice id, or empty for the explicit clone-my-last-turn path.</param>
+    /// <returns>The same id, prepared where possible.</returns>
+    async Task<string> EnsureVoiceReadyAsync(string voice)
+    {
+        // Empty is the deliberate per-turn cloning choice; EnsureTurnVoiceAsync owns that path.
+        if (string.IsNullOrEmpty(voice) || _preparedVoices.Contains(voice)) return voice;
+        try
+        {
+            if (BundledVoices.Find(voice) is { } bundled)
+            {
+                var wav = await Http.GetByteArrayAsync(bundled.Url);
+                var (samples, rate) = WavCodec.Decode(wav);
+                if (samples.Length == 0) throw new Exception($"{bundled.Url} decoded to zero samples");
+                await WithProgressAsync($"Preparing “{bundled.DisplayName}”", () =>
+                    Ai.PrepareVoiceAsync(bundled.Id, bundled.DisplayName, bundled.Transcript, samples, rate));
+                _preparedVoices.Add(voice);
+                _voiceName = bundled.DisplayName;
+                return voice;
+            }
+            if (_savedVoices.FirstOrDefault(v => v.Id == voice) is { } saved)
+            {
+                var samples = await Voices.ReadSamplesAsync(saved);
+                if (samples == null) throw new Exception("its saved audio is missing or truncated");
+                await WithProgressAsync($"Preparing “{saved.DisplayName}”", () =>
+                    Ai.PrepareVoiceAsync(saved.Id, saved.DisplayName, saved.ReferenceText,
+                        samples, saved.SampleRate));
+                _preparedVoices.Add(voice);
+                _voiceName = saved.DisplayName;
+                return voice;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[HF-SPEAK] could not prepare voice '{voice}': {ex.Message}");
+        }
+        return voice;
+    }
+
     /// <summary>Id of the voice derived automatically from what the user last said, or empty.</summary>
     string _turnVoiceId = "";
 
@@ -1166,15 +1242,19 @@ public partial class Home : IDisposable
         _speakCts = new CancellationTokenSource();
         var voice = voiceId ?? _voiceId;
         // A PREPARED voice needs no reference for this turn - that is the whole point of preparing it.
-        // Only the per-turn cloning path depends on having just heard something.
+        // Only the per-turn cloning path depends on having just heard something, and that path is now
+        // something the user asked for rather than the default.
         if (string.IsNullOrEmpty(voice) && (_lastHeardSamples == null || _lastHeardSamples.Length == 0))
         {
             // Nothing to clone from. Say so rather than falling silent: a hands-free loop that stops
             // talking for no stated reason is indistinguishable from one that crashed.
-            SpeechFailed("Nothing to speak with — the voice is cloned from what you said, and I have no "
-                       + "audio for this turn. Use \"Save this voice\" to keep one instead.");
+            SpeechFailed("Nothing to speak with — the voice picker is set to clone your last turn, and I "
+                       + "have no audio for this turn. Pick a named voice instead, or use 💾🗣️ to keep "
+                       + "the one you just spoke in.");
             return;
         }
+        // The selected voice may never have been prepared - the default is a bundled one nobody picked.
+        voice = await EnsureVoiceReadyAsync(voice);
 
         try
         {
