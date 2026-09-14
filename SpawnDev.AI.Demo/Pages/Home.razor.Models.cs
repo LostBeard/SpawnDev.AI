@@ -17,6 +17,9 @@ public partial class Home
 {
     [Inject] ModelConsent Consent { get; set; } = default!;
 
+    /// <summary>Choices the user made once and expects to find again - the voice, the model.</summary>
+    [Inject] AppPreferences Prefs { get; set; } = default!;
+
     /// <summary>Every model the server can serve, with its size and what it is for.</summary>
     List<AiModelChoice> _catalogue = new();
 

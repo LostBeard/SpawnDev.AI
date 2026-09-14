@@ -179,6 +179,14 @@ public partial class Home : IDisposable
                 foreach (var m in doc.RootElement.GetProperty("models").EnumerateArray())
                     _models.Add(m.GetProperty("name").GetString()!);
             }
+            // 🔴 RESTORE THE USER'S CHOICES BEFORE ANYTHING DEPENDS ON THEM - the consent below is recorded
+            // against _model, so reading the stored one afterwards would approve the wrong model.
+            // ⚠️ Only honoured if the server still offers it: a model that has been removed from the
+            // catalogue must not leave the picker pointing at something that cannot load.
+            await Prefs.LoadAsync();
+            if (Prefs.Get(AppPreferences.ModelKey) is { Length: > 0 } savedModel
+                && _models.Contains(savedModel))
+                _model = savedModel;
             if (_models.Count > 0 && !_models.Contains(_model)) _model = _models[0];
             try { var (def, list) = await Ai.ListImageModelsAsync(); _imageModels = list; _imageModel = def; }
             catch { _imageModels = new() { ("sd-turbo", "") }; }
@@ -187,6 +195,18 @@ public partial class Home : IDisposable
             // Metadata only - no clip is read and nothing is prepared here. Preparing happens when a voice
             // is actually chosen, so a page load never pays for voices the user may not use.
             await LoadSavedVoicesAsync();
+            // ⚠️ AFTER the saved voices are listed, because a stored id is only honoured when the voice it
+            // names still exists - a voice the user deleted must not leave the picker pointing at it.
+            // ⚠️ An EMPTY stored value is a real choice here ("clone me each turn"), so it is restored as
+            // faithfully as any other; only a MISSING one falls back to the default.
+            if (Prefs.Get(AppPreferences.VoiceKey) is { } savedVoice
+                && (savedVoice.Length == 0 || BundledVoices.IsBundled(savedVoice)
+                    || _savedVoices.Any(v => v.Id == savedVoice)))
+            {
+                _voiceId = savedVoice;
+                _voiceName = BundledVoices.Find(savedVoice)?.DisplayName
+                          ?? _savedVoices.FirstOrDefault(v => v.Id == savedVoice)?.DisplayName ?? "";
+            }
             // Characters are metadata only - no audio, no model - so listing them costs a directory read.
             await LoadCharactersAsync();
             // The catalogue is metadata too, and it is what lets the picker state a size before asking
@@ -255,6 +275,11 @@ public partial class Home : IDisposable
         // which is a different conversation entirely - not a special case of the same one.
         if (RoomActive) { await RunRoomRoundAsync(text); return; }
 
+        // ⚠️ REMEMBERED HERE rather than on the picker's change event. The model <select> uses @bind, which
+        // gives no hook to run after the value lands, and _model is also set by the /model command and by
+        // the model panel - three call sites to keep in step. The start of a turn is where every one of
+        // them has already happened, and SetAsync is a no-op when nothing changed.
+        _ = Prefs.SetAsync(AppPreferences.ModelKey, _model);
         _messages.Add(new Msg { Role = "user", Text = text });
         _busy = true; _streaming = "";
         _stoppedByUser = false;
@@ -682,7 +707,7 @@ public partial class Home : IDisposable
         if (BundledVoices.Find(id) is { } bundled) { await SelectBundledVoiceAsync(bundled); return; }
 
         var saved = _savedVoices.FirstOrDefault(v => v.Id == id);
-        if (saved == null) { ClearSavedVoice(); return; }
+        if (saved == null) { await ClearSavedVoice(); return; }
 
         _savingVoice = true;
         _status = _preparedVoices.Contains(id) ? $"Switching to “{saved.DisplayName}”…"
@@ -712,6 +737,7 @@ public partial class Home : IDisposable
             _voiceId = saved.Id;
             _voiceName = saved.DisplayName;
             _status = $"Speaking as “{_voiceName}”.";
+            await RememberVoiceAsync();
         }
         catch (Exception ex)
         {
@@ -760,6 +786,7 @@ public partial class Home : IDisposable
             _voiceId = bundled.Id;
             _voiceName = bundled.DisplayName;
             _status = $"Speaking as “{_voiceName}”.";
+            await RememberVoiceAsync();
         }
         catch (Exception ex)
         {
@@ -779,7 +806,15 @@ public partial class Home : IDisposable
         {
             await Voices.DeleteAsync(id);
             _preparedVoices.Remove(id);
-            if (_voiceId == id) { _voiceId = ""; _voiceName = ""; }
+            // ⚠️ Fall back to the DEFAULT voice, not to "". Empty means "clone me each turn", so the old
+            // line quietly turned deleting a voice into opting INTO cloning - the one thing the user of a
+            // delete button is least likely to have wanted.
+            if (_voiceId == id)
+            {
+                _voiceId = BundledVoices.DefaultId;
+                _voiceName = BundledVoices.Find(_voiceId)?.DisplayName ?? "";
+                await RememberVoiceAsync();
+            }
             await LoadSavedVoicesAsync();
             _status = "Voice deleted.";
         }
@@ -818,6 +853,7 @@ public partial class Home : IDisposable
             _preparedVoices.Add(id);
             _voiceId = prepared.VoiceId;
             _voiceName = string.IsNullOrWhiteSpace(prepared.DisplayName) ? displayName : prepared.DisplayName;
+            await RememberVoiceAsync();
             await LoadSavedVoicesAsync();
             _status = $"Saved “{_voiceName}” ({prepared.ReferenceSeconds:F1}s reference). "
                     + "Replies speak in it without re-cloning, and it survives a reload.";
@@ -833,14 +869,25 @@ public partial class Home : IDisposable
         }
     }
 
-    /// <summary>Go back to cloning from whatever was last heard.</summary>
-    void ClearSavedVoice()
+    /// <summary>Go back to cloning from whatever was last heard - the deliberate opt-in.</summary>
+    async Task ClearSavedVoice()
     {
         _voiceId = "";
         _voiceName = "";
-        _status = "Using the voice from your last turn again.";
+        _status = "Cloning your voice from each turn again — slower than a named voice.";
+        await RememberVoiceAsync();
         StateHasChanged();
     }
+
+    /// <summary>
+    /// Remember which voice is selected, so a reload does not silently change who is speaking.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Stores the empty string FAITHFULLY. Empty is a real choice here ("clone me each turn"), so
+    /// treating it as "nothing stored" would put the user back on the default voice at every reload and
+    /// look exactly like the app ignoring them.
+    /// </remarks>
+    Task RememberVoiceAsync() => Prefs.SetAsync(AppPreferences.VoiceKey, _voiceId);
 
     /// <summary>Turn the hands-free conversation on or off.</summary>
     async Task ToggleHandsFreeAsync()

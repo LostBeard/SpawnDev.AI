@@ -35,6 +35,9 @@ builder.Services.AddSingleton<SpawnDev.AI.Demo.CharacterLibrary>();
 builder.Services.AddSingleton<SpawnDev.AI.Demo.ReachyDriver>();
 // Which model downloads the user has agreed to. Consent, not cache state - see ModelConsent.
 builder.Services.AddSingleton<SpawnDev.AI.Demo.ModelConsent>();
+// The choices a user makes once and expects to find again - which voice, which model. Preferences only:
+// consent stays in ModelConsent, because what somebody agreed to is a fact, not a setting.
+builder.Services.AddSingleton<SpawnDev.AI.Demo.AppPreferences>();
 // ── MODEL DELIVERY ────────────────────────────────────────────────────────────────────────────────
 // Plain HTTP through the hub, cached in OPFS. No WebTorrent, no pieces, no chunk store.
 // ⚠️ MUST be a singleton: the per-key gate that stops two callers racing the same download lives on the

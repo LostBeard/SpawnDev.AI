@@ -44,6 +44,7 @@ public static class AiTestSuiteRunner
         typeof(SpeakChunkingTests),
         typeof(ModelLoadProgressTests),
         typeof(EmbodiedSpeechTests),
+        typeof(AppPreferencesTests),
     };
 
     /// <summary>Milliseconds a test may run before it is reported as timed out. Overridable per test.</summary>
