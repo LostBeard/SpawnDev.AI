@@ -132,7 +132,22 @@ images.EvictOtherKind = () => residency.EnsureRoomForAsync("image");
 speech.EvictOtherKind = () => residency.EnsureRoomForAsync("speech");
 voice.EvictOtherKind = () => residency.EnsureRoomForAsync("voice");
 
-var router = new AiApiRouter(engine) { Images = images, Tools = tools, Speech = speech, Voice = voice };
+// The same progress channel the browser serves, so GET /ai/progress answers here too and a desktop
+// client watching a cold multi-GB pull sees the same bytes-and-stage the demo page does.
+var progress = new AiProgressTracker(modelSource);
+images.OnLoadProgress = Chain(images.OnLoadProgress, (stage, pct) => progress.ReportStage("sd-turbo", stage, pct));
+speech.OnLoadProgress = Chain(speech.OnLoadProgress, (stage, pct) => progress.ReportStage("speech recognition", stage, pct));
+voice.OnLoadProgress = Chain(voice.OnLoadProgress, (stage, pct) => progress.ReportStage("the voice", stage, pct));
+
+var router = new AiApiRouter(engine)
+{
+    Images = images, Tools = tools, Speech = speech, Voice = voice, Progress = progress,
+};
+
+// Keep the console lines these engines were already configured with: the log is how a headless host is
+// debugged, and replacing it with the tracker would trade one blind spot for another.
+static Action<string, int> Chain(Action<string, int>? first, Action<string, int> second)
+    => (stage, pct) => { first?.Invoke(stage, pct); second(stage, pct); };
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.SetMinimumLevel(LogLevel.Warning);

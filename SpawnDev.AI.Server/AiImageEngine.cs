@@ -84,9 +84,18 @@ public sealed class AiImageEngine : IDisposable
                 _resident = null;
                 // HubModelSource: plain HTTP into OPFS, no WebTorrent. ImageGenerationPipeline takes
                 // IModelSource, so a HubModelStream can be swapped in here for torrent delivery.
-                _resident = await ImageGenerationPipeline.CreateAsync(_accelerator, _source, opt.RepoId,
-                    onProgress: OnLoadProgress).ConfigureAwait(false);
-                _residentName = opt.Name;
+                try
+                {
+                    _resident = await ImageGenerationPipeline.CreateAsync(_accelerator, _source, opt.RepoId,
+                        onProgress: OnLoadProgress).ConfigureAwait(false);
+                    _residentName = opt.Name;
+                }
+                finally
+                {
+                    // The end-of-load marker - see AiSpeechEngine for why it is in a finally. The pipeline
+                    // does not emit one of its own, so a failed SD-Turbo load would strand the last stage.
+                    OnLoadProgress?.Invoke("idle", 100);
+                }
             }
             var pipe = _resident;
             pipe.NumInferenceSteps = steps ?? 1;   // SD-Turbo default single-step

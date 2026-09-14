@@ -129,6 +129,11 @@ public partial class Home
         StateHasChanged();
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
+        // ⚠️ "Fetching… the page stays usable" was the whole of what this button reported, for a fetch
+        // that can be 6.9 GB. The same tracker the chat turn uses gives it bytes, throughput and an ETA.
+        using var tracker = new CancellationTokenSource();
+        var trackerTask = Task.Run(() => TrackProgressAsync(DateTime.UtcNow, () => true,
+            $"fetching {name}", tracker.Token));
         try
         {
             var (warmed, failed) = await Ai.WarmAsync(new[] { "chat" }, name);
@@ -153,7 +158,11 @@ public partial class Home
         }
         finally
         {
+            tracker.Cancel();
+            try { await trackerTask; } catch { /* the ticker reports its own failures */ }
             _downloadingModel = "";
+            _progressInfo = null;
+            _progressPending = false;
             await LoadCatalogueAsync();
             StateHasChanged();
         }

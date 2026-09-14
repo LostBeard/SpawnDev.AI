@@ -225,29 +225,21 @@ public partial class Home : IDisposable
         // produced NO assistant reply in 15 minutes". The speak path already learned this lesson and grew
         // a moving counter; the chat path never did. A number that MOVES is the whole difference between
         // "slow" and "broken".
+        // ⚠️ AND A MOVING NUMBER IS NOT ENOUGH EITHER. Captain, on the deployed build: "it takes it
+        // roughly 1 minute to respond to the first message and the user has no idea what is going on or
+        // how long it will take." The counter says a wait is happening; it cannot say that 1.71 GB is
+        // coming down at 41 MB/s with 30 s to go. TrackProgressAsync asks the worker and falls back to
+        // this same counter when the worker cannot answer.
         var turnStarted = DateTime.UtcNow;
         DateTime? firstDeltaAt = null;
         using var waitTicker = new CancellationTokenSource();
-        var waitTickerTask = Task.Run(async () =>
-        {
-            try
-            {
-                while (!waitTicker.IsCancellationRequested)
-                {
-                    await Task.Delay(500, waitTicker.Token);
-                    if (waitTicker.IsCancellationRequested) break;
-                    // Once tokens flow the streaming text is itself the progress indicator; the caption
-                    // only has a job while there is nothing else on screen.
-                    if (firstDeltaAt != null) break;
-                    var secs = (DateTime.UtcNow - turnStarted).TotalSeconds;
-                    _busyNote = $"waiting for the first token… {secs:F0}s"
-                              + (secs > 20 ? " (loading the model and compiling kernels)" : "");
-                    await InvokeAsync(StateHasChanged);
-                }
-            }
-            catch (OperationCanceledException) { /* expected once a token arrives or the turn ends */ }
-            catch (Exception ex) { Console.WriteLine($"[HF-CHAT] ticker stopped: {ex.Message}"); }
-        });
+        // ⚠️ The fallback verb differs for the FIRST message, because what is happening differs. The first
+        // message loads a model; every message after it is waiting on decoding. When the worker cannot
+        // answer a progress poll - a dedicated worker blocks its own message loop while it reads OPFS
+        // synchronously - this verb is all the caption has, so it has to be the right one.
+        var firstOfSession = _messages.Count(m => m.Role == "user") == 1;
+        var waitTickerTask = Task.Run(() => TrackProgressAsync(turnStarted, () => firstDeltaAt == null,
+            firstOfSession ? "Loading the model" : "waiting for the first token", waitTicker.Token));
         StateHasChanged();
         await ScrollToBottom();
 
@@ -327,7 +319,10 @@ public partial class Home : IDisposable
             waitTicker.Cancel();
             _generationCts?.Dispose();
             _generationCts = null;
-            _streaming = ""; _busy = false; _busyNote = "";
+            // ⚠️ Cleared HERE and not only in the ticker's own finally. Cancelling the ticker does not
+            // synchronously end it, so the bubble could render one more frame carrying a progress bar for
+            // work that has already finished.
+            _streaming = ""; _busy = false; _busyNote = ""; _progressInfo = null; _progressPending = false;
             StateHasChanged();
             await ScrollToBottom();
         }

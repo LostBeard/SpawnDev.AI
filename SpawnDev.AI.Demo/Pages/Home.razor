@@ -141,7 +141,22 @@
                             <div class="modelactions">
                                 @if (_downloadingModel == choice.Name)
                                 {
-                                    <span class="sethint">Fetching… the page stays usable.</span>
+                                    @if (_progressInfo is { } dlprog)
+                                    {
+                                        <div class="loadbar">
+                                            <div class="track">
+                                                <div class="fill @(dlprog.Indeterminate ? "indeterminate" : "")" style="width:@(BarPercent(dlprog))%"></div>
+                                            </div>
+                                            <div class="sethint">@dlprog.Describe() — the page stays usable.</div>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="loadbar">
+                                            <div class="track"><div class="fill indeterminate" style="width:100%"></div></div>
+                                            <div class="sethint">@(string.IsNullOrEmpty(_busyNote) ? "Fetching…" : _busyNote) — the page stays usable.</div>
+                                        </div>
+                                    }
                                 }
                                 else if (IsApproved(choice.Name))
                                 {
@@ -454,7 +469,28 @@
                 <div class="msg assistant">
                     <div class="who">@(string.IsNullOrEmpty(_streamingWho) ? "Assistant" : _streamingWho)</div>
                     <div class="text">@RenderRich(_streaming)<span class="caret">▋</span></div>
-                    @if (!string.IsNullOrEmpty(_busyNote))
+                    @* The first turn on a cold model is a download and then a GPU upload. Both report real
+                       numbers now; the caption below is the fallback for when the server cannot answer. *@
+                    @if (_progressInfo is { } prog)
+                    {
+                        <div class="loadbar">
+                            <div class="track">
+                                <div class="fill @(prog.Indeterminate ? "indeterminate" : "")" style="width:@(BarPercent(prog))%"></div>
+                            </div>
+                            <div class="meta">@prog.Describe()</div>
+                        </div>
+                    }
+                    else if (_progressPending)
+                    {
+                        @* No numbers to draw, but work IS happening - an animated bar, never a bare line.
+                           Captain, on the refreshed page: "it didn't show a progress bar on the refreshed
+                           page where it loaded from cache." *@
+                        <div class="loadbar">
+                            <div class="track"><div class="fill indeterminate" style="width:100%"></div></div>
+                            <div class="meta">@_busyNote</div>
+                        </div>
+                    }
+                    else if (!string.IsNullOrEmpty(_busyNote))
                     {
                         <div class="meta">@_busyNote</div>
                     }
@@ -1091,6 +1127,49 @@
         font-size: .66rem;
         color: #5d6879;
         margin: .25rem .2rem 0;
+    }
+
+    /* Model download / GPU load progress. Used in the in-progress chat bubble and in the model picker. */
+    .loadbar {
+        margin: .45rem .2rem 0;
+    }
+
+        .loadbar .track {
+            height: 5px;
+            border-radius: 3px;
+            background: #1d2430;
+            overflow: hidden;
+        }
+
+        .loadbar .fill {
+            height: 100%;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #3d7dff, #58d1ff);
+            /* The bar is polled every 400ms; the transition is what makes it read as motion rather than
+               as a series of jumps. */
+            transition: width .35s linear;
+        }
+
+            /* An origin that sent no Content-Length gives no percent. A full animated bar says "working,
+               total unknown"; a 0%-wide one would read as stuck. */
+            .loadbar .fill.indeterminate {
+                background: repeating-linear-gradient(90deg, #3d7dff 0 12px, #1d2430 12px 24px);
+                animation: loadbar-slide 1s linear infinite;
+            }
+
+        .loadbar .meta,
+        .loadbar .sethint {
+            margin-top: .3rem;
+        }
+
+    @@keyframes loadbar-slide {
+        from {
+            background-position: 0 0;
+        }
+
+        to {
+            background-position: 24px 0;
+        }
     }
 
     .genimg {

@@ -326,6 +326,10 @@ public sealed class AiSpeechEngine : IDisposable
         }
         finally
         {
+            // The end-of-load marker. Without it a load that THROWS leaves its last stage standing, and a
+            // progress UI shows a frozen "decoder 45%" over a request that already failed - worse than the
+            // silence the progress channel replaced.
+            OnLoadProgress?.Invoke("idle", 100);
             _gate.Release();
         }
     }

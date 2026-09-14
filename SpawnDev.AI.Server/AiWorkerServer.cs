@@ -158,6 +158,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     private AiVadEngine? _vad;
     private GpuResidency? _residency;
     private AiToolRegistry? _tools;
+    private AiProgressTracker? _progress;
 
     /// <param name="source">
     /// Model delivery - plain HTTP through the hub, cached in OPFS. No WebTorrent.
@@ -315,9 +316,18 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             // ⚠️ WITH A CLOCK. The stages alone ("upload 0%" … "upload 100%") say WHAT is happening and
             // not what it COSTS, and a stage that goes quiet for six minutes is still indistinguishable
             // from a hang. Cumulative elapsed makes the expensive stage obvious from one run.
+            // ⚠️ AND OUT OF THE CONSOLE. The log above is a developer's tool and it cannot be the user's:
+            // a SHARED worker's console does not reach the page at all, so on the default configuration
+            // these lines are invisible to everyone. Captain, on the deployed demo: "it takes it roughly 1
+            // minute to respond to the first message and the user has no idea what is going on or how long
+            // it will take." The tracker is how the same facts reach a UI (GET /ai/progress).
             var loadClock = System.Diagnostics.Stopwatch.StartNew();
+            _progress = new AiProgressTracker(_source);
             provider.OnLoadProgress = (stage, pct) =>
+            {
+                _progress.ReportStage(provider.LoadingModel, stage, pct);
                 Console.WriteLine($"[model-load] {loadClock.Elapsed.TotalSeconds,7:F1}s {stage} {pct}%");
+            };
             _registry = new ModelRegistry(provider, _accelerator, _options.MaxSeqLen);
             var engine = new AiChatEngine(_registry) { MaxOutputTokens = _options.MaxOutputTokens };
             // Image generation + the agentic tool loop IN THE BROWSER: SD-Turbo streams from the
@@ -385,8 +395,24 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             // reporting stages, the hands-free loop simply stopped talking for minutes and there was no way
             // to tell loading from hung from failed. A progress hook nobody subscribes to is worse than no
             // hook - it reads as instrumentation that already exists.
-            _speech.OnLoadProgress = (stage, pct) => Console.WriteLine($"[AiSpeechEngine] {stage} {pct}%");
-            _voice.OnLoadProgress = (stage, pct) => Console.WriteLine($"[AiVoiceEngine] {stage} {pct}%");
+            // ⚠️ Every kind reports through the SAME tracker, and names itself. The stage ids are shared
+            // vocabulary ("upload 40%" could be any of them), so a UI that was told only the stage would
+            // caption a 54 MB voice load exactly like a 1.8 GB chat load.
+            _speech.OnLoadProgress = (stage, pct) =>
+            {
+                _progress.ReportStage("speech recognition", stage, pct);
+                Console.WriteLine($"[AiSpeechEngine] {stage} {pct}%");
+            };
+            _voice.OnLoadProgress = (stage, pct) =>
+            {
+                _progress.ReportStage("the voice", stage, pct);
+                Console.WriteLine($"[AiVoiceEngine] {stage} {pct}%");
+            };
+            _images.OnLoadProgress = (stage, pct) =>
+            {
+                _progress.ReportStage(_images.DefaultModel, stage, pct);
+                Console.WriteLine($"[AiImageEngine] {stage} {pct}%");
+            };
 
             _tools = new AiToolRegistry();
             _tools.Register(new GenerateImageTool(_images, _tools));
@@ -397,6 +423,8 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             _router = new AiApiRouter(engine)
             {
                 Images = _images, Tools = _tools, Speech = _speech, Voice = _voice, Vad = _vad,
+                // What the server is busy with - the answer to "is it downloading, loading, or stuck".
+                Progress = _progress,
                 // Only the hub provider knows a model's download size and whether this device already
                 // has it - the desktop Ollama-cache provider has everything locally by definition.
                 HubModels = provider,

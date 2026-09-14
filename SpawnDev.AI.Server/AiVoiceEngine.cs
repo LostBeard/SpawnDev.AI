@@ -743,6 +743,9 @@ public sealed class AiVoiceEngine : IDisposable
         }
         finally
         {
+            // The end-of-load marker - see AiSpeechEngine for why it is in the finally and not after the
+            // "ready" line.
+            OnLoadProgress?.Invoke("idle", 100);
             _gate.Release();
         }
     }

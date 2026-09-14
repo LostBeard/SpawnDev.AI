@@ -36,6 +36,17 @@ public sealed class AiApiRouter
     /// <summary>Optional tool registry - enables /ai/artifacts/{id} (base64 fetch of tool outputs).</summary>
     public AiToolRegistry? Tools { get; set; }
 
+    /// <summary>
+    /// Optional progress tracker - enables <c>GET /ai/progress</c>, what the server is busy with.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Deliberately its own route rather than frames on the request that is waiting. The page showing
+    /// progress is very often not the page doing the work (a shared worker serves every tab, and the tab
+    /// that started a download can be closed), so progress has to be a question anyone can ask at any
+    /// time - not a side channel of one in-flight call.
+    /// </remarks>
+    public AiProgressTracker? Progress { get; set; }
+
     /// <summary>Optional voice engine - enables /api/speak (text to speech).</summary>
     /// <remarks>
     /// Separate from <see cref="Speech"/> on purpose: an app can want to LISTEN without talking back (a
@@ -104,6 +115,8 @@ public sealed class AiApiRouter
                     }),
                 });
                 return true;
+            case ("GET", "/ai/progress") when Progress != null:
+                await t.WriteJsonAsync(200, Progress.Snapshot()); return true;
             case ("GET", "/ai/image-models") when Images != null:
                 await t.WriteJsonAsync(200, new
                 {

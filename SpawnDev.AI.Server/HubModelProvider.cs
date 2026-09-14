@@ -55,6 +55,17 @@ public sealed class HubModelProvider : IAiModelProvider
     /// <summary>Progress callback while weights stream ((stage, percent) per hub events).</summary>
     public Action<string, int>? OnLoadProgress { get; set; }
 
+    /// <summary>
+    /// The model <see cref="LoadAsync"/> is working on right now, or empty between loads.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 Needed because <see cref="OnLoadProgress"/> carries a stage and a percent and NOT a name, so a
+    /// subscriber could report "uploading weights 43%" without being able to say of what. With several
+    /// model kinds sharing one GPU that is genuinely ambiguous to a user watching a page - a chat model
+    /// and an image model report the same stage names.
+    /// </remarks>
+    public string LoadingModel { get; private set; } = "";
+
     /// <summary>Hub preparation timeout (cold hub cache can take minutes for multi-GB models).</summary>
     public TimeSpan PrepareTimeout { get; set; } = TimeSpan.FromMinutes(8);
 
@@ -184,6 +195,28 @@ public sealed class HubModelProvider : IAiModelProvider
     {
         var opt = Find(name)
             ?? throw new FileNotFoundException($"Model '{name}' is not in the hub model list.");
+        LoadingModel = opt.Name;
+        try
+        {
+            return await LoadCoreAsync(opt, accelerator, maxSeqLen, enableWebGPUDecodeCapture, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            // 🔴 In a finally, always. A load that throws in "upload" would otherwise leave a progress UI
+            // reporting a stage that stopped running, which is a frozen bar over a failed request.
+            LoadingModel = "";
+            OnLoadProgress?.Invoke("idle", 100);
+        }
+    }
+
+    private async Task<LoadedModel> LoadCoreAsync(HubModelOption opt, Accelerator accelerator, int maxSeqLen,
+        bool enableWebGPUDecodeCapture, CancellationToken ct)
+    {
+        // ⚠️ REPORTED BEFORE THE AWAIT, not after. Opening the stream is where a cold model spends its
+        // download - MEASURED 44.4 s for 1.83 GB - and a stage announced only on the way out would leave
+        // exactly that stretch unreported, which is the stretch the user is staring at.
+        OnLoadProgress?.Invoke("fetch", 0);
         // Plain HTTP into OPFS. The old torrent path needed deselect:true here, because deselect:false let
         // WebTorrent background-download EVERY file in the repo (all quants, 10-15 GB - Captain caught it
         // live 2026-07-04) behind the working stream. HTTP has no such trap: a range request fetches only

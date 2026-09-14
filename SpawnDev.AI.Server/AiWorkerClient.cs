@@ -526,6 +526,42 @@ public sealed class AiWorkerClient
     }
 
     /// <summary>
+    /// What the server is busy with right now - downloading weights, loading them, or nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Poll this while a request is outstanding. It is answered by the SAME worker that is doing the work,
+    /// which is the point: the download and the GPU upload both <c>await</c>, so the worker's message loop
+    /// runs between chunks and a progress call is served while the load is in flight.
+    /// </para>
+    /// <para>
+    /// ⚠️ Returns null rather than throwing when the server cannot answer (older worker, no tracker
+    /// configured, a call that raced a teardown). A progress indicator must never be the thing that
+    /// breaks a turn, so every caller treats null as "no information" and keeps its existing caption.
+    /// </para>
+    /// </remarks>
+    public async Task<AiProgress?> GetProgressAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            AiProgress? result = null;
+            await SendAsync("GET", "/ai/progress", null, ct: ct, onFrame: f =>
+            {
+                if (f.T != "json" || f.Data == null) return;
+                try { result = JsonSerializer.Deserialize<AiProgress>(f.Data, J); }
+                catch (JsonException) { /* an unreadable snapshot is no information, not a failure */ }
+            });
+            return result;
+        }
+        catch (OperationCanceledException) { return null; }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[progress] unavailable: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Every model the server can serve: what it is for, how big the download is, and whether this
     /// device already has it.
     /// </summary>
