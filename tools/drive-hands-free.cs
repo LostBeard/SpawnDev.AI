@@ -479,6 +479,42 @@ finally
     // failure is reported as a system BUBBLE in the transcript, not as a console line. A gate that cannot
     // see what the page is telling the user is blind to exactly the failures the page took the trouble to
     // explain.
+    // 🔴 THE SILENCE BETWEEN SPOKEN CHUNKS, from the BROWSER'S OWN playback events rather than from what
+    // the app says about itself. Captain: "there is still a long pause between tts streamed 'chunks'".
+    // A reply is synthesised one chunk ahead and played one at a time, so a gap has three candidate
+    // causes needing opposite fixes - the next chunk not rendered yet, the wait for the previous clip
+    // overshooting, or the cost of starting a clip. window.__spoken carries the start time and duration
+    // of every clip the page played, which gives the gap directly: next.start - (prev.start + prev.length).
+    try
+    {
+        var gapsJson = await page.EvaluateAsync<string>(@"() => {
+          const s = (window.__spoken || []).slice().sort((a, b) => a.t - b.t);
+          const gaps = [];
+          for (let i = 1; i < s.length; i++) {
+            const end = s[i - 1].t + s[i - 1].duration * 1000;
+            gaps.push(Math.round(s[i].t - end));
+          }
+          return JSON.stringify({ clips: s.length, gaps });
+        }");
+        var gd = System.Text.Json.JsonDocument.Parse(gapsJson).RootElement;
+        var gaps = gd.GetProperty("gaps").EnumerateArray().Select(g => g.GetDouble()).ToList();
+        Console.WriteLine($"    --- spoken clips: {gd.GetProperty("clips").GetInt32()} ---");
+        if (gaps.Count == 0)
+            Console.WriteLine("      (one clip or none - no inter-chunk gap to measure)");
+        else
+        {
+            // ⚠️ A gap spanning two TURNS is not an inter-chunk pause - it contains listening,
+            // transcription and a whole generation. Only sub-10s gaps are candidates for the report.
+            var within = gaps.Where(g => g < 10_000).ToList();
+            Console.WriteLine($"      all gaps (ms): {string.Join(", ", gaps.Select(g => $"{g:F0}"))}");
+            if (within.Count > 0)
+                Console.WriteLine($"      within a reply: min {within.Min():F0} ms, "
+                    + $"median {within.OrderBy(g => g).ElementAt(within.Count / 2):F0} ms, "
+                    + $"max {within.Max():F0} ms over {within.Count} gap(s)");
+        }
+    }
+    catch (Exception ex) { Console.WriteLine($"    (could not measure chunk gaps: {ex.Message})"); }
+
     try
     {
         var sys = await page.Locator(".msg.system").AllInnerTextsAsync();

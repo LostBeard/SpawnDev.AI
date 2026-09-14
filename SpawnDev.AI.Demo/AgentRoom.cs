@@ -27,7 +27,7 @@ namespace SpawnDev.AI.Demo;
 /// reaction from another. <c>ReachyBody</c> already takes it, so the robot honours it for free.
 /// </remarks>
 public sealed record ChatAgent(string Id, string Name, string Model, string Persona, string? VoiceId = null,
-    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.None,
+    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.Screen,
     double MotionScale = 1.0);
 
 /// <summary>One line of the room's shared transcript.</summary>
@@ -161,9 +161,16 @@ public sealed class AgentRoom
         // it is what drives an avatar or the robot, and it is stripped before anything is spoken aloud.
         // Outside a scene there is nothing to act, and asking for it would just add markup to answers.
         if (!string.IsNullOrWhiteSpace(Scene)) system += $" The scene: {Scene}";
+        // ⚠️ NAME THE PARTS IT HAS. "Put any physical action between asterisks" invites a model to write
+        // what bodies usually do - waves, smiles, folds its arms - and this body is a head and two
+        // antennae, so an unnamed part produces a direction nothing can perform and the avatar stays
+        // still. The verbs here are the ones GestureClassifier recognises, which is the vocabulary both
+        // the on-screen avatar and the physical Reachy Mini actually move to.
         if (RolePlay)
-            system += " Put any physical action between asterisks, like *looks around*, and keep spoken "
-                    + "words outside them.";
+            system += " You have a small robot body: a head that nods, shakes, tilts, looks up and down, "
+                    + "leans in and turns, and two antennae that perk up, wiggle or droop. Put any "
+                    + "physical action between asterisks, like *tilts head*, and keep spoken words "
+                    + "outside them.";
         // Brevity is a room rule, not a persona choice: several agents each writing an essay turns one
         // exchange into minutes of synthesis and reading.
         // ⚠️ THE ANTI-ECHO CLAUSE IS THERE FOR AN OBSERVED FAILURE, not as boilerplate. Every other

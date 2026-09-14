@@ -180,6 +180,32 @@ public partial class Home
         return $"{what}… {secs:F0}s" + (secs > 20 ? " (loading the model and compiling kernels)" : "");
     }
 
+    /// <summary>
+    /// Run <paramref name="work"/> with the progress bar reporting whatever the server loads meanwhile.
+    /// </summary>
+    /// <remarks>
+    /// For the deliberate one-shot loads that are not a chat turn: preparing a voice, warming a model from
+    /// the picker. Each of those can pull a model the user has never downloaded - the voice alone is two
+    /// int8 graphs plus a 54 MB vocoder out of a remote archive - and each used to report a single static
+    /// sentence for the whole time.
+    /// </remarks>
+    /// <param name="what">Fallback caption verb, used while the server has nothing to report.</param>
+    async Task WithProgressAsync(string what, Func<Task> work)
+    {
+        using var cts = new CancellationTokenSource();
+        var ticker = Task.Run(() => TrackProgressAsync(DateTime.UtcNow, () => true, what, cts.Token));
+        try { await work(); }
+        finally
+        {
+            cts.Cancel();
+            try { await ticker; } catch { /* the ticker reports its own failures */ }
+            // Cleared here as well as in the ticker's finally: cancelling does not synchronously end it,
+            // so one more frame could otherwise render a bar for work that is done.
+            _progressInfo = null;
+            _progressPending = false;
+        }
+    }
+
     /// <summary>Bar width for a snapshot: the real percent, or a full bar when there is none.</summary>
     /// <remarks>
     /// A snapshot with no meaningful fraction (see <see cref="AiProgress.Indeterminate"/>) renders as a

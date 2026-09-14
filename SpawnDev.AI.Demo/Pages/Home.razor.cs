@@ -67,8 +67,37 @@ public partial class Home : IDisposable
         + "answers short unless asked for depth, and you say plainly when you do not know something "
         + "rather than inventing it. ";
 
+    /// <summary>
+    /// What the assistant is told about its body.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 WITHOUT THIS THE AVATAR CANNOT MOVE, no matter what the page does. Captain: "the avatar seem to
+    /// be 100% static, never changes. does the ai know to use it?" It did not: the body was on screen and
+    /// nothing in the prompt mentioned it, so the model never wrote an action and there was never anything
+    /// to perform. The room's characters are told; the default assistant was not.
+    /// <para>
+    /// ⚠️ It names the parts it ACTUALLY HAS. A model told it has a body writes what bodies usually do -
+    /// waves, smiles, folds its arms - and this one is a head and two antennae, so unnamed parts produce
+    /// directions nothing can perform. The examples are drawn from the gestures
+    /// <c>SpawnDev.Reachy.GestureClassifier</c> recognises, which is the vocabulary the screen avatar and
+    /// the physical Reachy Mini both perform.
+    /// </para>
+    /// <para>
+    /// ⚠️ "NEVER for emphasis" is load-bearing. Asterisks around ordinary words are markdown emphasis, and
+    /// telling the model to use them for actions makes that ambiguous - see
+    /// <see cref="StageDirections.SplitForBody"/> for the guard that keeps a stray "*not*" spoken.
+    /// </para>
+    /// </remarks>
+    const string BodyInstructions =
+        "You have a small robot body on screen: a head that nods, shakes, tilts, looks up and down, leans "
+        + "in and turns, and two antennae that perk up, wiggle or droop. Show what you mean with it - write "
+        + "a physical action between asterisks, on its own, like *tilts head* or *antennae perk up*, and it "
+        + "is performed rather than spoken. Use one when it genuinely adds something (curiosity, agreement, "
+        + "delight, sympathy) and not on every line. Never use asterisks for emphasis. ";
+
     const string DefaultSystemPrompt =
         DefaultPersona
+        + BodyInstructions
         + "You are a helpful assistant running entirely on the user's own GPU in their browser. Answer "
         + "questions, facts, math, explanations, stories, and poems clearly in plain text. When the user asks "
         + "about the SpawnDev open-source libraries, the apps built with them, or the crew, authoritative "
@@ -306,6 +335,9 @@ public partial class Home : IDisposable
                             + $"(total {genClock.Elapsed.TotalSeconds:F1}s)");
             msg.Text = await ResolveArtifactsAsync(_streaming, msg.Images);
             _messages.Add(msg);
+            // The assistant has a body - act out whatever the reply described. Text turn or spoken turn,
+            // the same reply drives it; see Home.razor.Body.cs.
+            PerformReply(msg.Text);
             _status = $"last response: {msg.Ms / 1000.0:F1}s · {ttftSeconds:F1}s to first token · "
                     + $"{msg.TokPerSec:F1} tok/s · model {_model}";
             await RefreshStorageAsync();
@@ -440,6 +472,16 @@ public partial class Home : IDisposable
         s = System.Text.RegularExpressions.Regex.Replace(s, "```([a-zA-Z0-9]*)\\n([\\s\\S]*?)```", "<pre>$2</pre>");
         s = System.Text.RegularExpressions.Regex.Replace(s, "`([^`\\n]+)`", "<code>$1</code>");
         s = System.Text.RegularExpressions.Regex.Replace(s, "\\*\\*([^*\\n]+)\\*\\*", "<b>$1</b>");
+        // 🔴 SINGLE ASTERISKS, which used to render as literal asterisks. Captain: "the stage direction is
+        // visible in the chat (not sure if that is intentional)." It was not intentional - the assistant
+        // is now asked to write actions that way, so what used to be rare model noise is on most replies.
+        // ⚠️ The SAME predicate the voice uses decides which is which (StageDirections.IsStageDirection),
+        // so the page and the speaker never disagree: what is drawn as an action is exactly what the voice
+        // skipped and the body performed, and emphasis stays emphasis in both.
+        s = System.Text.RegularExpressions.Regex.Replace(s, "\\*([^*\\n]+)\\*", m =>
+            StageDirections.IsStageDirection(m.Groups[1].Value)
+                ? $"<span class=\"act\">{m.Groups[1].Value}</span>"
+                : $"<em>{m.Groups[1].Value}</em>");
         return new MarkupString(s);
     }
 
@@ -622,8 +664,12 @@ public partial class Home : IDisposable
                                + "truncated. Save it again.");
                     return;
                 }
-                await Ai.PrepareVoiceAsync(saved.Id, saved.DisplayName, saved.ReferenceText,
-                    samples, saved.SampleRate);
+                // Preparing a voice loads the ZipVoice models the first time - a real download and a real
+                // GPU load, reported like every other one. Captain: "progress bars for the voice model(s)
+                // and 'Preparing a voice'".
+                await WithProgressAsync($"Preparing “{saved.DisplayName}”", () =>
+                    Ai.PrepareVoiceAsync(saved.Id, saved.DisplayName, saved.ReferenceText,
+                        samples, saved.SampleRate));
                 _preparedVoices.Add(id);
             }
             _voiceId = saved.Id;
@@ -668,7 +714,8 @@ public partial class Home : IDisposable
                 var (samples, rate) = WavCodec.Decode(wav);
                 if (samples.Length == 0)
                     throw new Exception($"{bundled.Url} decoded to zero samples");
-                await Ai.PrepareVoiceAsync(bundled.Id, bundled.DisplayName, bundled.Transcript, samples, rate);
+                await WithProgressAsync($"Preparing “{bundled.DisplayName}”", () =>
+                    Ai.PrepareVoiceAsync(bundled.Id, bundled.DisplayName, bundled.Transcript, samples, rate));
                 _preparedVoices.Add(bundled.Id);
                 Console.WriteLine($"[voices] prepared bundled voice {bundled.DisplayName} "
                                 + $"({samples.Length / (double)rate:F1}s, {bundled.Licence})");
@@ -727,8 +774,10 @@ public partial class Home : IDisposable
             // Persist FIRST, then prepare. A voice that is prepared but not saved would work until the next
             // reload and then vanish with no way to get it back - the clip is only in memory for this turn.
             await Voices.SaveAsync(id, displayName, _lastHeardText, _lastHeardSamples, WhisperRate);
-            var prepared = await Ai.PrepareVoiceAsync(id, displayName, _lastHeardText,
-                _lastHeardSamples, WhisperRate);
+            (string VoiceId, string DisplayName, int PromptFrames, double ReferenceSeconds) prepared = default;
+            await WithProgressAsync($"Preparing “{displayName}”", async () =>
+                prepared = await Ai.PrepareVoiceAsync(id, displayName, _lastHeardText,
+                    _lastHeardSamples, WhisperRate));
             _preparedVoices.Add(id);
             _voiceId = prepared.VoiceId;
             _voiceName = string.IsNullOrWhiteSpace(prepared.DisplayName) ? displayName : prepared.DisplayName;
@@ -1087,32 +1136,17 @@ public partial class Home : IDisposable
             // records that a finished answer followed by silence was "indistinguishable from 'it just
             // doesn't speak'" - but a caption that never changes for two minutes is equally
             // indistinguishable from a hung page, and Captain read it exactly that way on the first cold
-            // synthesis. A number that MOVES is the whole difference between "slow" and "broken", and it
-            // costs one timer. The elapsed count keeps running until the samples come back.
+            // synthesis.
+            // 🔴 AND A COUNTER IS NOT ENOUGH EITHER. Captain: "progress bars for the voice model(s) and
+            // 'Preparing a voice'". The voice is a MODEL - two int8 graphs plus a 54 MB vocoder out of a
+            // remote archive, MEASURED 88.7 s cold - and it downloads and loads through exactly the same
+            // source and engine hooks the chat model does, so the same tracker reports it. What was
+            // missing was never the numbers; it was a route from the worker to this page.
             var speakStarted = DateTime.UtcNow;
+            bool firstAudioPlayed = false;
             using var speakTicker = new CancellationTokenSource();
-            var ticker = Task.Run(async () =>
-            {
-                try
-                {
-                    while (!speakTicker.IsCancellationRequested)
-                    {
-                        await Task.Delay(500, speakTicker.Token);
-                        if (speakTicker.IsCancellationRequested) break;
-                        var secs = (DateTime.UtcNow - speakStarted).TotalSeconds;
-                        // Only ever overwrite our OWN caption. Clobbering a failure message that arrived
-                        // while this was ticking would hide it, which is the bug this file keeps re-learning.
-                        if (_speaking && _status.StartsWith("Preparing the voice"))
-                        {
-                            _status = $"Preparing the voice… {secs:F0}s" +
-                                      (secs > 20 ? " (first synthesis compiles kernels and loads the voice)" : "");
-                            await InvokeAsync(StateHasChanged);
-                        }
-                    }
-                }
-                catch (OperationCanceledException) { /* expected on completion */ }
-                catch (Exception ex) { Console.WriteLine($"[HF-SPEAK] ticker stopped: {ex.Message}"); }
-            });
+            var ticker = Task.Run(() => TrackProgressAsync(speakStarted, () => !firstAudioPlayed,
+                "Preparing the voice", speakTicker.Token));
 
             // ── STREAM IT: say sentence N while sentence N+1 renders ────────────────────────────────────
             //
@@ -1136,21 +1170,46 @@ public partial class Home : IDisposable
             // and drop only the markers.
             // Role-play: the SDK splitter, which also lifts out un-asterisked third-person prose that is
             // really a stage direction. Otherwise Unmark, which keeps every word - see StageDirections.
+            // 🔴 THREE CASES NOW, not two. Captain: "the avatar seem to be 100% static, never changes. does
+            // the ai know to use it? every ai should have and use an avatar by default". The solo
+            // assistant HAS a body, so its replies carry stage directions too - but it also holds ordinary
+            // question-and-answer conversations, where the SDK splitter would lift markdown emphasis out
+            // of the speech and invert sentences. SplitForBody is the embodied-but-not-in-a-scene rule;
+            // see StageDirections for why neither existing half is right on its own.
+            // 🔴 ONE ASTERISK RULE EVERYWHERE, and that is a change. It used to branch: the SDK splitter in
+            // a scene, Unmark outside one. Every character now has a body by default (Captain: "every ai
+            // should have and use an avatar by default"), so RolePlay is true for essentially every room -
+            // which would have put the SDK splitter, which lifts EVERY marked span, on ordinary
+            // conversation. "I'm *not* doing that" spoken as "I'm doing that" is the one failure here that
+            // a listener cannot detect. SplitForBody lifts real stage directions and keeps emphasis.
+            //
+            // ⚠️ A SCENE STILL GETS THE SDK'S PROSE EXTRACTION, which is the half SplitForBody does not do:
+            // models write "Her head tilts to one side" with no markers at all, and left alone it is read
+            // aloud. Running it over the ALREADY-split text is safe - SplitForBody emits no asterisks, so
+            // the second pass can only do the prose work.
             var inScene = _room.RolePlay;
-            var speakable = inScene
-                ? SpawnDev.Reachy.SpokenText.Split(text).Spoken
-                : StageDirections.Unmark(text);
-            var actions = inScene
-                ? SpawnDev.Reachy.SpokenText.Split(text).Actions
-                : System.Array.Empty<string>();
-            if (actions.Length > 0)
-                Console.WriteLine($"[HF-SPEAK] {actions.Length} stage direction(s) not spoken: "
+            var (marked, markedActions) = StageDirections.SplitForBody(text);
+            string speakable = marked;
+            var actionList = new List<string>(markedActions);
+            if (inScene)
+            {
+                var prose = SpawnDev.Reachy.SpokenText.Split(marked);
+                speakable = prose.Spoken;
+                actionList.AddRange(prose.Actions);
+            }
+            IReadOnlyList<string> actions = actionList;
+            if (actions.Count > 0)
+                Console.WriteLine($"[HF-SPEAK] {actions.Count} stage direction(s) not spoken: "
                     + string.Join(", ", actions));
+            // ⚠️ The BODY is not driven from here. Speaking is optional - the demo answers in text unless a
+            // voice is chosen or hands-free is on - and an avatar that only moves when the app happens to
+            // be talking is static for most users, which is exactly the report. The solo body is driven
+            // from the turn itself, in SendAsync, so it acts whether or not the reply is spoken.
             if (string.IsNullOrWhiteSpace(speakable))
             {
                 // The whole reply was action and no dialogue. Silence is correct - there is nothing to
                 // say - but say WHY, or it reads as the voice having failed.
-                _status = actions.Length > 0 ? "(action only - nothing said aloud)" : "Nothing to speak.";
+                _status = actions.Count > 0 ? "(action only - nothing said aloud)" : "Nothing to speak.";
                 StateHasChanged();
                 return;
             }
@@ -1161,24 +1220,40 @@ public partial class Home : IDisposable
 
             // Chunk 0 is synthesised up front; from then on the NEXT one renders while the current plays.
             var pending = SynthesizeChunkAsync(chunks[0], voice);
+            DateTime lastClipEndedAt = default;
             for (int i = 0; i < chunks.Count; i++)
             {
                 if (_speakCts?.IsCancellationRequested ?? false) break;
 
+                var waitStarted = DateTime.UtcNow;
                 var (samples, rate, ms) = await pending;
+                var waitedMs = (DateTime.UtcNow - waitStarted).TotalMilliseconds;
                 // Kick the next synthesis BEFORE playing this one - that overlap is the whole point.
                 pending = i + 1 < chunks.Count ? SynthesizeChunkAsync(chunks[i + 1], voice) : null!;
 
                 if (_speakCts?.IsCancellationRequested ?? false) break;
                 if (i == 0)
                 {
+                    firstAudioPlayed = true;
                     speakTicker.Cancel();
                     try { await ticker; } catch { /* already reported by the ticker itself */ }
+                    _progressInfo = null; _progressPending = false;
                     Console.WriteLine($"[HF-SPEAK] first audio after "
                         + $"{(DateTime.UtcNow - speakStarted).TotalSeconds:F1}s ({ms:F0} ms synthesis)");
                 }
 
+                // 🔴 THE GAP BETWEEN CHUNKS, MEASURED rather than guessed at. Captain: "there is still a
+                // long pause between tts streamed 'chunks'". Three different things could cause it and
+                // they need opposite fixes: the next chunk's synthesis not being ready (render is slower
+                // than playback), the wait for the previous clip to end overshooting, or the cost of
+                // starting a new clip. One line separates them - silence is the interval between the last
+                // clip ending and this one starting, and `waited` is how much of it was synthesis.
+                var silenceMs = lastClipEndedAt == default ? 0
+                    : (DateTime.UtcNow - lastClipEndedAt).TotalMilliseconds;
                 var seconds = await _speaker.PlayAsync(samples, rate);
+                if (i > 0)
+                    Console.WriteLine($"[HF-SPEAK] chunk {i + 1}/{chunks.Count}: silence {silenceMs:F0} ms "
+                        + $"(waited {waitedMs:F0} ms for synthesis, synth took {ms:F0} ms), plays {seconds:F1}s");
                 spokenSeconds += seconds;
                 spokenChunks++;
                 _status = chunks.Count > 1
@@ -1190,6 +1265,7 @@ public partial class Home : IDisposable
                 // until the audio finished on its own and the Stop button would do nothing visible.
                 try { await _speaker.WaitForEndAsync(_speakCts?.Token ?? default); }
                 catch (OperationCanceledException) { break; }
+                lastClipEndedAt = DateTime.UtcNow;
             }
 
             if (_speakCts?.IsCancellationRequested ?? false)

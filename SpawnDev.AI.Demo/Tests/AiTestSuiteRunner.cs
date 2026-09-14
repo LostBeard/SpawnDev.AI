@@ -43,6 +43,7 @@ public static class AiTestSuiteRunner
         typeof(AgentRoomEchoTests),
         typeof(SpeakChunkingTests),
         typeof(ModelLoadProgressTests),
+        typeof(EmbodiedSpeechTests),
     };
 
     /// <summary>Milliseconds a test may run before it is reported as timed out. Overridable per test.</summary>

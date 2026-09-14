@@ -47,7 +47,7 @@ public partial class Home
 
     // The character editor's fields. An empty `_editingCharId` means "creating a new one".
     string _editingCharId = "", _charName = "", _charPersona = "", _charModel = "", _charVoiceId = "";
-    AvatarKind _charAvatar = AvatarKind.None;
+    AvatarKind _charAvatar = AvatarKind.Screen;
     double _charMotionScale = 1.0;
 
     /// <summary>Tools the character being edited may call.</summary>
@@ -185,7 +185,7 @@ public partial class Home
     void NewCharacter()
     {
         _editingCharId = ""; _charName = ""; _charPersona = "";
-        _charModel = ""; _charVoiceId = ""; _charAvatar = AvatarKind.None; _charMotionScale = 1.0;
+        _charModel = ""; _charVoiceId = ""; _charAvatar = AvatarKind.Screen; _charMotionScale = 1.0;
         _charTools.Clear();
         _showRoom = true;
         StateHasChanged();

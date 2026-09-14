@@ -113,6 +113,30 @@
         white-space: nowrap;
     }
 
+    /* IT BLINKS, ALWAYS. Captain: "the avatar seem to be 100% static, never changes." Driving it from
+       what the model writes fixes the turns; between turns there is nothing to perform and a face that
+       holds perfectly still for minutes reads as a picture rather than a character. A blink is the
+       cheapest possible sign of life - one property, no script, no work when off-screen - and it is
+       deliberately slow and irregular-looking so it never competes with a real gesture.
+       ⚠️ On the PUPIL, not the eye socket: scaling the socket would make the head look like it is
+       deforming, while a pupil that narrows to a line reads as a blink at this size. */
+    .reachy .pupil {
+        animation: reachy-blink 7s ease-in-out infinite;
+        transform-box: fill-box;
+        transform-origin: center;
+    }
+
+    @@keyframes reachy-blink {
+        0%, 92%, 100% { transform: scaleY(1); }
+        94%, 96% { transform: scaleY(.08); }
+    }
+
+    /* The second eye is a beat behind, which is what stops two circles pulsing in lockstep from reading
+       as a flashing light rather than a blink. */
+    .reachy .pupil:nth-of-type(2) {
+        animation-delay: .06s;
+    }
+
     /* A character that is talking breathes a little, so a silent room is visibly different from a
        speaking one even before any action fires. */
     .reachy.speaking .body {

@@ -1,0 +1,48 @@
+@* One progress bar, used everywhere the page waits on the server: the chat turn's bubble, the spoken
+   reply, the model picker and the voice picker.
+
+   🔴 A COMPONENT RATHER THAN REPEATED MARKUP because the rule it encodes is easy to get wrong in one
+   place and not another: a snapshot with no meaningful fraction must render as a FULL animated bar, never
+   a 0%-wide one, which reads as stuck. Captain reported exactly that absence on the cached load - "it
+   didn't show a progress bar on the refreshed page where it loaded from cache" - and the fix has to hold
+   for the voice model too, which is the next thing that loads without saying so.
+
+   The styles live in Home.razor's <style> block, which is global once rendered. *@
+
+@if (Progress is { } p)
+{
+    <div class="loadbar">
+        <div class="track">
+            <div class="fill @(p.Indeterminate ? "indeterminate" : "")" style="width:@(Width(p))%"></div>
+        </div>
+        <div class="@CaptionClass">@p.Describe()@Suffix</div>
+    </div>
+}
+else if (Pending && !string.IsNullOrWhiteSpace(Note))
+{
+    @* Work IS happening, the server just cannot say how far along. An animated bar, never a bare line. *@
+    <div class="loadbar">
+        <div class="track"><div class="fill indeterminate" style="width:100%"></div></div>
+        <div class="@CaptionClass">@Note@Suffix</div>
+    </div>
+}
+
+@code {
+    /// <summary>The server's live snapshot, or null when there is none to draw.</summary>
+    [Parameter] public AiProgress? Progress { get; set; }
+
+    /// <summary>True while the page is waiting on the server - draws an indeterminate bar with <see cref="Note"/>.</summary>
+    [Parameter] public bool Pending { get; set; }
+
+    /// <summary>Caption to show when there is no snapshot. Nothing is drawn if it is empty.</summary>
+    [Parameter] public string Note { get; set; } = "";
+
+    /// <summary>Class for the caption line - <c>meta</c> in the transcript, <c>sethint</c> in a panel.</summary>
+    [Parameter] public string CaptionClass { get; set; } = "meta";
+
+    /// <summary>Appended to the caption, for a per-site aside like "- the page stays usable".</summary>
+    [Parameter] public string Suffix { get; set; } = "";
+
+    /// <summary>Bar width: the real percent, or full when there is no meaningful fraction.</summary>
+    static int Width(AiProgress p) => p.Indeterminate ? 100 : Math.Clamp(p.Percent, 0, 100);
+}

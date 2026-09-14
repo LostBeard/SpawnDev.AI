@@ -88,7 +88,11 @@ public sealed class AvatarActionTests
             throw new Exception("a screen character is unaffected by who holds the robot");
 
         // A character with no body keeps none - the fallback is for contention, not a promotion.
-        var voiceOnly = new ChatAgent("v", "V", "m", "p");
+        // ⚠️ Avatar: None is EXPLICIT now. A body is the default (Captain: "every ai should have and use
+        // an avatar by default (unless specifically turned off for that persona)"), so the old
+        // `new ChatAgent(...)` no longer means "text only" - it means an on-screen body, and this
+        // assertion would have been testing the opposite of what it says.
+        var voiceOnly = new ChatAgent("v", "V", "m", "p", Avatar: AvatarKind.None);
         if (AvatarActions.EffectiveAvatar(voiceOnly, holder) != AvatarKind.None)
             throw new Exception("a text-only character must not be given a body it was never configured with");
 
@@ -99,23 +103,37 @@ public sealed class AvatarActionTests
 
     /// <summary>A body is enough to make asterisks mean action, with or without a scene.</summary>
     /// <remarks>
-    /// 🔴 THE CONDITION GATES A DESTRUCTIVE OPERATION. In role-play a *span* is lifted out and never
-    /// spoken; outside it the same span is markdown emphasis, and removing the words in "I'm *not* doing
-    /// that" makes the voice say the OPPOSITE of the text on screen. So the switch must be ON for an
-    /// embodied character - its actions are the entire reason it has a body - and OFF for a plain chat.
+    /// <para>
+    /// What RolePlay now gates is the SDK's PROSE extraction and the action instruction in the system
+    /// prompt - not the asterisk rule, which is the same everywhere since every character became embodied
+    /// by default. See <c>StageDirections.SplitForBody</c>: lifting emphasis out of speech (and having the
+    /// voice say the opposite of the screen) is no longer possible on either side of this switch, which is
+    /// what made it safe for RolePlay to become true for essentially every room.
+    /// </para>
+    /// <para>
+    /// ⚠️ "A plain chat" now has to be built EXPLICITLY text-only. A bare <c>new ChatAgent(...)</c> has a
+    /// body, so the old form of this test was asserting the opposite of what it said.
+    /// </para>
     /// </remarks>
     [AiTest(Timeout = 30_000)]
     public Task ABodyOrASceneMakesItRolePlay()
     {
         var plain = new AgentRoom();
-        plain.Agents.Add(new ChatAgent("a", "A", "m", "p"));
+        plain.Agents.Add(new ChatAgent("a", "A", "m", "p", Avatar: AvatarKind.None));
         if (plain.RolePlay)
-            throw new Exception("a plain chat must NOT be role-play - emphasis would be stripped from "
-                + "speech and the voice would say the opposite of the text");
+            throw new Exception("a character with no body and no scene must NOT be role-play - it would "
+                + "be told to write actions nothing is drawing");
 
         var scened = new AgentRoom { Scene = "A dark corridor." };
-        scened.Agents.Add(new ChatAgent("a", "A", "m", "p"));
+        scened.Agents.Add(new ChatAgent("a", "A", "m", "p", Avatar: AvatarKind.None));
         if (!scened.RolePlay) throw new Exception("a scene must make it role-play");
+
+        // The DEFAULT is a body, so a character created with no avatar argument is embodied.
+        var byDefault = new AgentRoom();
+        byDefault.Agents.Add(new ChatAgent("a", "A", "m", "p"));
+        if (!byDefault.RolePlay)
+            throw new Exception("a character created with no avatar argument must be embodied - Captain: "
+                + "\"every ai should have and use an avatar by default\"");
 
         var embodied = new AgentRoom();
         embodied.Agents.Add(new ChatAgent("a", "A", "m", "p", null, null, AvatarKind.Screen));

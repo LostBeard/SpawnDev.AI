@@ -17,8 +17,10 @@ namespace SpawnDev.AI.Demo;
 /// back as) means none - so an older character never silently gains the ability to act on the world.
 /// </param>
 /// <param name="Avatar">
-/// The body this character acts through. Defaults to None, so a character saved before avatars existed
-/// stays text-only rather than suddenly appearing on screen.
+/// The body this character acts through. Defaults to <see cref="AvatarKind.Screen"/> - Captain: "every ai
+/// should have and use an avatar by default (unless specifically turned off for that persona)". A
+/// character saved before this field existed therefore reads back embodied rather than text-only, which is
+/// the intent: having a body is the norm and <see cref="AvatarKind.None"/> is the opt-out.
 /// </param>
 /// <param name="MotionScale">
 /// How animated this character is, 1.0 normal. A character saved before this existed reads back as 0,
@@ -27,7 +29,7 @@ namespace SpawnDev.AI.Demo;
 /// </param>
 public sealed record SavedCharacter(
     string Id, string Name, string Persona, string Model, string? VoiceId, DateTime SavedUtc,
-    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.None,
+    IReadOnlyList<string>? AllowedTools = null, AvatarKind Avatar = AvatarKind.Screen,
     double MotionScale = 1.0);
 
 /// <summary>
@@ -64,7 +66,7 @@ public sealed class CharacterLibrary
     /// <summary>Create or update a character.</summary>
     public async Task<SavedCharacter> SaveAsync(string id, string name, string persona, string model,
         string? voiceId, IReadOnlyList<string>? allowedTools = null,
-        AvatarKind avatar = AvatarKind.None, double motionScale = 1.0)
+        AvatarKind avatar = AvatarKind.Screen, double motionScale = 1.0)
     {
         if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("a character needs an id", nameof(id));
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("a character needs a name", nameof(name));

@@ -232,10 +232,27 @@ public sealed class AiVadEngine : IDisposable
             if (_vad != null) return;
             if (EvictOtherKind != null) await EvictOtherKind().ConfigureAwait(false);
 
-            var bytes = await _http.GetByteArrayAsync(ModelUrl, ct).ConfigureAwait(false);
+            // 🔴 NAME THE ABSOLUTE URL, ALWAYS. Captain read this off the page: "vad (HttpRequestException:
+            // TypeError: network error) did not preload". That message cannot be acted on - a browser
+            // reports every cross-origin refusal, blocked request and unreachable host as the same
+            // "TypeError: network error", and the ONE fact that separates them is which URL was fetched.
+            // ModelUrl is RELATIVE ("references/vad/silero_vad.onnx") and resolves against the HttpClient's
+            // BaseAddress, which in a worker comes from the app's own load URL rather than the page - so
+            // the resolved address is exactly the thing a reader cannot guess and the thing that is
+            // wrong when this fails.
+            var absolute = _http.BaseAddress is { } b ? new Uri(b, ModelUrl).ToString() : ModelUrl;
+            byte[] bytes;
+            try { bytes = await _http.GetByteArrayAsync(ModelUrl, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new InvalidOperationException(
+                    $"the endpointer model could not be fetched from {absolute} "
+                    + $"({ex.GetType().Name}: {ex.Message}). It is served from this app's own wwwroot, so a "
+                    + "network error here means the URL resolved somewhere the app is not.", ex);
+            }
             if (bytes.Length == 0)
                 throw new InvalidOperationException(
-                    $"{ModelUrl} came back empty - the endpointer cannot run and the hands-free loop would "
+                    $"{absolute} came back empty - the endpointer cannot run and the hands-free loop would "
                     + "fall back to a fixed timer, which is the defect this replaces");
 
             _vad = SileroVad.Create(_accelerator, bytes);

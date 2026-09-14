@@ -141,22 +141,9 @@
                             <div class="modelactions">
                                 @if (_downloadingModel == choice.Name)
                                 {
-                                    @if (_progressInfo is { } dlprog)
-                                    {
-                                        <div class="loadbar">
-                                            <div class="track">
-                                                <div class="fill @(dlprog.Indeterminate ? "indeterminate" : "")" style="width:@(BarPercent(dlprog))%"></div>
-                                            </div>
-                                            <div class="sethint">@dlprog.Describe() — the page stays usable.</div>
-                                        </div>
-                                    }
-                                    else
-                                    {
-                                        <div class="loadbar">
-                                            <div class="track"><div class="fill indeterminate" style="width:100%"></div></div>
-                                            <div class="sethint">@(string.IsNullOrEmpty(_busyNote) ? "Fetching…" : _busyNote) — the page stays usable.</div>
-                                        </div>
-                                    }
+                                    <LoadBar Progress="_progressInfo" Pending="true" CaptionClass="sethint"
+                                             Note="@(string.IsNullOrEmpty(_busyNote) ? "Fetching…" : _busyNote)"
+                                             Suffix=" — the page stays usable." />
                                 }
                                 else if (IsApproved(choice.Name))
                                 {
@@ -407,7 +394,10 @@
         {
             <div class="stage">
                 <div class="stage-slot" title="@DefaultAgentName">
-                    <ReachyAvatar Name="@DefaultAgentName" Speaking="@_speaking" />
+                    @* Action was MISSING here, which is the whole of "the avatar seem to be 100% static,
+                       never changes": the room's bodies were driven and this one had nothing that could
+                       move it. *@
+                    <ReachyAvatar Name="@DefaultAgentName" Action="@_soloAction" Speaking="@_speaking" />
                 </div>
             </div>
         }
@@ -471,26 +461,8 @@
                     <div class="text">@RenderRich(_streaming)<span class="caret">▋</span></div>
                     @* The first turn on a cold model is a download and then a GPU upload. Both report real
                        numbers now; the caption below is the fallback for when the server cannot answer. *@
-                    @if (_progressInfo is { } prog)
-                    {
-                        <div class="loadbar">
-                            <div class="track">
-                                <div class="fill @(prog.Indeterminate ? "indeterminate" : "")" style="width:@(BarPercent(prog))%"></div>
-                            </div>
-                            <div class="meta">@prog.Describe()</div>
-                        </div>
-                    }
-                    else if (_progressPending)
-                    {
-                        @* No numbers to draw, but work IS happening - an animated bar, never a bare line.
-                           Captain, on the refreshed page: "it didn't show a progress bar on the refreshed
-                           page where it loaded from cache." *@
-                        <div class="loadbar">
-                            <div class="track"><div class="fill indeterminate" style="width:100%"></div></div>
-                            <div class="meta">@_busyNote</div>
-                        </div>
-                    }
-                    else if (!string.IsNullOrEmpty(_busyNote))
+                    <LoadBar Progress="_progressInfo" Pending="_progressPending" Note="@_busyNote" />
+                    @if (_progressInfo == null && !_progressPending && !string.IsNullOrEmpty(_busyNote))
                     {
                         <div class="meta">@_busyNote</div>
                     }
@@ -507,6 +479,11 @@
                 <div class="msg assistant speaking">
                     <div class="who">Assistant</div>
                     <div class="text">🔊 @(string.IsNullOrEmpty(_status) ? "Speaking…" : _status)</div>
+                    @* The voice is a MODEL, and a cold one is two int8 graphs plus a 54 MB vocoder out of
+                       a remote archive - MEASURED 88.7 s. It downloads and loads exactly like the chat
+                       model does, so it reports exactly like the chat model does. Captain: "progress bars
+                       for the voice model(s) and 'Preparing a voice'". *@
+                    <LoadBar Progress="_progressInfo" Pending="_progressPending" Note="@_busyNote" />
                 </div>
             }
         </div>
@@ -612,6 +589,17 @@
                     <div class="lvl-track"><div class="lvl-fill @(_speechActive ? "speaking" : "")" style="width:@((int)(_speechProbability * 100))%"></div></div>
                     <span class="lvl-num">@_speechProbability.ToString("F2")</span>
                 </div>
+            </div>
+        }
+        @* Preparing a voice loads the ZipVoice models the first time, and it happens from the voice
+           PICKER - nowhere near the transcript. Without a bar here, choosing a voice looked like nothing
+           happening for as long as the archive took. Drawn only while a voice is being prepared, so it
+           never competes with the chat turn's own bar above. *@
+        @if (_savingVoice)
+        {
+            <div class="voiceload">
+                <LoadBar Progress="_progressInfo" Pending="true" CaptionClass="sethint"
+                         Note="@(string.IsNullOrEmpty(_busyNote) ? _status : _busyNote)" />
             </div>
         }
         <footer class="sdai-ftr">
@@ -1129,9 +1117,26 @@
         margin: .25rem .2rem 0;
     }
 
-    /* Model download / GPU load progress. Used in the in-progress chat bubble and in the model picker. */
+    /* A stage direction the body performed and the voice skipped. Shown, because it is part of what the
+       character did - but set apart, so it never reads as something that was said. */
+    .msg .text .act {
+        font-style: italic;
+        color: #8b9ab3;
+    }
+
+        .msg .text .act::before {
+            content: "· ";
+        }
+
+    /* Model download / GPU load progress. Used in the in-progress chat bubble, the spoken reply, the
+       model picker and the voice picker - one component, see LoadBar.razor. */
     .loadbar {
         margin: .45rem .2rem 0;
+    }
+
+    /* The voice-preparation bar sits just above the footer, where the voice picker is. */
+    .voiceload {
+        padding: 0 .2rem .4rem;
     }
 
         .loadbar .track {
