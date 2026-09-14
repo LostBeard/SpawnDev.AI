@@ -966,6 +966,20 @@ public partial class Home : IDisposable
     /// <c>MaxSpokenCharacters</c>, and `AiVoiceTests` gates intelligibility at five lengths up to 343).
     /// Raising it further is a question for that gate, not for this file.
     /// </para>
+    /// <para>
+    /// 🔴 MEASURED AGAIN 2026-09-14, and the conclusion above is confirmed with a number:
+    /// <c>chunk 2/3: silence 79828 ms (waited 79826 ms for synthesis, synth took 72980 ms), plays 20.4s</c>
+    /// - 73 s of rendering for 20.4 s of audio, so <b>3.6x slower than realtime at this length</b>, and
+    /// 79.826 of the 79.828 s pause was waiting for the renderer. Nothing about chunk size, playback
+    /// scheduling or the 25 ms end-of-clip poll can fix that: while the renderer is slower than realtime,
+    /// every extra chunk boundary is another stall, and merging them only moves the same total wait around.
+    /// </para>
+    /// <para>
+    /// ⚠️ SO THE REMAINING LEVER IS THE VOICE ENGINE, NOT THIS FILE. A reply longer than
+    /// 160 + 320 characters becomes three or more renders and stalls twice or more; the page now says so
+    /// while it waits (see the render ticker in <c>SpeakCoreAsync</c>) rather than freezing on
+    /// "Speaking 2/3…", which is what made it read as hung.
+    /// </para>
     /// </remarks>
     const int SpeakChunkCharactersAfterFirst = 320;
 
@@ -1280,8 +1294,50 @@ public partial class Home : IDisposable
             {
                 if (_speakCts?.IsCancellationRequested ?? false) break;
 
+                // 🔴 SAY THAT IT IS RENDERING. MEASURED 2026-09-14 on a three-chunk reply:
+                // "chunk 2/3: silence 79828 ms (waited 79826 ms for synthesis, synth took 72980 ms),
+                // plays 20.4s" - 73 s to render 20.4 s of audio, 3.6x slower than realtime. Every
+                // millisecond of that 79.8 s pause was waiting for the renderer, and the status line sat
+                // frozen on "Speaking 2/3… (23.5s)" throughout. Captain read the result as the app being
+                // hung, which is exactly what a caption that does not move for eighty seconds looks like.
+                // ⚠️ A renderer slower than realtime cannot be pipelined out of existence - rendering
+                // chunk N+1 while chunk N plays only buys the length of chunk N. That is a voice-engine
+                // problem; this is the part the page owes the user meanwhile, which is the truth.
                 var waitStarted = DateTime.UtcNow;
+                using var renderTicker = new CancellationTokenSource();
+                Task? renderTick = null;
+                if (i > 0)
+                {
+                    _progressPending = true;
+                    var chunkNo = i + 1;
+                    var total = chunks.Count;
+                    renderTick = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            while (!renderTicker.IsCancellationRequested)
+                            {
+                                await Task.Delay(500, renderTicker.Token);
+                                if (renderTicker.IsCancellationRequested) break;
+                                var secs = (DateTime.UtcNow - waitStarted).TotalSeconds;
+                                _busyNote = $"Rendering sentence {chunkNo} of {total}… {secs:F0}s "
+                                          + "(this voice renders slower than it speaks)";
+                                _status = _busyNote;
+                                await InvokeAsync(StateHasChanged);
+                            }
+                        }
+                        catch (OperationCanceledException) { /* the chunk arrived */ }
+                        catch (Exception ex) { Console.WriteLine($"[HF-SPEAK] render ticker: {ex.Message}"); }
+                    });
+                }
                 var (samples, rate, ms) = await pending;
+                renderTicker.Cancel();
+                if (renderTick != null)
+                {
+                    try { await renderTick; } catch { /* reports itself */ }
+                    _progressPending = false;
+                    _busyNote = "";
+                }
                 var waitedMs = (DateTime.UtcNow - waitStarted).TotalMilliseconds;
                 // Kick the next synthesis BEFORE playing this one - that overlap is the whole point.
                 pending = i + 1 < chunks.Count ? SynthesizeChunkAsync(chunks[i + 1], voice) : null!;
