@@ -94,6 +94,69 @@ public sealed class SpeakChunkingTests
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// A sentence too long for the engine is broken at a CLAUSE, and no word is lost doing it.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE RULE THIS CHANGES, AND WHY. The splitter's old rule was "a single sentence longer than the
+    /// target is emitted WHOLE", because an audible stop in a strange place is worse than a long chunk.
+    /// That holds until the renderer cannot render it. MEASURED 2026-09-15, ZipVoice on WebGPU with
+    /// seeded noise, read back through Whisper:
+    /// <code>
+    ///   250 chars -> 100%      296 chars -> 67%      343 chars -> 42%
+    /// </code>
+    /// At 42% the listener does not hear an oddly-paused sentence, they hear "Norman praying walkers
+    /// eight day so we walked a bone before". A comma is a place speech pauses anyway.
+    /// <para>
+    /// ⚠️ THE PROPERTY THAT MUST SURVIVE is that nothing is lost. The break works by PROMOTING a comma to
+    /// a full stop, never by cutting, so the text still says the same words in the same order - which is
+    /// the one thing a listener cannot check for themselves.
+    /// </para>
+    /// </remarks>
+    [AiTest(Timeout = 30_000)]
+    public Task AnOverlongSentenceIsBrokenAtAClauseAndLosesNothing()
+    {
+        // The exact 343-character line the ZipVoice gate reads back at 42%: one sentence, commas, no
+        // interior full stop.
+        const string OneLongSentence =
+            "The morning train was late again, so we walked along the river and talked about the weather "
+          + "until the rain finally stopped and the sun came out over the water, warming the stones along "
+          + "the path where we sat and rested for a while before walking slowly back home together in the "
+          + "quiet evening air, tired and content after a long and useful day.";
+        const int Limit = 250;   // measured 100% intelligible at this length
+
+        var chunks = AiVoiceEngine.SplitIntoSpeakableChunks(OneLongSentence, 320, 0, clauseSplitOver: Limit);
+        if (chunks.Count < 2)
+            throw new Exception($"a {OneLongSentence.Length}-character single sentence was left as "
+                + $"{chunks.Count} chunk(s) - it must be broken at a clause, or the voice reads it as "
+                + "gibberish (42% intelligible, MEASURED)");
+
+        foreach (var c in chunks)
+            if (c.Length > Limit + 40)
+                throw new Exception($"a chunk is {c.Length} chars, past the {Limit} the engine renders "
+                    + $"well: \"{c}\"");
+
+        // ⚠️ NOTHING LOST. Compare words, ignoring the punctuation the promotion deliberately changes.
+        static string Words(string s) => string.Join(" ",
+            s.Replace('.', ' ').Replace(',', ' ')
+             .Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries));
+        if (Words(string.Join(" ", chunks)) != Words(OneLongSentence))
+            throw new Exception("breaking the sentence changed the words - a listener would silently "
+                + $"miss or repeat something.\noriginal: {Words(OneLongSentence)}\nspoken  : "
+                + Words(string.Join(" ", chunks)));
+
+        // A sentence with NO clause punctuation has no good break point; leaving it whole is correct.
+        var noCommas = new string('a', 400).Replace("aaaa", "aaa ") + ".";
+        var whole = AiVoiceEngine.SplitIntoSpeakableChunks(noCommas, 320, 0, clauseSplitOver: Limit);
+        if (whole.Count != 1)
+            throw new Exception($"a sentence with no clause punctuation was split into {whole.Count} "
+                + "chunks - there is no good break point, and a mid-word cut is worse than a long utterance");
+
+        Console.WriteLine($"[chunking] 343-char sentence -> {chunks.Count} clause chunks "
+            + $"({string.Join(", ", chunks.Select(c => c.Length + "ch"))})");
+        return Task.CompletedTask;
+    }
+
     /// <summary>A short reply is one chunk, and is never padded into more.</summary>
     [AiTest(Timeout = 30_000)]
     public Task AShortReplyStaysASingleRender()
