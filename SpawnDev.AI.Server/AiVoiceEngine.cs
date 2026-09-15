@@ -615,8 +615,36 @@ public sealed partial class AiVoiceEngine : IDisposable
     /// <summary>Offsets just past each sentence terminator, always ending with <c>text.Length</c>.</summary>
 
     /// <summary>
-    /// Split a reply into speakable chunks at SENTENCE ends, each at most <paramref name="maxChars"/>.
+    /// Split a reply into speakable chunks at SENTENCE ends, each at most <paramref name="maxChars"/>
+    /// and - except for the last - at least <paramref name="minChars"/>.
     /// </summary>
+    /// <param name="text">The reply as written.</param>
+    /// <param name="maxChars">Soft ceiling; a single sentence longer than this is emitted WHOLE.</param>
+    /// <param name="minChars">
+    /// 🔴 THE FLOOR EXISTS BECAUSE A SYNTHESIS PASS COSTS THE SAME WHATEVER IT SAYS, and a chunk below it
+    /// makes the reply STUTTER. MEASURED 2026-09-15 in the demo's WebGPU worker (RTX 4070), Kokoro:
+    /// <code>
+    ///    82 chars ->  5.30s audio in  6,189 ms      315 chars -> 19.98s audio in 10,287 ms
+    ///   278 chars -> 17.30s audio in  8,798 ms      246 chars -> 15.68s audio in  8,151 ms
+    /// </code>
+    /// which is <c>render = 5.04s + 0.22 x audio</c>, with audio a very steady 0.0635 s per character. So a
+    /// pass costs ~5 s of FIXED host work before it says a word, and the playback lead only GROWS when a
+    /// chunk carries more than <c>5.04 / (1 - 0.22)</c> = 6.4 s of audio, i.e. ~102 characters. The old
+    /// splitter had a ceiling and no floor, so the first chunk of this fixture came out at 82 characters
+    /// (5.30 s of audio) and the next chunk needed 8,798 ms to render - arriving 3,498 ms after the speaker
+    /// needed it, an audible gap. Below the floor, no amount of chunking or buffering can help: the chunk
+    /// cannot buy enough playing time to cover even one more pass.
+    /// <para>
+    /// ⚠️ THE FLOOR WINS OVER THE CEILING. A chunk under <paramref name="minChars"/> keeps taking whole
+    /// sentences even past <paramref name="maxChars"/> - a minimum that yields to the maximum is not a
+    /// minimum. The LAST chunk is exempt: nothing follows it, so it has nothing to cover.
+    /// </para>
+    /// <para>
+    /// ⚠️ 0.0635 s/char and that 5.04 s intercept are THIS card and THIS model. A slower device needs a
+    /// larger floor, and past some point cannot stream at all - which is a property of the device, not a
+    /// number to tune away. The gate is <c>AiVoiceStreamingTests.ChunkedReplyStreamsWithoutAPause</c>.
+    /// </para>
+    /// </param>
     /// <remarks>
     /// <para>
     /// 🔴 THIS IS WHAT REPLACES THE CHARACTER CAP. <see cref="MaxSpokenCharacters"/> makes a long reply
@@ -636,7 +664,7 @@ public sealed partial class AiVoiceEngine : IDisposable
     /// rule exists to prevent.
     /// </para>
     /// </remarks>
-    public static List<string> SplitIntoSpeakableChunks(string text, int maxChars)
+    public static List<string> SplitIntoSpeakableChunks(string text, int maxChars, int minChars = 0)
     {
         var chunks = new List<string>();
         if (string.IsNullOrWhiteSpace(text)) return chunks;
@@ -649,8 +677,9 @@ public sealed partial class AiVoiceEngine : IDisposable
         foreach (var end in ends)
         {
             if (end <= start) continue;
-            // Adding this sentence would overrun the chunk: close the chunk at the previous sentence end.
-            if (end - start > maxChars && lastEnd > start)
+            // Adding this sentence would overrun the chunk: close the chunk at the previous sentence end -
+            // but only once the chunk is worth a synthesis pass. See minChars.
+            if (end - start > maxChars && lastEnd > start && lastEnd - start >= minChars)
             {
                 chunks.Add(text[start..lastEnd].Trim());
                 start = lastEnd;

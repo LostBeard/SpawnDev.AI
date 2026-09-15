@@ -1031,7 +1031,34 @@ public partial class Home : IDisposable
     /// seams. One or two sentences is the useful range - this is not the old brevity cap, nothing is
     /// truncated at this length.
     /// </remarks>
-    const int SpeakChunkCharacters = 160;
+    const int SpeakChunkCharacters = 200;
+
+    /// <summary>
+    /// Floor for every chunk but the last - the size below which a chunk cannot pay for itself.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 DERIVED FROM A MEASUREMENT, NOT PICKED. In the demo's WebGPU worker (RTX 4070, Kokoro) a
+    /// synthesis costs <c>render = 5.04s + 0.22 x audio</c> and audio runs 0.0635 s per character, so:
+    /// <list type="bullet">
+    /// <item>a chunk only GROWS the playback lead past <c>5.04/(1-0.22)</c> = 6.4 s of audio = ~102 chars;</item>
+    /// <item>the first chunk must cover the worst following render, <c>5.04 + 0.22 x (320 chars = 20.3s)</c>
+    /// = 9.5 s, so it needs &gt;= 9.5 s of audio = ~150 chars.</item>
+    /// </list>
+    /// 200 clears both with margin. MEASURED before this floor existed: the first chunk of a 900-character
+    /// reply came out at <b>82 characters</b> (5.30 s of audio) because the splitter stopped at the last
+    /// sentence end under the ceiling - and chunk 2 then arrived <b>3,498 ms late</b>, an audible gap, even
+    /// though the reply as a whole rendered at 0.57x realtime. A whole-reply average cannot see a stall.
+    /// <para>
+    /// ⚠️ THE COST IS TIME-TO-FIRST-AUDIO, and it is the right trade. The 82-char chunk started speaking at
+    /// 6,189 ms; a 200-char one starts at ~7.8 s. ~1.6 s more silence once, against a gap in the middle of
+    /// every reply. The real lever for first-audio is the 5.04 s FIXED per-pass cost, not the chunk size.
+    /// </para>
+    /// <para>
+    /// ⚠️ Device-specific. A slower GPU has a larger fixed cost and needs a larger floor; past some point it
+    /// cannot stream at all. Gate: <c>AiVoiceStreamingTests.ChunkedReplyStreamsWithoutAPause</c>.
+    /// </para>
+    /// </remarks>
+    const int SpeakChunkMinimumCharacters = 200;
 
     /// <summary>
     /// Characters per chunk AFTER the first one.
@@ -1081,7 +1108,8 @@ public partial class Home : IDisposable
     /// </remarks>
     internal static List<string> SpeakableChunks(string speakable)
     {
-        var fine = AiVoiceEngine.SplitIntoSpeakableChunks(speakable, SpeakChunkCharacters);
+        var fine = AiVoiceEngine.SplitIntoSpeakableChunks(
+            speakable, SpeakChunkCharacters, SpeakChunkMinimumCharacters);
         if (fine.Count <= 1) return fine;
 
         var merged = new List<string> { fine[0] };

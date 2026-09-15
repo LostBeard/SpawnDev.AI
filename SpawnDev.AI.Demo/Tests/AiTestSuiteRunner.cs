@@ -23,6 +23,7 @@ public static class AiTestSuiteRunner
         typeof(AiChatTests),
         typeof(AiSpeechTests),
         typeof(AiVoiceTests),
+        typeof(AiVoiceStreamingTests),
         // ⚠️ THIS LIST IS EXPLICIT - a test class that is not here does not run, and nothing says so. The
         // suite's own count is the only tell (READY: N tests), which is why a new class gets added in the
         // same change that creates it.

@@ -49,18 +49,39 @@ public sealed class SpeakChunkingTests
     }
 
     /// <summary>
-    /// The first chunk stays short and the rest are bigger - the whole point of the split being uneven.
+    /// No chunk but the last is too small to pay for its own synthesis pass, and the rest are merged.
     /// </summary>
+    /// <remarks>
+    /// 🔴 THIS USED TO ASSERT THE OPPOSITE - "the first chunk is short, and a long one gives that up
+    /// (&lt;= 200 chars)". That was a design belief, and it was measured wrong on 2026-09-15: a synthesis
+    /// costs <c>5.04s + 0.22 x audio</c> in the demo's WebGPU worker, so a chunk that carries less than
+    /// ~6.4 s of audio (~102 chars) can never cover the next chunk's render. The old splitter had a ceiling
+    /// and no floor, the first chunk of a 900-character reply came out at <b>82 characters</b>, and chunk 2
+    /// arrived <b>3,498 ms late</b> - an audible gap in every long reply, while the whole-reply average
+    /// still read 0.57x realtime.
+    /// <para>
+    /// ⚠️ The old assertion could not fail on the defect it was next to: it bounded the first chunk from
+    /// ABOVE, which is the direction that was never the problem. Starting sooner is worth nothing if the
+    /// voice then stops mid-reply.
+    /// </para>
+    /// </remarks>
     [AiTest(Timeout = 30_000)]
-    public Task TheFirstChunkIsShortAndTheRestAreMerged()
+    public Task NoChunkIsTooSmallToPayForItselfAndTheRestAreMerged()
     {
         var chunks = Home.SpeakableChunks(Reply);
         if (chunks.Count < 2)
             throw new Exception($"a {Reply.Length}-character reply produced {chunks.Count} chunk(s); this "
                 + "fixture must be long enough to be split, or it proves nothing");
-        if (chunks[0].Length > 200)
-            throw new Exception($"the first chunk is {chunks[0].Length} chars - it exists to make the "
-                + "voice start SOON, and a long one gives that up");
+
+        // Every chunk but the LAST has to cover the render of the one after it. The last is exempt -
+        // nothing follows it, so it has nothing to cover.
+        const int floorChars = 102;   // 5.04s / (1 - 0.22) = 6.4s of audio at 0.0635 s/char
+        for (int i = 0; i < chunks.Count - 1; i++)
+            if (chunks[i].Length < floorChars)
+                throw new Exception($"chunk {i + 1} of {chunks.Count} is {chunks[i].Length} chars, under the "
+                    + $"{floorChars}-char floor where a chunk carries less audio than one synthesis pass "
+                    + "costs. It cannot buy enough playing time to cover the next render, so the reply will "
+                    + "stutter here no matter how the rest is buffered.");
 
         // The real claim: fewer renders than a uniform split would have made. Each render costs a fixed
         // ~8.7s first Euler step, so the count IS the latency.
