@@ -113,6 +113,16 @@ public sealed partial class AiVoiceEngine
             // per-node dispatch cost. PMT's page has nothing else resident, which is precisely why it
             // cannot show this. Near-zero here means the pool is warm and the gap is per-crossing.
             var alloc0 = SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocations;
+            // 🔴 THE GARBAGE COLLECTOR, which no other counter here can see and which scales with what
+            // ELSE is resident in this worker rather than with this model. .NET WASM's GC is
+            // non-concurrent: a collection stops the orchestrator mid-graph, and its pause is a function
+            // of the LIVE heap - the LLM's weights and KV cache, Whisper's buffers - not of Kokoro. That
+            // is exactly the shape of the open gap, since PMT's page runs the identical graph on the
+            // identical card with nothing else loaded and takes less than half as long.
+            var gcAlloc0 = GC.GetTotalAllocatedBytes(false);
+            var gcPause0 = GC.GetTotalPauseDuration();
+            var gcG0 = GC.CollectionCount(0);
+            var gcG2 = GC.CollectionCount(2);
 
             var started = DateTime.UtcNow;
             var audio = await _kokoro!.SpeakAsync(phonemes, pack, ct: ct).ConfigureAwait(false);
@@ -143,7 +153,11 @@ public sealed partial class AiVoiceEngine
                     // interop); a residual that is 2x only in the heavy half is GPU pressure from the
                     // other models resident in this worker. One number tells them apart, and it is free.
                     + $" | {nodes} nodes = {(nodes > 0 ? (execMs - rbMs - drMs) / nodes : 0):F3} ms/node"
-                    + $" | device allocations {SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocations - alloc0}");
+                    + $" | device allocations {SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocations - alloc0}"
+                    + $" | gc {(GC.GetTotalAllocatedBytes(false) - gcAlloc0) / 1048576.0:F1} MB alloc, "
+                    + $"gen0 {GC.CollectionCount(0) - gcG0}, gen2 {GC.CollectionCount(2) - gcG2}, "
+                    + $"pause {(GC.GetTotalPauseDuration() - gcPause0).TotalMilliseconds:F0} ms, "
+                    + $"live heap {GC.GetTotalMemory(false) / 1048576.0:F0} MB");
                 // 🔴 NAME THE READBACKS. A count says how much a round trip costs; only the NAMES say
                 // which operator is asking for a value on the host, and that is the difference between
                 // "the browser is slow" and "this node needs folding". MEASURED here: drains+readbacks
