@@ -119,10 +119,18 @@ public sealed partial class AiVoiceEngine
             // of the LIVE heap - the LLM's weights and KV cache, Whisper's buffers - not of Kokoro. That
             // is exactly the shape of the open gap, since PMT's page runs the identical graph on the
             // identical card with nothing else loaded and takes less than half as long.
-            var gcAlloc0 = GC.GetTotalAllocatedBytes(false);
-            var gcPause0 = GC.GetTotalPauseDuration();
-            var gcG0 = GC.CollectionCount(0);
-            var gcG2 = GC.CollectionCount(2);
+            // ⚠️ GUARDED. GetTotalPauseDuration is .NET 7+ and its WASM support is not something to
+            // discover by throwing on a user's spoken reply - a diagnostic that can break the feature it
+            // measures is worse than no diagnostic. Zero here reads as "not available", not as "no pause".
+            var gcAlloc0 = 0L; var gcPause0 = TimeSpan.Zero; var gcG0 = 0; var gcG2 = 0; var gcOk = true;
+            try
+            {
+                gcAlloc0 = GC.GetTotalAllocatedBytes(false);
+                gcPause0 = GC.GetTotalPauseDuration();
+                gcG0 = GC.CollectionCount(0);
+                gcG2 = GC.CollectionCount(2);
+            }
+            catch { gcOk = false; }
 
             var started = DateTime.UtcNow;
             var audio = await _kokoro!.SpeakAsync(phonemes, pack, ct: ct).ConfigureAwait(false);
@@ -154,10 +162,7 @@ public sealed partial class AiVoiceEngine
                     // other models resident in this worker. One number tells them apart, and it is free.
                     + $" | {nodes} nodes = {(nodes > 0 ? (execMs - rbMs - drMs) / nodes : 0):F3} ms/node"
                     + $" | device allocations {SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocations - alloc0}"
-                    + $" | gc {(GC.GetTotalAllocatedBytes(false) - gcAlloc0) / 1048576.0:F1} MB alloc, "
-                    + $"gen0 {GC.CollectionCount(0) - gcG0}, gen2 {GC.CollectionCount(2) - gcG2}, "
-                    + $"pause {(GC.GetTotalPauseDuration() - gcPause0).TotalMilliseconds:F0} ms, "
-                    + $"live heap {GC.GetTotalMemory(false) / 1048576.0:F0} MB");
+                    + GcSummary(gcOk, gcAlloc0, gcPause0, gcG0, gcG2));
                 // 🔴 NAME THE READBACKS. A count says how much a round trip costs; only the NAMES say
                 // which operator is asking for a value on the host, and that is the difference between
                 // "the browser is slow" and "this node needs folding". MEASURED here: drains+readbacks
@@ -270,5 +275,19 @@ public sealed partial class AiVoiceEngine
         UnloadKokoro();
         _kokoroPacks.Clear();
         _kokoroGate.Dispose();
+    }
+
+    /// <summary>One line of GC accounting, or a stated absence - never a throw. See the capture above.</summary>
+    private static string GcSummary(bool ok, long alloc0, TimeSpan pause0, int g0, int g2)
+    {
+        if (!ok) return " | gc not available on this runtime";
+        try
+        {
+            return $" | gc {(GC.GetTotalAllocatedBytes(false) - alloc0) / 1048576.0:F1} MB alloc, "
+                 + $"gen0 {GC.CollectionCount(0) - g0}, gen2 {GC.CollectionCount(2) - g2}, "
+                 + $"pause {(GC.GetTotalPauseDuration() - pause0).TotalMilliseconds:F0} ms, "
+                 + $"live heap {GC.GetTotalMemory(false) / 1048576.0:F0} MB";
+        }
+        catch { return " | gc not available on this runtime"; }
     }
 }
