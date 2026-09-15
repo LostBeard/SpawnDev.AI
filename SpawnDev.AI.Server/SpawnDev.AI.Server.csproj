@@ -35,7 +35,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.2.14-local.3" />
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.2.14-local.4" />
 		<!-- DIRECT, not transitive: this project names WebTorrentClient and OpfsLayoutProbe itself, so
 		     it must pin the version it compiles against rather than inherit whatever ILGPU.ML pins. -->
 		<PackageReference Include="SpawnDev.WebTorrent" Version="4.2.7" />
