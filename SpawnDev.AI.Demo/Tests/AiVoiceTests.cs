@@ -727,13 +727,23 @@ public sealed class AiVoiceTests
         // nobody can line up. MEASURED elsewhere for this same sentence: 0.31x on CUDA, 0.81x warm on
         // WebGPU in a page. If this reads far worse, the difference is the WORKER or what else is
         // resident in it - not the model, and not the length.
+        // 🔴 THE LAST LINE IS SPOKEN TWICE, ON PURPOSE. Every line here has a different TOKEN COUNT, and
+        // this engine recompiles for new input shapes - so a run of distinct lines measures a COLD SHAPE
+        // every time and can never produce the warm number. MEASURED in this worker: 1,491 device
+        // allocations for a 1,850-node synthesis, i.e. nearly a buffer per node, all of it landing in the
+        // "residual (dispatch+CPU+alloc)" column that looks like per-node dispatch cost.
+        // ⚠️ That is exactly what made the engine gate and this one incomparable: PMT's Kokoro test speaks
+        // the SAME token ids twice and reports the second, so it measures a warm pool on a compiled shape.
+        // Comparing its number with this one was comparing two different questions. Now both are here.
         string[] lines =
         {
             "Hello. This is SpawnDev AI, speaking in a built in voice.",
             "The capital of France is Paris.",
+            "The capital of France is Paris.",
         };
 
         double warmRealtimeFactor = double.NaN;
+        double firstOfThatShapeRtf = double.NaN;
         for (int i = 0; i < lines.Length; i++)
         {
             var sw = Stopwatch.StartNew();
@@ -750,7 +760,8 @@ public sealed class AiVoiceTests
 
             var seconds = samples.Length / (double)rate;
             var rtf = sw.Elapsed.TotalSeconds / Math.Max(seconds, 1e-6);
-            if (i == lines.Length - 1) warmRealtimeFactor = rtf;
+            if (i == lines.Length - 2) firstOfThatShapeRtf = rtf;   // same words, cold shape
+            if (i == lines.Length - 1) warmRealtimeFactor = rtf;     // same words, warm shape
 
             var (heard, _, _) = await _client.TranscribeAsync(samples, rate);
             var spokenWords = Words(spoken);
@@ -784,19 +795,30 @@ public sealed class AiVoiceTests
         // WebGPU (RTF 0.81x - faster than realtime). What is asserted HERE is only that the path has not
         // catastrophically regressed, which is what this environment can honestly support.
         //
-        // ⚠️ OPEN, and named rather than hidden: published in the demo WORKER this line takes 4,493 ms
-        // (1.98x) against 1,837 ms (0.81x) in PMT's page with nothing else resident - a 2.4x gap that is
-        // NOT explained by publishing and would apply to every model the demo runs, not just this one.
+        // ⚠️ OPEN, and named rather than hidden: published in the demo WORKER this line takes ~5,159 ms
+        // (2.27x) against 1,837 ms (0.81x) in PMT's page - a gap that would apply to every model the demo
+        // runs, not just this one. What it is NOT, MEASURED 2026-09-14 with tools/drive-worker-bench.cs:
+        // the worker itself. Managed execution 0.99x, interop 0.94x, Task.Yield 0.55x, Task.Delay(0)
+        // 1.12x against the window in the same page load, on the real discrete adapter. A worker is not a
+        // slower place to run .NET, and that should not be assumed again.
+        // ⭐ The live lead is what the worker HOLDS: MEASURED 1,491 device allocations for one 1,850-node
+        // synthesis - nearly a buffer per node - because every line has a different token count and this
+        // engine recompiles for new input shapes. Which is why the last line above is spoken twice.
         const double ceiling = 8.0;
         if (!(warmRealtimeFactor < ceiling))
             throw new Exception($"the built-in voice rendered at {warmRealtimeFactor:F2}x realtime warm, "
-                + $"past the {ceiling:F0}x sanity ceiling. That ceiling is loose because this runner "
-                + "serves a dev-server BUILD; blowing through it anyway means a real regression, not the "
-                + "build/publish difference.");
+                + $"past the {ceiling:F0}x sanity ceiling. The ceiling is loose because this test can be "
+                + "pointed at any build with --url; blowing through it anyway means a real regression.");
 
-        Console.WriteLine($"[Benchmark] BuiltInVoice: warm RTF {warmRealtimeFactor:F2}x on a dev-server "
-            + "build (published measures ~2.2x faster; PMT's published page measures 0.81x), "
-            + "no preparation step, no reference clip");
+        // ⚠️ IT DOES NOT KNOW WHICH BUILD IT IS RUNNING IN, so it must not claim one. This line said "on a
+        // dev-server build" unconditionally, and the runner has served a PUBLISHED build by default since
+        // the harness fix - and can be pointed at any URL with --url. A benchmark line that names the
+        // wrong artifact is how a good number gets discounted and a bad one gets excused; the two RTFs
+        // below say more than the label did anyway.
+        Console.WriteLine($"[Benchmark] BuiltInVoice: same words, cold shape {firstOfThatShapeRtf:F2}x -> "
+            + $"warm shape {warmRealtimeFactor:F2}x (the difference is the shape recompile and the buffer "
+            + "pool, NOT the words). PMT's published page measures 0.81x for this utterance. "
+            + "No preparation step, no reference clip.");
     }
 
     /// <summary>
