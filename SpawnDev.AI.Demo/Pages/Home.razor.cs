@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Components;
+﻿using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using SpawnDev.SpawnJS.JSObjects;
 using SpawnDev.AI;
@@ -200,12 +200,10 @@ public partial class Home : IDisposable
             // ⚠️ An EMPTY stored value is a real choice here ("clone me each turn"), so it is restored as
             // faithfully as any other; only a MISSING one falls back to the default.
             if (Prefs.Get(AppPreferences.VoiceKey) is { } savedVoice
-                && (savedVoice.Length == 0 || BundledVoices.IsBundled(savedVoice)
-                    || _savedVoices.Any(v => v.Id == savedVoice)))
+                && (savedVoice.Length == 0 || VoiceExists(savedVoice)))
             {
                 _voiceId = savedVoice;
-                _voiceName = BundledVoices.Find(savedVoice)?.DisplayName
-                          ?? _savedVoices.FirstOrDefault(v => v.Id == savedVoice)?.DisplayName ?? "";
+                _voiceName = VoiceDisplayName(savedVoice);
             }
             // Characters are metadata only - no audio, no model - so listing them costs a directory read.
             await LoadCharactersAsync();
@@ -703,6 +701,20 @@ public partial class Home : IDisposable
     /// </remarks>
     async Task SelectVoiceAsync(string id)
     {
+        // ⭐ A built-in voice is selected INSTANTLY - there is no clip to fetch and no features to
+        // derive - so it skips the whole "Preparing ... (once)" path below. Falling through would find no
+        // saved voice and silently reset the picker to the default.
+        if (BundledVoices.IsBuiltIn(id))
+        {
+            _voiceId = id;
+            _voiceName = BundledVoices.BuiltInDisplayName(id);
+            _preparedVoices.Add(id);
+            _status = $"Speaking as \u201c{_voiceName}\u201d.";
+            await RememberVoiceAsync();
+            StateHasChanged();
+            return;
+        }
+
         if (BundledVoices.Find(id) is { } bundled) { await SelectBundledVoiceAsync(bundled); return; }
 
         var saved = _savedVoices.FirstOrDefault(v => v.Id == id);
@@ -811,7 +823,7 @@ public partial class Home : IDisposable
             if (_voiceId == id)
             {
                 _voiceId = BundledVoices.DefaultId;
-                _voiceName = BundledVoices.Find(_voiceId)?.DisplayName ?? "";
+                _voiceName = VoiceDisplayName(_voiceId);
                 await RememberVoiceAsync();
             }
             await LoadSavedVoicesAsync();
@@ -878,7 +890,7 @@ public partial class Home : IDisposable
     async Task ClearSavedVoice()
     {
         _voiceId = BundledVoices.DefaultId;
-        _voiceName = BundledVoices.Find(_voiceId)?.DisplayName ?? "";
+        _voiceName = VoiceDisplayName(_voiceId);
         _status = string.IsNullOrEmpty(_voiceName)
             ? "That voice is gone; no voice is available."
             : $"That voice is gone — speaking as “{_voiceName}”.";
@@ -1128,12 +1140,44 @@ public partial class Home : IDisposable
     /// </remarks>
     /// <param name="voice">Voice id. Empty is not a mode - it falls back to the default named voice.</param>
     /// <returns>The id that will be spoken in, prepared where possible.</returns>
+    /// <summary>What to call a voice id, whichever of the three kinds it is.</summary>
+    /// <remarks>
+    /// ⚠️ ONE answer, in one place. Every call site used to write
+    /// <c>BundledVoices.Find(id)?.DisplayName ?? saved?.DisplayName ?? ""</c>, and adding a third kind of
+    /// voice meant finding all of them - the ones that were missed do not throw, they just leave the
+    /// voice label blank, which reads as "no voice" while the app speaks perfectly well.
+    /// </remarks>
+    string VoiceDisplayName(string? id)
+        => string.IsNullOrEmpty(id) ? ""
+         : BundledVoices.IsBuiltIn(id) ? BundledVoices.BuiltInDisplayName(id)
+         : BundledVoices.Find(id)?.DisplayName
+           ?? _savedVoices.FirstOrDefault(v => v.Id == id)?.DisplayName ?? "";
+
+    /// <summary>Whether this id names a voice that still exists and can be spoken.</summary>
+    bool VoiceExists(string? id)
+        => !string.IsNullOrEmpty(id)
+           && (BundledVoices.IsBuiltIn(id) || BundledVoices.IsBundled(id)
+               || _savedVoices.Any(v => v.Id == id));
+
     async Task<string> EnsureVoiceReadyAsync(string voice)
     {
         // ⚠️ Empty MEANS NOTHING here, deliberately. It used to mean "clone the user every turn", which is
         // a thing nobody asks for by leaving a control alone.
         if (string.IsNullOrEmpty(voice)) voice = BundledVoices.DefaultId;
         if (string.IsNullOrEmpty(voice) || _preparedVoices.Contains(voice)) return voice;
+
+        // ⭐ A BUILT-IN VOICE HAS NOTHING TO PREPARE. There is no clip to fetch, no silence to trim, no
+        // mel to compute and no prompt to build - the voice is a name the model already knows - so the
+        // whole "Preparing ..." step that a clone needs simply does not exist for it. Falling through to
+        // the clone path below would find no bundled clip and no saved voice, return quietly, and leave
+        // the voice label wrong; this says so instead.
+        if (BundledVoices.IsBuiltIn(voice))
+        {
+            _preparedVoices.Add(voice);
+            _voiceName = BundledVoices.BuiltInDisplayName(voice);
+            return voice;
+        }
+
         try
         {
             if (BundledVoices.Find(voice) is { } bundled)

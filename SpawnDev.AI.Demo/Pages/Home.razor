@@ -1,4 +1,4 @@
-@using SpawnDev.AI.Server
+﻿@using SpawnDev.AI.Server
 @using SpawnDev.SpawnJS
 @inject AiWorkerClient Ai
 @inject VoiceLibrary Voices
@@ -301,6 +301,12 @@
                         Voice
                         <select @bind="_charVoiceId" disabled="@_savingCharacter">
                             <option value="">(no voice — text only)</option>
+                            @* Built-in first here too: a character given a cloned voice speaks 3.6x
+                               slower than realtime, and in a group chat that cost is per character. *@
+                            @foreach (var id in BundledVoices.BuiltInIds)
+                            {
+                                <option value="@id">🔊 @BundledVoices.BuiltInDisplayName(id)</option>
+                            }
                             @foreach (var v in _savedVoices)
                             {
                                 <option value="@v.Id">🗣️ @v.DisplayName</option>
@@ -543,8 +549,20 @@
                    EMPTY STRING and whose meaning was "copy this person's voice on every reply" - and it
                    was the first entry and the default, so it is what you got by touching nothing.
                    Cloning is now what 💾🗣️ does: once, deliberately, producing a voice with a name. *@
-                @* Included voices need nothing recorded first, so the picker is useful on a fresh install.
-                   Each carries its licence in BundledVoices.cs. *@
+                @* ⭐ BUILT-IN VOICES FIRST, and they are the default. Nothing to record and nothing to
+                   clone: the voice is a name the model already knows, and it renders FASTER THAN REALTIME
+                   in a browser (measured 1.84s for 2.27s of audio on WebGPU). Everything below this group
+                   is cloned by a model that renders 3.6x SLOWER than realtime, which is the pause between
+                   spoken chunks - so which group a user lands in is most of how the app feels. *@
+                <optgroup label="Built-in voices — fast, nothing to record">
+                    @foreach (var id in BundledVoices.BuiltInIds)
+                    {
+                        <option value="@id" selected="@(_voiceId == id)">🔊 @BundledVoices.BuiltInDisplayName(id)</option>
+                    }
+                </optgroup>
+                @* Included CLIPS, which are cloned like any other recording - they exist so the cloning
+                   path is usable on a fresh install. Each carries its licence in BundledVoices.cs. *@
+                <optgroup label="Cloned from a clip — slower">
                 @foreach (var v in BundledVoices.All)
                 {
                     <option value="@v.Id" selected="@(_voiceId == v.Id)" title="@($"{v.Licence} — {v.Attribution}")">
@@ -555,6 +573,7 @@
                 {
                     <option value="@v.Id" selected="@(_voiceId == v.Id)">🗣️ @v.DisplayName</option>
                 }
+                </optgroup>
             </select>
             @if (_lastHeardSamples != null && _lastHeardSamples.Length > 0)
             {
@@ -566,7 +585,9 @@
                 <input class="voice-name" placeholder="name this voice" @bind="_newVoiceName"
                        disabled="@_savingVoice" title="Whose voice is this? e.g. Nikki, Aubs" />
             }
-            @if (!string.IsNullOrEmpty(_voiceId))
+            @* ⚠️ Not offered for a BUILT-IN voice: it lives inside the model, there is nothing on disk to
+               delete, and a delete button that cannot delete is worse than no button. *@
+            @if (!string.IsNullOrEmpty(_voiceId) && !BundledVoices.IsBuiltIn(_voiceId))
             {
                 <button class="primary" @onclick="() => DeleteVoiceAsync(_voiceId)"
                         title="@($"Delete the saved voice {_voiceName} from this device")">🗑️🗣️</button>

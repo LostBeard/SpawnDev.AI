@@ -1,3 +1,5 @@
+﻿using SpawnDev.AI.Server;
+
 namespace SpawnDev.AI.Demo;
 
 /// <summary>
@@ -64,14 +66,60 @@ public static class BundledVoices
     /// The voice the app speaks in when the user has not chosen one.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// 🔴 EXISTS SO "THE DEFAULT IS NOT CLONING" IS A TESTABLE FACT. The empty string means "clone whoever
     /// is talking, every turn", and it used to be what you got by choosing nothing - Captain: "it still
     /// seem to clone voice of the user every time ... when it should only clone when 'add a voice' as
     /// selected manually". That was one uninitialised field, the kind of thing an unrelated edit restores
     /// silently, so the intent is pinned here and asserted in VoiceLibraryTests rather than left implicit
     /// in a component's field initialiser.
+    /// </para>
+    /// <para>
+    /// ⭐ It is now a BUILT-IN voice rather than the first bundled clip. Both are "not cloning", so the
+    /// property's original point is unchanged - but the bundled clip still had to be cloned to speak,
+    /// which meant the do-nothing path ran the slow model. See <see cref="BuiltInIds"/>.
     /// </remarks>
-    public static string DefaultId => All.Count > 0 ? All[0].Id : "";
+    public static string DefaultId => AiVoiceEngine.DefaultKokoroVoiceId;
+
+    /// <summary>
+    /// The BUILT-IN voices: named voices the model already knows, with nothing to clone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⭐ These are the reason the default is no longer a clone. A bundled clip still has to be cloned -
+    /// trimmed, mel'd, turned into prompt features - by a model that renders <b>3.6x slower than
+    /// realtime</b>; a built-in voice is a name, and renders <b>faster than realtime in a browser</b>.
+    /// Speaking is the slowest thing in a turn, so which of the two a user lands on by doing nothing is
+    /// most of how the app feels.
+    /// </para>
+    /// <para>
+    /// ⚠️ No licence or transcript field, and that is not an oversight - there is no redistributed
+    /// recording of a real person here to licence. The voice ships inside the model (Apache-2.0), which
+    /// is exactly what <see cref="All"/>'s remarks are guarding against having to assert about a clip.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> BuiltInIds => AiVoiceEngine.KokoroVoiceIds;
+
+    /// <summary>True when this id names a built-in voice rather than anything cloned.</summary>
+    public static bool IsBuiltIn(string? id) => AiVoiceEngine.IsKokoroVoice(id);
+
+    /// <summary>A built-in voice id as a picker would show it, e.g. "Heart (US female)".</summary>
+    /// <remarks>
+    /// The names encode accent and gender in a two-letter prefix - <c>af_</c>/<c>am_</c> American
+    /// female/male, <c>bf_</c>/<c>bm_</c> British female/male - which is information a user picking a
+    /// voice wants and cannot get from "af_heart".
+    /// </remarks>
+    public static string BuiltInDisplayName(string id)
+    {
+        var name = AiVoiceEngine.KokoroVoiceName(id);
+        var sep = name.IndexOf('_');
+        if (sep <= 0 || sep + 1 >= name.Length) return name;
+        var tag = name[..sep];
+        var given = char.ToUpperInvariant(name[sep + 1]) + name[(sep + 2)..];
+        var accent = tag.Length > 0 && tag[0] == 'b' ? "UK" : "US";
+        var gender = tag.Length > 1 && tag[1] == 'm' ? "male" : "female";
+        return $"{given} ({accent} {gender})";
+    }
 
     /// <summary>True when this id refers to a bundled voice rather than a saved one.</summary>
     public static bool IsBundled(string? id) => id != null && id.StartsWith(IdPrefix, StringComparison.Ordinal);

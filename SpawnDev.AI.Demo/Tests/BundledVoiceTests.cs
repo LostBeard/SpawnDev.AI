@@ -1,4 +1,4 @@
-namespace SpawnDev.AI.Demo.Tests;
+﻿namespace SpawnDev.AI.Demo.Tests;
 
 /// <summary>
 /// The voices shipped with the app are actually present, decodable, and licensed to be there.
@@ -132,11 +132,21 @@ public sealed class BundledVoiceTests
             throw new Exception("there is no default voice, so the app has nothing to speak with until "
                 + "the user records something - and an app with nothing to speak with is how the empty-id "
                 + "\"clone whoever is talking\" path got invented in the first place");
-        if (!BundledVoices.IsBundled(id))
-            throw new Exception($"the default voice '{id}' is not a bundled voice, so a fresh install has "
-                + "nothing to speak with until the user records something");
-        if (BundledVoices.Find(id) == null)
-            throw new Exception($"the default voice '{id}' does not resolve to a real entry");
+        // ⭐ STRONGER THAN IT USED TO BE. The old rule was "the default is a bundled CLIP", which met the
+        // original point (not cloning the user) but still put the do-nothing path through the cloning
+        // model - and that model renders 3.6x SLOWER than realtime. A BUILT-IN voice needs no clip and no
+        // cloning at all, and renders faster than realtime, so the default must be one of those.
+        if (!BundledVoices.IsBuiltIn(id))
+            throw new Exception($"the default voice '{id}' is not a built-in voice. A fresh install would "
+                + "either have nothing to speak with, or would reach the speaker through the CLONING model "
+                + "- which renders slower than realtime, so choosing nothing would opt the user into the "
+                + "slow path by doing nothing at all.");
+        if (!BundledVoices.BuiltInIds.Contains(id))
+            throw new Exception($"the default voice '{id}' is not in the built-in catalogue, so the picker "
+                + "would open with nothing selected");
+        if (string.IsNullOrWhiteSpace(BundledVoices.BuiltInDisplayName(id)))
+            throw new Exception($"the default voice '{id}' has no display name, so the voice label reads "
+                + "as \"no voice\" while the app speaks perfectly well");
         return Task.CompletedTask;
     }
 }

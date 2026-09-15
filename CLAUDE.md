@@ -52,8 +52,22 @@ dotnet run --project SpawnDev.AI.TestRunner                 fast suite, no model
 dotnet run --project SpawnDev.AI.TestRunner -- --heavy      + the model-backed chat tests
 dotnet run --project SpawnDev.AI.TestRunner -- MultiTurn    filter by name
 dotnet run --project SpawnDev.AI.TestRunner -- --headed     watch it
+dotnet run --project SpawnDev.AI.TestRunner -- --dev        dev BUILD, not a publish (fast loop)
 dotnet run --project SpawnDev.AI.TestRunner -- --url http://localhost:5199/   reuse a running server
 ```
+
+🔴 **The runner PUBLISHES the demo and serves it (default since 2026-09-14). A `dotnet run` build is not
+the app.** Blazor WASM is only relinked and wasm-opt'd on publish, and this suite asserts on TIMINGS.
+MEASURED, same card, same utterance, the voice test's warm synthesis: **9,089 ms against a dev-server
+build, 4,493 ms published** - so every performance number this runner produced before it published was
+pessimistic by 2x or more, which is worse than no number: it reads as a product regression rather than as
+the harness measuring the wrong artifact. `--dev` opts back into the fast loop and says so in its output.
+PMT has always published for the same reason.
+
+⚠️ **A number from this runner is still not PMT's number.** Published, the same utterance takes 4,493 ms
+in the demo WORKER against 1,837 ms in PMT's page with nothing else resident - a 2.4x gap that publishing
+does NOT explain and that would apply to every model the demo runs. Unexplained as of 2026-09-14; do not
+quote a worker timing as the engine's.
 
 Exit code is the number of failures, so it is usable as a gate. Tests live in
 `SpawnDev.AI.Demo/Tests/`, run in the WINDOW scope only, and are reached with `?tests=1`

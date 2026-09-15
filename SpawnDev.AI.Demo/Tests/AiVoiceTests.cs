@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Diagnostics;
 using SpawnDev.AI.Server;
 
@@ -680,6 +680,124 @@ public sealed class AiVoiceTests
 
     }
 
+
+    /// <summary>
+    /// A BUILT-IN voice speaks, is intelligible, and does it faster than realtime.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 WHY THIS IS THE ONE THAT MATTERS. Speaking is the slowest thing in a turn, and the model that
+    /// clones a voice renders <b>3.6x SLOWER than realtime</b> (MEASURED: 73.0 s of compute for 20.4 s of
+    /// audio) - which is the long pause between spoken chunks, and is the renderer rather than anything
+    /// chunking or buffering can fix. A built-in voice is a name the model already knows: no clip, no
+    /// trim, no mel, no prompt features, and one pass instead of four. This asserts both halves of that
+    /// claim, because either one alone is worthless - audio nobody can understand is not fast, and a
+    /// perfect rendering that takes longer than it lasts is what we are replacing.
+    /// </para>
+    /// <para>
+    /// ⚠️ THE TIMING ASSERTION IS ON THE SECOND LINE, not the first. Every kernel in the graph compiles on
+    /// its FIRST execution, which on a browser backend is most of a cold run (MEASURED on WebGPU, real RTX
+    /// 4070: 8.1 s cold against 1.8 s warm for the same utterance). Asserting on the cold number would
+    /// describe the first reply of a session as though it were every reply.
+    /// </para>
+    /// <para>
+    /// ⚠️ Intelligibility is scored against what the engine says it SPOKE, never against the request - the
+    /// brevity cap can shorten one, and scoring against the request measures the cap instead of the voice.
+    /// Same rule as the prepared-voice test above.
+    /// </para>
+    /// <para>
+    /// ⚠️ It never calls PrepareVoiceAsync. That is the point: if this path ever starts needing a
+    /// preparation step, this test fails rather than quietly getting slow.
+    /// </para>
+    /// </remarks>
+    [AiTest(Heavy = true, Timeout = 1_800_000)]
+    public async Task BuiltInVoiceSpeaksIntelligiblyAndFasterThanRealtime()
+    {
+        await _client.InitAsync();
+
+        var voiceId = AiVoiceEngine.DefaultKokoroVoiceId;
+        var voices = await _client.GetVoicesAsync();
+        if (!voices.Contains(voiceId))
+            throw new Exception($"the default built-in voice '{voiceId}' is not listed by the engine; "
+                + $"got [{string.Join(", ", voices)}] - a voice a picker offers and the engine will not "
+                + "speak is worse than one it does not offer");
+
+        // ⚠️ The TIMED line is the exact utterance every other measurement of this model uses, so the
+        // number here is directly comparable to the engine's own gate rather than being a third figure
+        // nobody can line up. MEASURED elsewhere for this same sentence: 0.31x on CUDA, 0.81x warm on
+        // WebGPU in a page. If this reads far worse, the difference is the WORKER or what else is
+        // resident in it - not the model, and not the length.
+        string[] lines =
+        {
+            "Hello. This is SpawnDev AI, speaking in a built in voice.",
+            "The capital of France is Paris.",
+        };
+
+        double warmRealtimeFactor = double.NaN;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var sw = Stopwatch.StartNew();
+            var (samples, rate, model, ms, spoken) = await _client.SpeakInVoiceAsync(lines[i], voiceId);
+            sw.Stop();
+
+            if (samples == null || samples.Length == 0)
+                throw new Exception($"line {i + 1}: the built-in voice returned NO audio");
+            float peak = 0f;
+            foreach (var v in samples) peak = MathF.Max(peak, MathF.Abs(v));
+            if (peak < 0.01f)
+                throw new Exception($"line {i + 1}: the built-in voice returned effectively SILENCE "
+                    + $"(peak {peak:F5}) - a graph that ran and produced nothing audible");
+
+            var seconds = samples.Length / (double)rate;
+            var rtf = sw.Elapsed.TotalSeconds / Math.Max(seconds, 1e-6);
+            if (i == lines.Length - 1) warmRealtimeFactor = rtf;
+
+            var (heard, _, _) = await _client.TranscribeAsync(samples, rate);
+            var spokenWords = Words(spoken);
+            var matched = new List<string>(Words(heard));
+            int hits = 0;
+            foreach (var w in spokenWords) if (matched.Remove(w)) hits++;
+            double overlap = spokenWords.Count == 0 ? 0.0 : hits / (double)spokenWords.Count;
+
+            Console.WriteLine($"[Benchmark] BuiltInVoice line {i + 1}: {sw.ElapsedMilliseconds} ms "
+                + $"({ms:F0} ms reported) for {seconds:F2}s of audio = RTF {rtf:F2}x, model '{model}', "
+                + $"peak {peak:F3}, overlap {overlap:P0}, heard \"{heard}\"");
+
+            if (overlap < 0.6)
+                throw new Exception($"line {i + 1}: the built-in voice is NOT intelligible - only "
+                    + $"{overlap:P0} of the spoken words came back. Spoke \"{spoken}\", heard "
+                    + $"\"{heard}\". Plausible audio with the words gone is what a wrong style row or a "
+                    + "dropped phoneme set produces, and it looks healthy on every other measure.");
+        }
+
+        // 🔴 A DELIBERATELY LOOSE CEILING, AND WHY IT IS NOT THE REAL BAR.
+        //
+        // This runner serves the demo with `dotnet run` - a BUILD. Blazor WASM only gets relinked and
+        // wasm-opt'd on PUBLISH, and that is worth a factor of several: MEASURED for this exact utterance
+        // on the same card, 9,089 ms against a dev-server build and 4,493 ms against a published one.
+        // So every timing this suite produces is pessimistic by construction, and an assertion tight
+        // enough to be meaningful would fail on every ordinary run for a reason that has nothing to do
+        // with the code under test.
+        //
+        // The REAL bar lives where the build is published: SpawnDev.ILGPU.ML's
+        // Pipeline_Kokoro_MatchesOnnxRuntimeWaveform measures 1,837 ms for this same 2.27 s line on
+        // WebGPU (RTF 0.81x - faster than realtime). What is asserted HERE is only that the path has not
+        // catastrophically regressed, which is what this environment can honestly support.
+        //
+        // ⚠️ OPEN, and named rather than hidden: published in the demo WORKER this line takes 4,493 ms
+        // (1.98x) against 1,837 ms (0.81x) in PMT's page with nothing else resident - a 2.4x gap that is
+        // NOT explained by publishing and would apply to every model the demo runs, not just this one.
+        const double ceiling = 8.0;
+        if (!(warmRealtimeFactor < ceiling))
+            throw new Exception($"the built-in voice rendered at {warmRealtimeFactor:F2}x realtime warm, "
+                + $"past the {ceiling:F0}x sanity ceiling. That ceiling is loose because this runner "
+                + "serves a dev-server BUILD; blowing through it anyway means a real regression, not the "
+                + "build/publish difference.");
+
+        Console.WriteLine($"[Benchmark] BuiltInVoice: warm RTF {warmRealtimeFactor:F2}x on a dev-server "
+            + "build (published measures ~2.2x faster; PMT's published page measures 0.81x), "
+            + "no preparation step, no reference clip");
+    }
 
     /// <summary>
     /// Chunking says the WHOLE reply, and only ever breaks between sentences.

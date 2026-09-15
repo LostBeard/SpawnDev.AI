@@ -1,4 +1,4 @@
-// SpawnDev.AI.ServerHost - the thin desktop host: Kestrel on :11434 (Ollama drop-in), every request
+﻿// SpawnDev.AI.ServerHost - the thin desktop host: Kestrel on :11434 (Ollama drop-in), every request
 // routed to the transport-free AiApiRouter. The SAME router runs in a browser worker over a
 // MessagePort transport - this file is only the HTTP skin + accelerator selection.
 using System.Text.Json;
@@ -127,7 +127,10 @@ Console.WriteLine($"[SpawnDev.AI] GPU residency budget: {residency.BudgetBytes /
                 + $"(free {freeVram / 1048576} MB)");
 residency.Register("image", () => images.IsLoaded, 2_600L * 1024 * 1024, () => images.EvictAsync());
 residency.Register("speech", () => speech.IsLoaded, 200L * 1024 * 1024, () => speech.EvictAsync());
-residency.Register("voice", () => voice.IsLoaded, 450L * 1024 * 1024, () => voice.EvictAsync());
+// ⚠️ 800 MB, not 450: the voice kind can hold BOTH models at once - Kokoro (~326 MB, the default,
+// loaded for any ordinary reply) and ZipVoice (~450 MB, loaded only if a cloned voice is picked).
+// They coexist deliberately, so a user switching voices does not pay a model load per switch.
+residency.Register("voice", () => voice.IsLoaded, 800L * 1024 * 1024, () => voice.EvictAsync());
 images.EvictOtherKind = () => residency.EnsureRoomForAsync("image");
 speech.EvictOtherKind = () => residency.EnsureRoomForAsync("speech");
 voice.EvictOtherKind = () => residency.EnsureRoomForAsync("voice");

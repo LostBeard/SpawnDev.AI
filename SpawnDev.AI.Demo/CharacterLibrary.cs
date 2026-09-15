@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using SpawnDev.AsyncFileSystem;
 
 namespace SpawnDev.AI.Demo;
@@ -125,7 +125,8 @@ public sealed class CharacterLibrary
     /// </remarks>
     public static string? ResolveVoice(SavedCharacter character, IEnumerable<SavedVoice> availableVoices)
         => character.VoiceId != null
-           && (BundledVoices.IsBundled(character.VoiceId) || availableVoices.Any(v => v.Id == character.VoiceId))
+           && (BundledVoices.IsBuiltIn(character.VoiceId) || BundledVoices.IsBundled(character.VoiceId)
+               || availableVoices.Any(v => v.Id == character.VoiceId))
             ? character.VoiceId
             : null;
 

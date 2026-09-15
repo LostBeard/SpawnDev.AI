@@ -1,4 +1,5 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
+using System.Net;
 using System.Text.RegularExpressions;
 using Microsoft.Playwright;
 
@@ -38,6 +39,11 @@ var verbose = false;
 var externalUrl = "";
 var wavDir = "";
 var heartbeatSeconds = 60;
+// ⚠️ PUBLISH by default. A `dotnet run` build is not the app: Blazor WASM is only relinked and
+// wasm-opt'd on publish, and this suite asserts on TIMINGS. --dev opts back into the fast loop
+// for iteration, and says so in its output so a number from it is never mistaken for the app's.
+var dev = false;
+var servePort = 5299;
 for (var i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -48,6 +54,8 @@ for (var i = 0; i < args.Length; i++)
         case "--dedicated": dedicated = true; break;
         case "--shared": shared = true; break;
         case "--verbose": verbose = true; break;
+        case "--dev": dev = true; break;
+        case "--port": servePort = ++i < args.Length && int.TryParse(args[i], out var pp) ? pp : 5299; break;
         case "--url": externalUrl = ++i < args.Length ? args[i] : ""; break;
         case "--filter": filter = ++i < args.Length ? args[i] : ""; break;
         case "--heartbeat":
@@ -57,7 +65,11 @@ for (var i = 0; i < args.Length; i++)
         case "-h":
         case "--help":
             Console.WriteLine("usage: [filter] [--filter <text>] [--heavy] [--headed] [--verbose] "
-                            + "[--cold] [--dedicated] [--shared] [--url <url>] [--wav <dir>] [--heartbeat <seconds>]");
+                            + "[--cold] [--dedicated] [--shared] [--url <url>] [--wav <dir>] "
+                            + "[--heartbeat <seconds>]");
+            Console.WriteLine("       [--dev]      serve a dev BUILD instead of publishing - faster "
+                            + "loop, but its TIMINGS ARE NOT THE APP'S");
+            Console.WriteLine("       [--port <n>] port for the published static server (default 5299)");
             return 0;
         default:
             if (!args[i].StartsWith("-")) filter = args[i];
@@ -79,10 +91,15 @@ try
     var url = externalUrl;
     if (string.IsNullOrEmpty(url))
     {
-        (server, url) = await StartServerAsync(demoProject);
+        (server, url) = dev
+            ? await StartServerAsync(demoProject)
+            : await StartPublishedServerAsync(demoProject, servePort);
         if (string.IsNullOrEmpty(url))
         {
-            Console.Error.WriteLine("Dev server did not report an app url");
+            Console.Error.WriteLine(dev
+                ? "Dev server did not report an app url"
+                : "Publishing or serving the demo failed - see the publish output above. This is a BUILD "
+                  + "failure, not a hang.");
             return 1;
         }
     }
@@ -129,9 +146,61 @@ static string FindRepoRoot()
     return Directory.GetCurrentDirectory();
 }
 
+/// <summary>
+/// Publish the demo and serve it - the DEFAULT, because a `dotnet run` build does not measure the app.
+/// </summary>
+/// <remarks>
+/// 🔴 WHY THIS IS NOT `dotnet run`. Blazor WASM is only relinked and wasm-opt'd on PUBLISH, so a
+/// dev-server build runs materially slower - and this suite makes TIMING assertions. MEASURED on the same
+/// card, same utterance, the voice test's warm synthesis: <b>9,089 ms against a dev-server build and
+/// 4,493 ms published</b>. Every performance number this runner produced before it published was
+/// pessimistic by a factor of two or more, which is worse than having no number: it reads as a product
+/// regression rather than as the harness measuring the wrong artifact. PlaywrightMultiTest has always
+/// published for exactly this reason; this is the same rule.
+/// </remarks>
+static async Task<(Process?, string)> StartPublishedServerAsync(string demoProject, int port)
+{
+    var outDir = Path.Combine(Path.GetTempPath(), "spawndev-ai-testrunner-publish");
+    Console.WriteLine($"publishing SpawnDev.AI.Demo (relinked + wasm-opt) -> {outDir} ...");
+
+    // ⚠️ NEVER trimmed, NEVER AOT - ILGPU resolves intrinsics by reflection at runtime and a trimmed
+    // publish kills the worker with MissingMethodException. Same standing rule as the ML demo.
+    var pub = Process.Start(new ProcessStartInfo("dotnet",
+        $"publish -c Release -o \"{outDir}\" -p:PublishTrimmed=false -p:RunAOTCompilation=false "
+        + $"--nologo \"{demoProject}\"")
+    { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false });
+    if (pub == null) return (null, "");
+    var pubOut = await pub.StandardOutput.ReadToEndAsync();
+    var pubErr = await pub.StandardError.ReadToEndAsync();
+    await pub.WaitForExitAsync();
+    if (pub.ExitCode != 0)
+    {
+        // Say what happened. A publish failure that only shows up later as "did not report an app url"
+        // reads as a hang, and that has cost this project a session before.
+        Console.Error.WriteLine($"publish FAILED ({pub.ExitCode}):");
+        Console.Error.WriteLine(pubOut.Length > 4000 ? pubOut[^4000..] : pubOut);
+        Console.Error.WriteLine(pubErr);
+        return (null, "");
+    }
+
+    var wwwroot = Path.Combine(outDir, "wwwroot");
+    if (!File.Exists(Path.Combine(wwwroot, "index.html")))
+    {
+        Console.Error.WriteLine($"publish produced no wwwroot/index.html under {outDir}");
+        return (null, "");
+    }
+
+    var url = $"http://localhost:{port}/";
+    StaticServer.Start(wwwroot, port);
+    Console.WriteLine($"serving published app at {url}");
+    // No child process to return - the server runs in-process and stops with it.
+    await Task.CompletedTask;
+    return (null, url);
+}
+
 static async Task<(Process?, string)> StartServerAsync(string demoProject)
 {
-    Console.WriteLine("building and starting SpawnDev.AI.Demo...");
+    Console.WriteLine("building and starting SpawnDev.AI.Demo (DEV BUILD - timings are not the app's)...");
     var psi = new ProcessStartInfo("dotnet", $"run -c Release --project \"{demoProject}\"")
     {
         RedirectStandardOutput = true,

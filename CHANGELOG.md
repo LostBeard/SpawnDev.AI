@@ -2,6 +2,47 @@
 
 Notable changes per release. Preview - APIs will change.
 
+## Unreleased - built-in voices, and speech that finishes before it finishes playing
+
+### Added - Kokoro built-in voices, and they are the default
+
+Speaking is the slowest thing in a turn. The voice model this app had CLONES - it is the only thing that
+can speak in a voice somebody recorded - and it renders **3.6x SLOWER than realtime** (MEASURED: 73.0 s of
+compute for 20.4 s of audio; its flow decoder is 8,621 nodes run four times per utterance). That is the
+long pause between spoken chunks, and it is the renderer: no amount of chunking, pipelining or buffering
+closes a gap where the audio is produced slower than it plays.
+
+`AiVoiceEngine` now has a second backend. A voice id beginning `kokoro:` is a **built-in voice** - a name
+the model already knows - and takes Kokoro-82M instead: 1,885 nodes in ONE pass, no reference clip, no
+silence trim, no mel, no prompt features, and nothing to prepare.
+
+MEASURED, same utterance, warm:
+
+| backend | Kokoro | ZipVoice |
+| --- | --- | --- |
+| WebGPU (real RTX 4070) | **1.84 s for 2.27 s of audio (0.81x)** | 3.6x slower than realtime |
+| CUDA | 0.70 s (0.31x) | |
+
+28 English voices, grouped by accent and gender in the picker. **The default is now one of them**, so the
+do-nothing path is the fast path - it used to be a bundled clip, which met the "not cloning the user" rule
+but still went through the cloning model. ZipVoice stays exactly where it was, for the opt-in case of
+speaking in a voice the user deliberately saved.
+
+⚠️ **No wire change.** `SpeakWithVoiceAsync(text, voiceId)` already carried everything needed, so the
+dispatch happens inside the engine: the router, the worker transport and the demo all still pass a single
+`voice_id` and the engine decides what it means.
+
+⚠️ The two models COEXIST rather than evicting each other. Dropping one to load the other would make a
+user who switches voices pay a full model load per switch, and ZipVoice only loads at all if a cloned
+voice is picked - which most sessions never do.
+
+Gated by `AiVoiceTests.BuiltInVoiceSpeaksIntelligiblyAndFasterThanRealtime`, which asserts BOTH halves:
+the line is read back with the product's own recogniser and scored against what the engine says it spoke
+(audio nobody can understand is not fast), and the realtime factor is asserted on the SECOND line, because
+every kernel compiles on its first execution - 8.1 s cold against 1.8 s warm on WebGPU.
+
+Requires SpawnDev.ILGPU.ML 5.2.14.
+
 ## Unreleased - the shared-worker fixes, and two instruments for a path no gate could see
 ### Changed - the demo defaults to a DEDICATED worker
 

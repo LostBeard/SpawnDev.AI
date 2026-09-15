@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.Hub;
@@ -72,9 +72,20 @@ public sealed record AiSpeech(float[] Samples, int SampleRate, string Model, dou
 }
 
 /// <summary>
-/// Text-to-speech for the AI server: ZipVoice on the same accelerator the chat and speech engines use.
+/// Text-to-speech for the AI server: two models on the same accelerator the chat and speech engines use -
+/// Kokoro for built-in voices, ZipVoice for cloning one.
 /// </summary>
 /// <remarks>
+/// <para>
+/// ⭐ WHICH MODEL SPEAKS IS DECIDED BY THE VOICE ID, and the split is about speed. ZipVoice is the only
+/// thing here that can speak in a voice somebody recorded, and it renders <b>3.6x SLOWER than realtime</b>
+/// (MEASURED: 73.0 s of compute for 20.4 s of audio; its flow decoder is 8,621 nodes run four times per
+/// utterance) - that is the pause between spoken chunks, and it is the renderer rather than anything
+/// chunking can fix. Kokoro renders <b>faster than realtime in a browser</b> (MEASURED on WebGPU, real
+/// RTX 4070: 1.84 s for 2.27 s of audio) because it is 1,885 nodes in one pass, and it needs no reference
+/// at all. So Kokoro is the default and handles ordinary replies; ZipVoice is opt-in, for a voice the user
+/// deliberately cloned. See AiVoiceEngine.Kokoro.cs.
+/// </para>
 /// <para>
 /// Deliberately the same shape as <see cref="AiSpeechEngine"/> - one resident model, a load gate, and an
 /// <see cref="EvictOtherKind"/> hook - because the GPU is shared and per-kind residency is a hard rule in
@@ -84,8 +95,8 @@ public sealed record AiSpeech(float[] Samples, int SampleRate, string Model, dou
 /// <para>
 /// ⚠️ ZipVoice CLONES a voice - it needs a reference clip and that clip's transcript, and it speaks the
 /// reply in that voice. In a conversation loop the natural reference is the turn the user just spoke, which
-/// is why <see cref="SpeakAsync"/> takes one. Without a reference it cannot speak at all, so there is no
-/// "default voice" fallback to hide behind.
+/// is why <see cref="SpeakAsync"/> takes one. Without a reference it cannot speak at all: the default voice
+/// is a BUILT-IN one, never a fallback to cloning whoever happens to be talking.
 /// </para>
 /// <para>
 /// ⚠️ The vocoder is NOT on HuggingFace as a standalone file. The repo that looks right
@@ -96,7 +107,7 @@ public sealed record AiSpeech(float[] Samples, int SampleRate, string Model, dou
 /// explicit size check.
 /// </para>
 /// </remarks>
-public sealed class AiVoiceEngine : IDisposable
+public sealed partial class AiVoiceEngine : IDisposable
 {
     private readonly IModelSource _source;
     private readonly HttpClient _http;
@@ -159,7 +170,12 @@ public sealed class AiVoiceEngine : IDisposable
     public Func<Task>? EvictOtherKind { get; set; }
 
     /// <summary>Whether a voice model is currently resident.</summary>
-    public bool IsLoaded => _pipeline != null;
+    /// <remarks>
+    /// ⚠️ EITHER model. GpuResidency asks this to decide whether the voice kind is holding VRAM, and with
+    /// only the built-in model resident the old answer was false - so the kind was invisible to the
+    /// budget: never counted against it, never evicted to make room for anything else.
+    /// </remarks>
+    public bool IsLoaded => _pipeline != null || _kokoro != null;
 
     /// <summary>
     /// Speak <paramref name="text"/> in the voice of <paramref name="referenceSamples"/>.
@@ -388,10 +404,15 @@ public sealed class AiVoiceEngine : IDisposable
     private readonly Dictionary<string, PreparedVoice> _voices = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Ids of the voices prepared and ready to speak.</summary>
-    public IReadOnlyCollection<string> VoiceIds => _voices.Keys.ToArray();
+    // ⚠️ Built-in voices FIRST. This is what a picker renders in order, and the fast no-clone voices are
+    // the ones almost everybody wants - a list that opens with someone's recorded clone invites the user
+    // into the slow path by accident. See AiVoiceEngine.Kokoro.cs.
+    public IReadOnlyCollection<string> VoiceIds
+        => KokoroVoiceIds.Concat(_voices.Keys).ToArray();
 
     /// <summary>Is this voice prepared and ready to speak without re-deriving its reference?</summary>
-    public bool HasVoice(string voiceId) => voiceId != null && _voices.ContainsKey(voiceId);
+    public bool HasVoice(string voiceId)
+        => voiceId != null && (IsKokoroVoice(voiceId) || _voices.ContainsKey(voiceId));
 
     /// <summary>Forget a prepared voice (the user removed it).</summary>
     public bool ForgetVoice(string voiceId) => voiceId != null && _voices.Remove(voiceId);
@@ -460,6 +481,14 @@ public sealed class AiVoiceEngine : IDisposable
         int? maxSpokenCharacters = null, int? noiseSeed = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("nothing to say", nameof(text));
+
+        // ⭐ A built-in voice needs no preparation at all - there is no reference clip to trim, no mel to
+        // compute and no prompt to build, which is most of why it is the fast path. Dispatching here
+        // rather than at the router means the wire shape does not change: a reply already carries only
+        // its text and a voice id. See AiVoiceEngine.Kokoro.cs.
+        if (IsKokoroVoice(voiceId))
+            return await SpeakKokoroAsync(text, voiceId!, maxSpokenCharacters, ct).ConfigureAwait(false);
+
         if (!_voices.TryGetValue(voiceId ?? "", out var voice))
             throw new InvalidOperationException(
                 $"voice '{voiceId}' is not prepared; call PrepareVoiceAsync first. Prepared: "
@@ -818,6 +847,10 @@ public sealed class AiVoiceEngine : IDisposable
     public Task EvictAsync()
     {
         DisposeSessions();
+        // ⚠️ UnloadKokoro, not DisposeKokoro: an evict must leave the engine USABLE. Disposing the load
+        // gate here would make the next reply throw ObjectDisposedException from the reload, which is a
+        // dead engine rather than a freed one.
+        UnloadKokoro();
         return Task.CompletedTask;
     }
 
@@ -837,6 +870,7 @@ public sealed class AiVoiceEngine : IDisposable
     public void Dispose()
     {
         DisposeSessions();
+        DisposeKokoro();
         _gate.Dispose();
     }
 }
