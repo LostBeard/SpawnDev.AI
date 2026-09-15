@@ -93,13 +93,66 @@ public sealed partial class AiVoiceEngine
         await _inferGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // ── Where does the time go? ──
+            // 🔴 The same split AiSpeechEngine prints, because the same question is open here: this
+            // synthesis takes ~4.3 s in the demo WORKER and 1.8 s in PMT's page for the identical
+            // utterance on the identical card, and publishing accounts for none of that. A wall-clock
+            // number cannot distinguish "the GPU is slower here" from "we are paying round trips here",
+            // and those need opposite fixes. Deltas, not absolutes: the counters are process-cumulative
+            // and every other engine adds to them.
+            var runs0 = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeRunCount;
+            var exec0 = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeTotalMs;
+            var rbMs0 = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeReadbackMs;
+            var rbN0 = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeReadbackCount;
+            var drMs0 = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainMs;
+            var drN0 = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainCount;
+            // 🔴 DEVICE ALLOCATIONS PER SYNTHESIS - the one number that separates the two live theories
+            // for the worker gap. A warm pool REUSES; a warm pool under VRAM pressure from the other
+            // models resident in this worker cannot hold its buckets and re-allocates, and every
+            // re-allocation lands in the "residual (dispatch+CPU+alloc)" column looking exactly like
+            // per-node dispatch cost. PMT's page has nothing else resident, which is precisely why it
+            // cannot show this. Near-zero here means the pool is warm and the gap is per-crossing.
+            var alloc0 = SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocations;
+
             var started = DateTime.UtcNow;
             var audio = await _kokoro!.SpeakAsync(phonemes, pack, ct: ct).ConfigureAwait(false);
             var ms = (DateTime.UtcNow - started).TotalMilliseconds;
-            if (VerboseLogging)
+
+            // ⚠️ UNCONDITIONAL, like AiSpeechEngine's. One line per spoken reply, and it is the only
+            // thing that says WHERE a slow synthesis went - a number nobody can see is a number nobody
+            // acts on, and this path has an open 2.4x that was invisible until it was printed.
+            {
+                var runs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeRunCount - runs0;
+                var nodes = _kokoro!.Session.NodeCount;
+                var execMs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeTotalMs - exec0;
+                var rbMs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeReadbackMs - rbMs0;
+                var rbN = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeReadbackCount - rbN0;
+                var drMs = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainMs - drMs0;
+                var drN = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeSyncDrainCount - drN0;
                 Console.WriteLine($"[voice] kokoro '{name}': {audio.Samples.Length} samples "
-                    + $"({audio.Seconds:F2}s) in {ms:F0} ms, RTF {ms / 1000.0 / Math.Max(audio.Seconds, 1e-6):F2}x, "
-                    + $"{audio.Tokens} tokens, {audio.DroppedPhonemes} dropped");
+                    + $"({audio.Seconds:F2}s) in {ms:F0} ms, RTF "
+                    + $"{ms / 1000.0 / Math.Max(audio.Seconds, 1e-6):F2}x, "
+                    + $"{audio.Tokens} tokens, {audio.DroppedPhonemes} dropped | "
+                    + $"{runs} graph runs, executor {execMs:F0}ms | readbacks {rbN} ({rbMs:F0}ms) | "
+                    + $"drains {drN} ({drMs:F0}ms) | residual {execMs - rbMs - drMs:F0}ms "
+                    + $"(dispatch+CPU+alloc) | outside the executor {ms - execMs:F0}ms"
+                    // ⭐ ms PER NODE, because that is the number that identifies the open worker gap.
+                    // The worker and PMT's page run the SAME graph on the SAME card - 3,889 ms vs 1,736 ms
+                    // - so "which nodes" cannot be the answer and "how much does one dispatch cost here"
+                    // can be. A residual that is 2x per node is a per-crossing cost (context, contention,
+                    // interop); a residual that is 2x only in the heavy half is GPU pressure from the
+                    // other models resident in this worker. One number tells them apart, and it is free.
+                    + $" | {nodes} nodes = {(nodes > 0 ? (execMs - rbMs - drMs) / nodes : 0):F3} ms/node"
+                    + $" | device allocations {SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocations - alloc0}");
+                // 🔴 NAME THE READBACKS. A count says how much a round trip costs; only the NAMES say
+                // which operator is asking for a value on the host, and that is the difference between
+                // "the browser is slow" and "this node needs folding". MEASURED here: drains+readbacks
+                // are 59% of a warm synthesis in the worker, while the residual alone already matches
+                // PMT's whole page-context total - so these are the entire worker gap.
+                var names = SpawnDev.ILGPU.ML.Graph.GraphExecutor.LastRunReadbackNames;
+                if (names is { Count: > 0 })
+                    Console.WriteLine($"[voice] kokoro readback nodes: {string.Join(", ", names)}");
+            }
             return new AiSpeech(audio.Samples, audio.SampleRate, KokoroModelName, ms)
             {
                 SpokenText = text,
