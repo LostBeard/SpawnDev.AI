@@ -43,6 +43,7 @@ var heartbeatSeconds = 60;
 // wasm-opt'd on publish, and this suite asserts on TIMINGS. --dev opts back into the fast loop
 // for iteration, and says so in its output so a number from it is never mistaken for the app's.
 var dev = false;
+var serveOnly = false;
 var servePort = 5299;
 for (var i = 0; i < args.Length; i++)
 {
@@ -55,6 +56,7 @@ for (var i = 0; i < args.Length; i++)
         case "--shared": shared = true; break;
         case "--verbose": verbose = true; break;
         case "--dev": dev = true; break;
+        case "--serve-only": serveOnly = true; break;
         case "--port": servePort = ++i < args.Length && int.TryParse(args[i], out var pp) ? pp : 5299; break;
         case "--url": externalUrl = ++i < args.Length ? args[i] : ""; break;
         case "--filter": filter = ++i < args.Length ? args[i] : ""; break;
@@ -70,6 +72,9 @@ for (var i = 0; i < args.Length; i++)
             Console.WriteLine("       [--dev]      serve a dev BUILD instead of publishing - faster "
                             + "loop, but its TIMINGS ARE NOT THE APP'S");
             Console.WriteLine("       [--port <n>] port for the published static server (default 5299)");
+            Console.WriteLine("       [--serve-only] publish and serve, run NO tests, and stay up until "
+                            + "Ctrl+C - for the tools/drive-*.cs browser drivers, which bring their own "
+                            + "browser and need only an app to point it at");
             return 0;
         default:
             if (!args[i].StartsWith("-")) filter = args[i];
@@ -102,6 +107,21 @@ try
                   + "failure, not a hang.");
             return 1;
         }
+    }
+
+    // --serve-only: the app, published, on a URL, and nothing else. The tools/drive-*.cs drivers launch
+    // their own Chrome against a query string of their own choosing (?bench=1, ?worker=dedicated, ...),
+    // so what they need from this runner is the one thing it does that they cannot: a PUBLISHED build,
+    // correctly served. ⚠️ Published, not dev - a dev build's timings are not the app's, MEASURED at 2.0x
+    // here, and a driver that exists to measure would silently measure the wrong artifact.
+    if (serveOnly)
+    {
+        Console.WriteLine($"Serving {url} - press Ctrl+C to stop. No tests will run.");
+        Console.WriteLine($"  e.g. dotnet run tools/drive-worker-bench.cs -- {url.TrimEnd('/')}/?worker=dedicated&bench=1");
+        var stop = new TaskCompletionSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.TrySetResult(); };
+        await stop.Task;
+        return 0;
     }
 
     // ?tests=1 is what makes the demo run the suite at all - without it a normal visitor just gets the app.
