@@ -181,6 +181,19 @@ static string FindRepoRoot()
 static async Task<(Process?, string)> StartPublishedServerAsync(string demoProject, int port)
 {
     var outDir = Path.Combine(Path.GetTempPath(), "spawndev-ai-testrunner-publish");
+
+    // 🔴 CLEAN FIRST, and this is not tidiness. `dotnet publish -o` does not remove what it no longer
+    // emits, so republishing into the same directory ACCUMULATES fingerprinted assemblies:
+    // SpawnDev.ILGPU.ML.<hash>.wasm from every earlier build sits there beside the current one. A browser
+    // holding a cached boot manifest then asks for an OLD hash and gets 200 OK with old code - the stale
+    // copies convert a loud 404 (the documented, recognisable failure) into a silent wrong measurement.
+    // MEASURED here 2026-09-14: four ML assemblies in one output directory, three of them dead.
+    // This runner's whole job is producing numbers, and a number from an artifact that was never built is
+    // the worst thing it can hand back - the same family as serving a dev BUILD, which cost a day.
+    // The relink and wasm-opt are cached in obj/, so the only cost is re-copying the payload.
+    try { if (Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true); }
+    catch (Exception ex) { Console.WriteLine($"  (could not clean {outDir}: {ex.Message} - continuing)"); }
+
     Console.WriteLine($"publishing SpawnDev.AI.Demo (relinked + wasm-opt) -> {outDir} ...");
 
     // ⚠️ NEVER trimmed, NEVER AOT - ILGPU resolves intrinsics by reflection at runtime and a trimmed
