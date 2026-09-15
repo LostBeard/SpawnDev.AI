@@ -113,6 +113,7 @@ public sealed partial class AiVoiceEngine
             // per-node dispatch cost. PMT's page has nothing else resident, which is precisely why it
             // cannot show this. Near-zero here means the pool is warm and the gap is per-crossing.
             var alloc0 = SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocations;
+            var allocMs0 = SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocationMs;
             // 🔴 THE GARBAGE COLLECTOR, which no other counter here can see and which scales with what
             // ELSE is resident in this worker rather than with this model. .NET WASM's GC is
             // non-concurrent: a collection stops the orchestrator mid-graph, and its pause is a function
@@ -122,6 +123,20 @@ public sealed partial class AiVoiceEngine
             // ⚠️ GUARDED. GetTotalPauseDuration is .NET 7+ and its WASM support is not something to
             // discover by throwing on a user's spoken reply - a diagnostic that can break the feature it
             // measures is worse than no diagnostic. Zero here reads as "not available", not as "no pause".
+            // 🔴 THE FOUR WEBGPU DISPATCH PHASES AND THE BIND-GROUP CACHE. Sharing the pool cut device
+            // allocations 1,491 -> 589 on a new input shape and bought only ~6% of the time, so the
+            // cold-shape cost is NOT the allocations - 2,911 ms of residual against 1,605 ms warm for the
+            // identical graph. The bind-group cache key is (pipeline + the exact buffers bound), so new
+            // buffers mean a CreateBindGroup per dispatch however they were obtained. These counters say
+            // whether that is where the difference lives; nothing else on this path can.
+            SpawnDev.ILGPU.WebGPU.Backend.WebGPUBackend.EnableDispatchProfiling = true;
+            var phase0 = (SpawnDev.ILGPU.WebGPU.Backend.WebGPUBackend.ProfileCpuShaderResolveMs,
+                          SpawnDev.ILGPU.WebGPU.Backend.WebGPUBackend.ProfileCpuArgBuildMs,
+                          SpawnDev.ILGPU.WebGPU.Backend.WebGPUBackend.ProfileCpuBindGroupMs,
+                          SpawnDev.ILGPU.WebGPU.Backend.WebGPUBackend.ProfileCpuEncodeMs);
+            var wgpu = _kokoro!.Session.Accelerator as SpawnDev.ILGPU.WebGPU.WebGPUAccelerator;
+            var bg0 = (Hits: wgpu?.BindGroupCacheHits ?? 0, Misses: wgpu?.BindGroupCacheMisses ?? 0);
+
             var gcAlloc0 = 0L; var gcPause0 = TimeSpan.Zero; var gcG0 = 0; var gcG2 = 0; var gcOk = true;
             try
             {
@@ -162,7 +177,22 @@ public sealed partial class AiVoiceEngine
                     // other models resident in this worker. One number tells them apart, and it is free.
                     + $" | {nodes} nodes = {(nodes > 0 ? (execMs - rbMs - drMs) / nodes : 0):F3} ms/node"
                     + $" | device allocations {SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocations - alloc0}"
+                    + $" ({SpawnDev.ILGPU.ML.Tensors.BufferPool.TotalDeviceAllocationMs - allocMs0:F0}ms)"
                     + GcSummary(gcOk, gcAlloc0, gcPause0, gcG0, gcG2));
+                var shaderMs = SpawnDev.ILGPU.WebGPU.Backend.WebGPUBackend.ProfileCpuShaderResolveMs - phase0.Item1;
+                var argMs = SpawnDev.ILGPU.WebGPU.Backend.WebGPUBackend.ProfileCpuArgBuildMs - phase0.Item2;
+                var bindMs = SpawnDev.ILGPU.WebGPU.Backend.WebGPUBackend.ProfileCpuBindGroupMs - phase0.Item3;
+                var encMs = SpawnDev.ILGPU.WebGPU.Backend.WebGPUBackend.ProfileCpuEncodeMs - phase0.Item4;
+                // ⚠️ "0 hits / 0 misses" WAS A NULL CAST REPORTING AS ZEROS, which reads as a working
+                // cache with no traffic rather than as a number nobody collected. Say which it is: a
+                // diagnostic that cannot tell "measured zero" from "not measured" is worse than absent,
+                // because it gets quoted.
+                var bgText = wgpu == null
+                    ? " | bind-group cache: not available (this accelerator is not a WebGPUAccelerator)"
+                    : $" | bind-group cache {wgpu.BindGroupCacheHits - bg0.Hits} hits / "
+                      + $"{wgpu.BindGroupCacheMisses - bg0.Misses} misses";
+                Console.WriteLine($"[voice] kokoro dispatch: shader-resolve {shaderMs:F0}ms, "
+                    + $"arg-build {argMs:F0}ms, bind-group {bindMs:F0}ms, encode {encMs:F0}ms" + bgText);
                 // 🔴 NAME THE READBACKS. A count says how much a round trip costs; only the NAMES say
                 // which operator is asking for a value on the host, and that is the difference between
                 // "the browser is slow" and "this node needs folding". MEASURED here: drains+readbacks
