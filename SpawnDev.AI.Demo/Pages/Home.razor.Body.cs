@@ -58,8 +58,29 @@ public partial class Home
 
                 _soloAction = gesture;
                 await InvokeAsync(StateHasChanged);
-                try { await Task.Delay(SoloGestureMs, ct); }
-                catch (OperationCanceledException) { break; }
+
+                // 🔴 AND ON THE ROBOT, IF IT IS THE BODY IN USE. This loop only ever moved the on-screen
+                // avatar, so a connected Reachy stood still through "*tilts head*" while the SVG tilted -
+                // Captain, watching it: "Reachy did not tilt it's head at the end of saying the sentence
+                // like i would have expected". The same rule as the voice decides it (
+                // AvatarActions.SpeakerDrivesRobot): a robot nobody in the room has claimed belongs to
+                // whoever is talking, and the solo assistant has no agent id at all.
+                //
+                // ⚠️ AWAITED, not fired off, and it REPLACES the delay rather than running beside it.
+                // ReachyBody sequences by waiting out each movement's real duration - the daemon's goto
+                // only queues - so a fixed Task.Delay running in parallel would let the next gesture
+                // interrupt this one partway through, which is a defect this stack has already paid for.
+                if (SpeakingAgentDrivesRobot())
+                {
+                    try { await Robot.PerformAsync(text, ct: ct); }
+                    catch (OperationCanceledException) { break; }
+                    catch (Exception ex) { Console.WriteLine($"[BODY] robot gesture failed: {ex.Message}"); }
+                }
+                else
+                {
+                    try { await Task.Delay(SoloGestureMs, ct); }
+                    catch (OperationCanceledException) { break; }
+                }
             }
         }
         catch (Exception ex) { Console.WriteLine($"[BODY] solo animation stopped: {ex.Message}"); }

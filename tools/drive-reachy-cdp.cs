@@ -341,7 +341,9 @@ try
             // "*tilts head slightly, then waves with both antennae*". Stage directions are correctly not
             // spoken, so there was no audio to find - and the gate reported that as a broken speaker path
             // for nine minutes at a time. The prompt has to make speech the only way to comply.
-            await app.FillAsync(Composer, "Say the words: hello.");
+            // Asks for BOTH halves: words to speak and an action to perform. A reply with only one of
+            // them cannot exercise the path where they happen together, which is every real reply.
+            await app.FillAsync(Composer, "Say hello, and tilt your head while you do.");
             await app.Locator(Composer).PressAsync("Enter");
 
             // ⚠️ THE VOICE MODEL MAY BE COLD. Reloading the tab drops it, and the first chunk after that
@@ -422,8 +424,14 @@ try
             if (!moods.Any(m => m.Contains("Thinking")))
                 fails.Add("the robot never showed it was thinking - a person in another room has nothing "
                         + "to distinguish a reply being generated from the question never landing");
-            if (!snapshot.Any(l => l.Contains("gesture ")))
-                fails.Add("the robot performed no gesture during the whole turn");
+            // 🔴 A GESTURE FROM THE REPLY, not just from the mood loop. ReachyBody logs a text-derived
+            // gesture as `gesture Tilt <- "tilts head"` and a state animation as `gesture Tilt (direct)`,
+            // and only the first proves the reply's own stage directions reached the hardware. Accepting
+            // any gesture would have passed the exact bug this checks for: the solo assistant's actions
+            // moved the on-screen avatar and the robot stood still through "*tilts head*".
+            if (!snapshot.Any(l => l.Contains("gesture ") && l.Contains("<-")))
+                fails.Add("the robot performed none of the reply's OWN actions - a stage direction moved "
+                        + "the on-screen avatar and the hardware stood still");
 
             var started = snapshot.Any(l => l.Contains("[reachy-speak] play start"));
             var ended = snapshot.Any(l => l.Contains("[reachy-speak] play end"));
