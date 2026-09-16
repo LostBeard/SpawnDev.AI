@@ -4,8 +4,12 @@
 @inject VoiceLibrary Voices
 @inject HttpClient Http
 @inject SpawnJSRuntime JS
+@inject SpawnDev.SpawnJS.RazorRenderer.SpawnDomRenderer Renderer
 
-<div class="sdai">
+@* ⚠️ THE BUILD, IN THE DOM. It is already on the console at startup, which only helps if you were
+   listening when the page loaded - and the commonest question about a live page is "is this even the
+   build I just deployed?". An attribute can be read at any time, by a tool or by a person in devtools. *@
+<div class="sdai" data-build="@BuildStamp.BuiltUtc">
     <header class="sdai-hdr">
         <div class="brand">
             <span class="logo">🖖</span>
@@ -579,7 +583,11 @@
             </div>
         }
 
+        @* The scroll box and the content are SEPARATE elements on purpose: a ResizeObserver
+           watching the scroll box learns nothing, because flex fixes its height - it is the
+           CONTENT that grows when an image finally decodes. .tbody is that content. *@
         <div class="transcript" @ref="_scrollRef">
+            <div class="tbody">
             @if (_messages.Count == 0 && !_busy)
             {
                 <div class="empty">
@@ -600,12 +608,17 @@
                     @foreach (var img in msg.Images)
                     {
                         <figure class="genimg">
-                            @* 🔴 AN IMAGE ARRIVES AFTER THE SCROLL THAT WAS MEANT TO SHOW IT. The message
-                               is added, the transcript scrolls, and THEN the picture decodes and adds
-                               ~514px below the fold - so "scroll when content is added" is only true if
-                               the image counts as content, and it does not exist yet at that moment.
-                               Scrolling again on load is what makes the rule actually hold. *@
-                            <img src="@img.Url" alt="@img.Label" @onload="@(() => ScrollToBottom())" />
+                            @* 🔴 NO @onload HERE, DELIBERATELY. An image does arrive after the scroll
+                               meant to show it - the message is added, the transcript scrolls, and only
+                               then does the picture decode and add ~514px - but scrolling from a BLAZOR
+                               EVENT CALLBACK makes it worse, not better: Blazor re-renders after every
+                               event callback, the transcript subtree is rebuilt, and a rebuilt scroll
+                               box starts at scrollTop 0. Captain saw exactly that: "ity bounces. i can
+                               see it try to scroll for second after the image loads then it scrols back
+                               to top."
+                               The ResizeObserver in ScrollToBottom handles the same case from plain JS,
+                               with no render tree involved and so nothing to reset the position. *@
+                            <img src="@img.Url" alt="@img.Label" />
                             <figcaption>
                                 <span>@img.Label</span>
                                 <a class="dl" href="@img.Url" download="@($"{Sanitize(img.Label)}.png")">⬇ Download</a>
@@ -650,6 +663,7 @@
                     <LoadBar Progress="_progressInfo" Pending="_progressPending" Note="@_busyNote" />
                 </div>
             }
+            </div>
         </div>
 
         @* 🔴 TWO ROWS, and the top one is ONLY the message box. Captain, off the deployed build: "the
@@ -1222,9 +1236,14 @@
         overflow-y: auto;
         overscroll-behavior: contain;   /* don't rubber-band the page when the transcript hits its end */
         padding: 1rem 0;
+        display: block;   /* the scroll box; .tbody below is the thing that grows */
+    }
+
+    .tbody {
         display: flex;
         flex-direction: column;
         gap: .9rem;
+        min-height: 100%;   /* so `.empty`'s margin:auto still centres on an empty conversation */
     }
 
     .empty {

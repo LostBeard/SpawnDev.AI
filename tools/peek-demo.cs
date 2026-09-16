@@ -47,6 +47,11 @@ if (app == null)
 }
 Console.WriteLine($"[peek] {app.Url}");
 
+// Which build is on screen. Without this, every surprising observation has a second explanation -
+// "they had not reloaded" - and no way to rule it out.
+var build = await app.EvaluateAsync<string?>("() => document.querySelector('.sdai')?.dataset.build ?? null");
+Console.WriteLine($"[peek] build: {build ?? "(not reported - this page predates data-build)"}");
+
 // ── The transcript ──────────────────────────────────────────────────────────────────────────────────
 var msgs = app.Locator(".msg");
 var n = await msgs.CountAsync();

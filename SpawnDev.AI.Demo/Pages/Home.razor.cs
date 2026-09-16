@@ -613,10 +613,80 @@ public partial class Home : IDisposable
     /// EVENT - user intent from a user gesture - and not behind a measurement taken after the content
     /// already moved. Until someone asks, the div scrolls to the bottom when content is added.
     /// </remarks>
+    ResizeObserver? _growthWatcher;
+    ActionCallback? _growthCallback;
+    bool _scrollComplained;
+
     Task ScrollToBottom(bool force = false)
     {
-        try { using var el = _scrollRef.As<HTMLElement>(); el.ScrollTop = el.ScrollHeight; }
-        catch { }
+        try
+        {
+            // 🔴 Renderer.GetElement, NOT ElementReference.As<T>(). `.As<T>()` resolves through
+            // `ElementReference.Context`, which is only a Blazor `WebElementReferenceContext` when a BLAZOR
+            // WebAssembly renderer captured the ref. This app runs on SpawnDomRenderer, where it is not -
+            // so `.As<HTMLElement>()` returned null and this method never scrolled anything, through three
+            // rounds of "fixes" to logic that could not run. The `catch { }` that used to wrap it all is
+            // what made that invisible, and the symptom got blamed on flex, then on stickiness, then on
+            // image load order.
+            //
+            // ⚠️ Nothing else in the ecosystem was affected: SpawnDomRenderer's own components already use
+            // this API (UiVirtualList, UiDataGrid), and this was the only @ref in the app. It is also the
+            // better call - it reaches the node through the renderer's logical tree, so it works inside a
+            // shadow root where a document query cannot.
+            using var el = Renderer.GetElement<HTMLElement>(_scrollRef);
+            if (el == null)
+            {
+                if (!_scrollComplained) { _scrollComplained = true; Console.WriteLine("[scroll] the transcript ref is not captured yet"); }
+                return Task.CompletedTask;
+            }
+            el.ScrollTop = el.ScrollHeight;
+
+            // 🔴 "WHEN CONTENT IS ADDED" IS NOT A MOMENT THIS CODE CAN NAME. Adding a message is an event
+            // we control; the content FINISHING is not. A generated image is added as an <img> with no
+            // height, decodes later and adds ~514px - MEASURED on the live page as scrollHeight 706
+            // against clientHeight 552 with the view still at scrollTop 0, because every scroll this
+            // component made happened while the picture was still 0px tall.
+            //
+            // A ResizeObserver does not care WHY the box grew - image, font, wrap - which is what makes
+            // it right: it observes the outcome instead of trying to enumerate the causes.
+            if (_growthWatcher == null)
+            {
+                _growthCallback = new ActionCallback(() =>
+                {
+                    try
+                    {
+                        using var e = Renderer.GetElement<HTMLElement>(_scrollRef);
+                        if (e != null) e.ScrollTop = e.ScrollHeight;
+                    }
+                    catch (Exception ex) { Console.WriteLine($"[scroll] observer callback: {ex.Message}"); }
+                });
+                _growthWatcher = new ResizeObserver(_growthCallback);
+                // OBSERVE THE CONTENT, NOT THE SCROLL BOX. The scroll box's height is fixed by flex and
+                // never changes, so watching it reports nothing at all.
+                // ⚠️ Found FROM the scroll box rather than through a second @ref - one ref is enough, and
+                // scoping the query to this element keeps it correct if the page ever renders twice.
+                using var content = el.QuerySelector(".tbody");
+                if (content == null) return Task.CompletedTask;   // not rendered yet; try again next call
+                _growthWatcher.Observe(content);
+                Console.WriteLine("[scroll] growth observer attached");
+            }
+        }
+        catch (Exception ex)
+        {
+            // ⚠️ ONCE, AND OUT LOUD. This used to be `catch { }`, and it hid the reason the transcript
+            // would not follow an image through two rounds of fixes - the same silent-catch shape that
+            // cost a day elsewhere in this stack. Once, because this is called at 2 Hz while generating.
+            if (!_scrollComplained)
+            {
+                _scrollComplained = true;
+                // The TYPE and MESSAGE of a NullReferenceException say nothing at all - "Arg_Null-
+                // ReferenceException" is the same string wherever it is thrown. The frame is the whole
+                // diagnosis, and leaving it out cost two runs.
+                var where = ex.StackTrace ?? "(no stack)";
+                if (where.Length > 220) where = where[..220];
+                Console.WriteLine($"[scroll] FAILED: {ex.GetType().Name} at {where}");
+            }
+        }
         return Task.CompletedTask;
     }
 

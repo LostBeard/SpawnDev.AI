@@ -86,7 +86,7 @@ void Hook(IPage p)
 {
     var t = m.Text;
     if (!t.Contains("[BUILD]") && !t.Contains("reachy", StringComparison.OrdinalIgnoreCase)
-        && !t.Contains("HF-MIC") && !t.Contains("[capture]") && !t.Contains("[reachy-mood]")
+        && !t.Contains("HF-MIC") && !t.Contains("[capture]") && !t.Contains("[reachy-mood]") && !t.Contains("[scroll]")
         && !t.Contains("HF-SPEAK") && !t.Contains("ROOM")) return;
     lock (log) log.Add(t);
     Console.WriteLine($"[console] {t}");
@@ -236,6 +236,56 @@ try
 
         // Put it back the way it was found.
         await app.ClickAsync("button.gear:has-text(\"📦\")", new() { Timeout = 15000 });
+
+    // ── DOES THE TRANSCRIPT FOLLOW AN IMAGE? ────────────────────────────────────────────────────────
+    // 🔴 THE CASE THAT BROKE TWICE, AND THE ONLY ONE THAT COULD. A text reply is added and measured in
+    // the same frame; a generated image is added with NO HEIGHT, decodes later, and adds ~514px below the
+    // fold - so every scroll the app makes happens while the picture is still 0px tall. Text alone can
+    // never catch this, which is why a gate full of passing chat turns sat alongside a transcript that
+    // did not scroll.
+    Console.WriteLine("[cdp] generating an image to check the transcript follows it...");
+    if (await app.Locator(".settings").CountAsync() == 0)
+        await app.ClickAsync("button.gear:has-text(\"⚙️\")", new() { Timeout = 15000 });
+    await app.FillAsync(Composer, "a lighthouse in a storm");
+    await app.ClickAsync(".settings button.linkbtn:has-text(\"Draw what is typed\")", new() { Timeout = 15000 });
+
+    var imgDeadline = DateTime.UtcNow.AddMinutes(4);
+    System.Text.Json.JsonElement scroll = default;
+    while (DateTime.UtcNow < imgDeadline)
+    {
+        scroll = await app.EvaluateAsync<System.Text.Json.JsonElement>(@"() => {
+            const t = document.querySelector('.transcript');
+            const imgs = [...t.querySelectorAll('img')];
+            return {
+                images: imgs.length,
+                decoded: imgs.filter(i => i.complete && i.naturalHeight > 0).length,
+                fromBottom: Math.round(t.scrollHeight - t.scrollTop - t.clientHeight),
+                canScroll: t.scrollHeight > t.clientHeight + 1
+            };
+        }");
+        if (scroll.GetProperty("decoded").GetInt32() > 0 && scroll.GetProperty("canScroll").GetBoolean())
+        {
+            await Task.Delay(1500);   // let the observer react, then read the settled position
+            scroll = await app.EvaluateAsync<System.Text.Json.JsonElement>(@"() => {
+                const t = document.querySelector('.transcript');
+                return { fromBottom: Math.round(t.scrollHeight - t.scrollTop - t.clientHeight),
+                         canScroll: t.scrollHeight > t.clientHeight + 1 };
+            }");
+            break;
+        }
+        await Task.Delay(2000);
+    }
+    Console.WriteLine($"[cdp] after the image: {scroll}");
+
+    if (scroll.ValueKind == System.Text.Json.JsonValueKind.Undefined
+        || !scroll.TryGetProperty("fromBottom", out var fb))
+        fails.Add("could not measure the transcript after generating an image");
+    else if (scroll.GetProperty("canScroll").GetBoolean() && fb.GetInt32() > 24)
+        fails.Add($"the transcript is {fb.GetInt32()}px from the bottom after an image loaded - it did "
+                + "not follow the content it just added");
+
+    if (await app.Locator(".settings").CountAsync() > 0)
+        await app.ClickAsync("button.gear:has-text(\"⚙️\")", new() { Timeout = 15000 });
 
     // ── The room panel, where the robot lives ───────────────────────────────────────────────────────
     if (await app.Locator(".settings.room").CountAsync() == 0)
