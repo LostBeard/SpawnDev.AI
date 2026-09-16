@@ -21,6 +21,7 @@ dotnet run tools/<name>.cs -- [url]
 | `check-ui-layout.cs` | **Is the app still usable?** Message-box width against the composer, the model picker naming the model actually selected, a default avatar on the stage, and no horizontal scroll - at 1040px AND at 420px. Every check is a defect Captain found by LOOKING, that every functional gate passed. |
 | `drive-ai-imgtest.cs` | Direct SD-Turbo image generation, bypassing the LLM. |
 | `drive-ai-model.cs` · `drive-ai-coreside.cs` | Model selection / core-side paths. |
+| `check-abi-drift.cs` | **Does the shipped IL still agree with the assemblies it loads next to?** Resolves every member reference between the SpawnDev assemblies in an output folder. Catches the one failure a build, a restore and a publish are all blind to - see below. Exits 1 on any break, and `run-ai-gate.cmd` runs it before the suite. |
 | `check-webgpu-adapter.cs` | Which WebGPU adapter the browser actually gave us. |
 | `build-index.cs` | Site index generation. |
 | `serve-published.cs` | Serves a `dotnet publish` output statically with PMT's COOP/COEP headers - **the only correct way to measure the demo**, see below. |
@@ -41,6 +42,32 @@ downloading that turned a model load into **626 seconds**.
 
 Use `tap-shared-worker.cs` to read that console, and `AsyncFSFileStore.ForceWritableFallback` to exercise
 the fallback path in a dedicated worker where a gate can assert on it.
+
+## 🔴 The thing no build, restore or publish can see: a source-compatible, binary-BREAKING bump
+
+SpawnJS 2.1.7 had `FileSystemWritableFileStream.Seek(ulong)`. 2.1.17 made it `Seek(long)`. C# recompiles
+against either, so **the change is invisible to every build of every project**. But SpawnDev.WebTorrent
+4.2.7 was compiled before the bump and its shipped IL still calls the `ulong` overload, while NuGet's
+nearest-wins resolution loads 2.1.17 beside it. The result is a `MissingMethodException` in the browser,
+on the one code path that calls it, with nothing reported anywhere earlier.
+
+It cost a day: it surfaced during the ML 5.2.14 -> 5.2.15 gate, so it read as an ML regression, and the two
+failing tests were written off as pre-existing and unrelated.
+
+```
+dotnet run tools/check-abi-drift.cs -- SpawnDev.AI.Demo/bin/Release/net10.0
+```
+
+It resolves **every** member reference between the SpawnDev assemblies that will sit in the folder
+together - not just the ones some test executes, which is the point, since a bad reference only throws when
+its path runs. Running it over the fixed graph found a SECOND break nobody had hit yet (`Truncate(ulong)`),
+on the same real piece-write path.
+
+⚠️ Point it at `bin/Release/net10.0`, not at a publish. Publish output is webcil-wrapped `.wasm`, which
+Cecil cannot read; the `.dll`s in the build output carry the same IL.
+
+⚠️ The fix is always **rebuild and republish the consuming package**, never a downstream workaround
+(Rule 2). A rebuild against the current version is the entire fix - there is no source change to make.
 
 ## Two things that will cost you an hour otherwise
 

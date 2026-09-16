@@ -38,5 +38,25 @@ set "ARGS=%1 %2 %3 %4 %5 %6 %7 %8 %9"
 
 echo === %DATE% %TIME% === >"%LOG%"
 echo args: %ARGS% >>"%LOG%"
+
+REM ---------------------------------------------------------------------------------------------------
+REM ABI drift first, because the suite cannot see it. A package built against an older SpawnDev library
+REM can call a member that no longer exists and still build, restore and publish green - the failure is a
+REM MissingMethodException at runtime, only on the code path that runs. SpawnDev.WebTorrent 4.2.7 shipped
+REM exactly that (Seek/Truncate ulong->long) and two tests failed for a day looking like an ML regression.
+REM It is seconds, and it fails the gate BEFORE an hour of model downloads.
+REM ---------------------------------------------------------------------------------------------------
+echo --- ABI drift check --- >>"%LOG%"
+dotnet build "%~dp0..\SpawnDev.AI.Demo\SpawnDev.AI.Demo.csproj" -c Release >>"%LOG%" 2>&1
+if errorlevel 1 (
+  echo EXITCODE=1 ^(demo failed to build^) >>"%LOG%"
+  exit /b 1
+)
+dotnet run "%~dp0check-abi-drift.cs" -- "%~dp0..\SpawnDev.AI.Demo\bin\Release\net10.0" >>"%LOG%" 2>&1
+if errorlevel 1 (
+  echo EXITCODE=1 ^(ABI drift - see above; rebuild the named package, do not run the suite^) >>"%LOG%"
+  exit /b 1
+)
+
 dotnet run --project "%PROJ%" -c Release -- %ARGS% >>"%LOG%" 2>&1
 echo EXITCODE=%ERRORLEVEL% >>"%LOG%"
