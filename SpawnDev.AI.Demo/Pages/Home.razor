@@ -549,13 +549,16 @@
            stage used to be empty with it - so a first visit showed neither of the two things this demo
            exists to show. Nova stands here instead, and reacts while it speaks, exactly as a character
            does. One body, drawn only when the room is NOT in use, so it never competes with the cast. *@
-        @* ⚠️ THE STAGE STANDS DOWN WHILE A PANEL IS OPEN. It is decoration, and a panel is a task the
-           user deliberately opened - three things (stage, panel, transcript) sharing one column is how
-           the conversation ended up with twenty usable pixels. The bodies come back the moment the panel
-           is closed, and nothing about them is lost meanwhile. *@
-        @if (!RoomActive && !AnyPanelOpen)
+        @* 🔴 THE STAGE SHRINKS, IT DOES NOT DISAPPEAR. It used to be removed entirely while a panel was
+           open - my fix for panels squeezing the chat - and that silently deleted the feature: the room
+           panel is how you reach the robot controls, so the body vanished exactly when you were using it,
+           and a reply's stage direction had nothing to animate. MEASURED: "stage present=False" with the
+           room panel open, so no act-* class could ever land. Captain: "the avatar does not act out the
+           stage direction... i have never seen them work."
+           Compact gives back most of the height without removing the thing the height was for. *@
+        @if (!RoomActive)
         {
-            <div class="stage">
+            <div class="stage @(AnyPanelOpen ? "compact" : "")">
                 <div class="stage-slot" title="@DefaultAgentName">
                     @* Action was MISSING here, which is the whole of "the avatar seem to be 100% static,
                        never changes": the room's bodies were driven and this one had nothing that could
@@ -564,9 +567,9 @@
                 </div>
             </div>
         }
-        @if (RoomActive && !AnyPanelOpen && EmbodiedAgents().Any())
+        @if (RoomActive && EmbodiedAgents().Any())
         {
-            <div class="stage">
+            <div class="stage @(AnyPanelOpen ? "compact" : "")">
                 @foreach (var (agent, kind) in EmbodiedAgents())
                 {
                     <div class="stage-slot @(kind == AvatarKind.Reachy ? "robot" : "")"
@@ -1238,6 +1241,13 @@
         padding: 1rem 0;
         display: block;   /* the scroll box; .tbody below is the thing that grows */
     }
+
+    /* A panel needs room, and the bodies are what the panel is often ABOUT - the room panel assigns the
+       Reachy avatar - so they shrink rather than vanish. Roughly a third of the height, still legible,
+       still animating. */
+    .stage.compact .reachy { width: 46px; }
+    .stage.compact .reachy .body { width: 46px; height: 50px; }
+    .stage.compact .reachy .label { font-size: .52rem; max-width: 46px; }
 
     .tbody {
         display: flex;

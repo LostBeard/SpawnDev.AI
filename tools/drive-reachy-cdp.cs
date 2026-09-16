@@ -515,6 +515,10 @@ try
             var lastReplyLength = -1;
             var quietSince = DateTime.MaxValue;
             var clipsSeen = 0;
+            // 🔴 SAMPLE WHILE IT HAPPENS. The avatar's animation is a CSS class held for under a second,
+            // right after the reply lands - polling once the speech has finished looks minutes later and
+            // only ever sees act-none, which reads as "it never animated" whether it did or not.
+            var avatarSeen = new HashSet<string>();
             while (DateTime.UtcNow < deadline)
             {
                 lock (log)
@@ -546,6 +550,11 @@ try
                     // reported through `_busyNote` and the reply bubble, NOT through `_status` - so the
                     // footer holds whatever it last said and a busy run looks like a wedged one. The
                     // bubble is the honest signal: it grows.
+                    var cls = await app.EvaluateAsync<string?>(
+                        "() => { const g = document.querySelector('.stage svg g[class^=act-]');"
+                        + " return g ? g.getAttribute('class') : null; }");
+                    if (!string.IsNullOrEmpty(cls)) avatarSeen.Add(cls!);
+
                     var bubble = (await app.Locator(".msg.assistant .text").Last.TextContentAsync() ?? "").Trim();
                     if (bubble.Length != lastReplyLength)
                     {
@@ -556,7 +565,8 @@ try
                 }
                 catch { /* neither is load-bearing for this wait */ }
 
-                await Task.Delay(2000);
+                // ⚠️ 250ms, not 2s: the animation class is held for well under a second.
+                await Task.Delay(250);
             }
 
             // 🔴 PRINT WHAT THE CHARACTER ACTUALLY WROTE. Without it, "no audio" has at least two causes
@@ -581,26 +591,13 @@ try
             }
             catch (Exception ex) { Console.WriteLine($"[msg] could not read the transcript: {ex.Message}"); }
 
-            // ── DID THE ON-SCREEN AVATAR ACTUALLY MOVE? ──────────────────────────────────────────────
-            // The robot's gesture is visible in the console; the avatar's is not - it is a CSS class on an
-            // SVG group, applied for under a second. Nothing in a log can confirm it, so this watches the
-            // DOM for the class to appear. Captain: "the avatar does not act out the stage direction",
-            // and every instrument so far has only been able to say what was EXTRACTED, not what moved.
-            var avatarSeen = new HashSet<string>();
-            for (var i = 0; i < 40; i++)
-            {
-                try
-                {
-                    var cls = await app.EvaluateAsync<string?>(
-                        "() => { const g = document.querySelector('.stage svg g[class^=act-]');"
-                        + " return g ? g.getAttribute('class') : null; }");
-                    if (!string.IsNullOrEmpty(cls)) avatarSeen.Add(cls!);
-                }
-                catch { }
-                await Task.Delay(250);
-            }
             var stagePresent = await app.Locator(".stage").CountAsync() > 0;
             Console.WriteLine($"[cdp] avatar: stage present={stagePresent}, classes seen=[{string.Join(", ", avatarSeen)}]");
+            if (!stagePresent)
+                fails.Add("there is no avatar on screen at all, so no stage direction can be acted out");
+            else if (!avatarSeen.Any(c => c.Contains("act-") && !c.Contains("act-none")))
+                fails.Add($"the avatar never took an animation class - seen [{string.Join(", ", avatarSeen)}] "
+                        + "- so a written action moved nothing on screen");
 
             string[] snapshot;
             lock (log) snapshot = log.ToArray();
