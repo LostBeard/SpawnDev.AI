@@ -261,6 +261,24 @@ public sealed partial class AiVoiceEngine : IDisposable
 
         text = TrimToSpeakableLength(text, maxSpokenCharacters);
 
+        // 🔴 ZIPVOICE CANNOT RENDER A LONG UTTERANCE, SO IT IS NOT GIVEN ONE. MEASURED 2026-09-15 on
+        // WebGPU with seeded noise, read back through Whisper:
+        //
+        //   250 chars -> 100%      296 chars -> 67%      343 chars -> 42%
+        //
+        // At 42% a listener does not hear an oddly-paused sentence, they hear "Norman praying walkers
+        // eight day so we walked a bone before". This splits the text at sentence ends - promoting a
+        // clause boundary when a single sentence is itself too long - and renders each piece as its own
+        // synthesis, then concatenates. The reference prompt is identical for every piece, so the voice
+        // does not change across a seam.
+        //
+        // ⚠️ THE SPLIT ALONE IS NOT THE FIX. Promoting a comma to a full stop shortens nothing by itself;
+        // it only matters because each piece is SYNTHESISED SEPARATELY here. I shipped the promotion on
+        // its own first and it changed nothing, because the whole string still went to one render.
+        var segments = SplitIntoSpeakableChunks(text, MaxRenderableCharacters, 0,
+                                                clauseSplitOver: MaxRenderableCharacters);
+        if (segments.Count == 0) segments = new List<string> { text };
+
         // One synthesis at a time - see _inferGate. A background warm pass counts as one.
         await _inferGate.WaitAsync(ct).ConfigureAwait(false);
         double inferenceMs;
@@ -283,27 +301,62 @@ public sealed partial class AiVoiceEngine : IDisposable
 
             SpawnDev.ILGPU.ML.Operators.IfOperator.ResetBranchCensus();
             SpawnDev.ILGPU.ML.Graph.GraphExecutor.ResetSliceAttrFallbackDiagnostics();
-            if (transcribe != null)
+            async Task<SpawnDev.ILGPU.ML.Pipelines.ZipVoiceResult> RenderOneAsync(string piece)
             {
-                // Speak it, listen to it, and re-roll the noise if the words that come back are not the
-                // words asked for. The best attempt is returned even when none passes the tolerance,
-                // because a flawed line is still better than silence.
-                var verified = await _pipeline!
-                    .SpeakVerifiedAsync(text, referenceText ?? "", referenceSamples, referenceSampleRate,
-                        _tokenizer!, transcribe)
+                if (transcribe != null)
+                {
+                    // Speak it, listen to it, and re-roll the noise if the words that come back are not
+                    // the words asked for. The best attempt is returned even when none passes the
+                    // tolerance, because a flawed line is still better than silence.
+                    var verified = await _pipeline!
+                        .SpeakVerifiedAsync(piece, referenceText ?? "", referenceSamples, referenceSampleRate,
+                            _tokenizer!, transcribe)
+                        .ConfigureAwait(false);
+                    // Say what the check concluded. A re-roll that silently happened is a cost nobody can
+                    // account for, and a FAILED verification that silently shipped is the original defect.
+                    Console.WriteLine($"[voice] read-back check: WER {verified.WordErrorRate:F2} "
+                        + $"({(verified.Passed ? "PASSED" : "FAILED - shipping the best of the attempts")}), "
+                        + $"heard \"{verified.Transcript}\"");
+                    return verified.Speech;
+                }
+                return await _pipeline!
+                    .SpeakAsync(piece, referenceText ?? "", referenceSamples, referenceSampleRate, _tokenizer!)
                     .ConfigureAwait(false);
-                result = verified.Speech;
-                // Say what the check concluded. A re-roll that silently happened is a cost nobody can
-                // account for, and a FAILED verification that silently shipped is the original defect.
-                Console.WriteLine($"[voice] read-back check: WER {verified.WordErrorRate:F2} "
-                    + $"({(verified.Passed ? "PASSED" : "FAILED - shipping the best of the attempts")}), "
-                    + $"heard \"{verified.Transcript}\"");
+            }
+
+            if (segments.Count == 1)
+            {
+                result = await RenderOneAsync(segments[0]).ConfigureAwait(false);
             }
             else
             {
-                result = await _pipeline!
-                    .SpeakAsync(text, referenceText ?? "", referenceSamples, referenceSampleRate, _tokenizer!)
-                    .ConfigureAwait(false);
+                // Render each piece and join. Straight concatenation: each piece is a whole sentence, so
+                // it already carries its own leading/trailing silence - inserting a gap would add a pause
+                // the text does not ask for.
+                var rendered = new List<SpawnDev.ILGPU.ML.Pipelines.ZipVoiceResult>(segments.Count);
+                foreach (var piece in segments)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    rendered.Add(await RenderOneAsync(piece).ConfigureAwait(false));
+                }
+                var rate = rendered[0].SampleRate;
+                var total = 0;
+                foreach (var r in rendered) total += r.Audio.Length;
+                var joined = new float[total];
+                var at = 0;
+                foreach (var r in rendered)
+                {
+                    if (r.SampleRate != rate)
+                        throw new InvalidOperationException(
+                            $"ZipVoice returned {r.SampleRate} Hz for one segment and {rate} Hz for another; "
+                          + "concatenating them would change the pitch of part of the reply");
+                    Array.Copy(r.Audio, 0, joined, at, r.Audio.Length);
+                    at += r.Audio.Length;
+                }
+                result = rendered[0] with { Audio = joined };
+                Console.WriteLine($"[voice] {text.Length} chars exceeded {MaxRenderableCharacters}, rendered as "
+                    + $"{segments.Count} segments ({string.Join(", ", segments.Select(s => s.Length + "ch"))}) "
+                    + $"-> {joined.Length / (double)rate:F2}s joined");
             }
             inferenceMs = (DateTime.UtcNow - started).TotalMilliseconds;
             if (VerboseLogging)
@@ -525,6 +578,26 @@ public sealed partial class AiVoiceEngine : IDisposable
     /// rather than merely long, and that is worth seeing rather than silently trimming.
     /// </remarks>
     public int MaxSpokenCharactersCeiling { get; set; } = 1200;
+
+    /// <summary>
+    /// The longest utterance ZipVoice renders intelligibly. Longer text is split at sentence ends and
+    /// rendered as several syntheses - see <see cref="SpeakAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 MEASURED, NOT CHOSEN. `SpokenReplyIsIntelligibleWhenReadBack` on WebGPU with seeded noise, read
+    /// back through Whisper, 2026-09-15:
+    /// <code>
+    ///   250 chars -> 100% (47/47)    296 chars -> 67% (37/55)    343 chars -> 42% (27/64)
+    /// </code>
+    /// 250 is the longest measured point that is still perfect. Raising it trades intelligibility for
+    /// fewer seams, and the curve above is what that trade costs.
+    /// <para>
+    /// ⚠️ This is a ZIPVOICE limit and lives on this engine deliberately. Kokoro does not need it - it
+    /// renders 351-token chunks cleanly (see the ML streaming gate) - and giving it an unnecessary split
+    /// would add seams for nothing.
+    /// </para>
+    /// </remarks>
+    public int MaxRenderableCharacters { get; set; } = 250;
 
     private string TrimToSpeakableLength(string text, int? overrideCap)
     {
