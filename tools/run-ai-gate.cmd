@@ -20,6 +20,11 @@ REM ⚠️ cmd's SHIFT moves %0 as well, so %~dp0 after a shift is the FIRST ARG
 REM script's. Resolve the project path BEFORE shifting - getting this wrong sent dotnet looking for the
 REM runner next to the log file and the run died instantly with an empty log.
 set "PROJ=%~dp0..\SpawnDev.AI.TestRunner\SpawnDev.AI.TestRunner.csproj"
+REM Same reason - resolve these BEFORE the shift too, or the ABI check below looks for the demo next to
+REM the LOG FILE and dies with MSB1009 "Project file does not exist".
+set "DEMOPROJ=%~dp0..\SpawnDev.AI.Demo\SpawnDev.AI.Demo.csproj"
+set "DEMOOUT=%~dp0..\SpawnDev.AI.Demo\bin\Release\net10.0"
+set "ABICHECK=%~dp0check-abi-drift.cs"
 
 set "LOG=%~1"
 if "%LOG%"=="" set "LOG=%TEMP%\ai-gate.log"
@@ -47,12 +52,12 @@ REM exactly that (Seek/Truncate ulong->long) and two tests failed for a day look
 REM It is seconds, and it fails the gate BEFORE an hour of model downloads.
 REM ---------------------------------------------------------------------------------------------------
 echo --- ABI drift check --- >>"%LOG%"
-dotnet build "%~dp0..\SpawnDev.AI.Demo\SpawnDev.AI.Demo.csproj" -c Release >>"%LOG%" 2>&1
+dotnet build "%DEMOPROJ%" -c Release >>"%LOG%" 2>&1
 if errorlevel 1 (
   echo EXITCODE=1 ^(demo failed to build^) >>"%LOG%"
   exit /b 1
 )
-dotnet run "%~dp0check-abi-drift.cs" -- "%~dp0..\SpawnDev.AI.Demo\bin\Release\net10.0" >>"%LOG%" 2>&1
+dotnet run "%ABICHECK%" -- "%DEMOOUT%" >>"%LOG%" 2>&1
 if errorlevel 1 (
   echo EXITCODE=1 ^(ABI drift - see above; rebuild the named package, do not run the suite^) >>"%LOG%"
   exit /b 1
