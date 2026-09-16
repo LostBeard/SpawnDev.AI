@@ -1409,6 +1409,17 @@ public partial class Home : IDisposable
         // ⚠️ THE "NOTHING TO CLONE FROM" GUARD IS GONE WITH THE MODE IT GUARDED. Speaking no longer
         // depends on having just heard the user: every voice is a named one, prepared from a clip that is
         // already on disk. There is nothing left that can fail for want of a reference.
+        // ⚠️ SAY SOMETHING BEFORE THE LONGEST WAIT, not after it. This await is the whole of preparing a
+        // CLONED voice - fetch the clip, decode it, build the prompt features - and it happens BEFORE the
+        // status line below is set, so for the duration the footer still shows whatever it last said.
+        // That is the same "a finished answer followed by silence is indistinguishable from 'it just
+        // doesn't speak'" failure this method already documents, reproduced one step earlier: a stale
+        // caption is worse than an empty one, because it names the WRONG stage to anyone debugging it.
+        // A built-in voice returns instantly and the caption is replaced a moment later, so this costs
+        // nothing in the common case.
+        _status = "Getting the voice ready…";
+        StateHasChanged();
+
         // The selected voice may never have been prepared - the default is a bundled one nobody picked.
         var voice = await EnsureVoiceReadyAsync(voiceId ?? _voiceId);
 

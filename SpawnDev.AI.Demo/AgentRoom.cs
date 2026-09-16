@@ -170,7 +170,15 @@ public sealed class AgentRoom
             system += " You have a small robot body: a head that nods, shakes, tilts, looks up and down, "
                     + "leans in and turns, and two antennae that perk up, wiggle or droop. Put any "
                     + "physical action between asterisks, like *tilts head*, and keep spoken words "
-                    + "outside them.";
+                    // 🔴 AN ACTION ALONE IS SILENCE. Stage directions are lifted out before synthesis -
+                    // that is the whole point of the convention - so a reply consisting only of
+                    // "*tilts head slightly, then waves with both antennae*" produces NO AUDIO AT ALL.
+                    // MEASURED 2026-09-16: three consecutive replies to "say hello in one short
+                    // sentence" were pure gesture, and on a robot that is indistinguishable from a
+                    // broken speaker. Telling it to mark actions without telling it to also SPEAK is an
+                    // instruction a small model can satisfy by miming.
+                    + "outside them. Always say something out loud as well - an action on its own is "
+                    + "silence, because actions are performed and never spoken.";
         // Brevity is a room rule, not a persona choice: several agents each writing an essay turns one
         // exchange into minutes of synthesis and reading.
         // ⚠️ THE ANTI-ECHO CLAUSE IS THERE FOR AN OBSERVED FAILURE, not as boilerplate. Every other

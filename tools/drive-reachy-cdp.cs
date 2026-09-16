@@ -267,7 +267,13 @@ try
             // a turn and watch for the robot-speaker timeline rather than the page's own audio.
             Console.WriteLine("[cdp] sending a turn; watching for [reachy-speak]...");
             lock (log) log.Clear();
-            await app.FillAsync(Composer, "Say hello in one short sentence.");
+            // 🔴 ASK FOR WORDS, EXPLICITLY. "Say hello in one short sentence" invites an EMBODIED character
+            // to answer with a gesture, and it did: three runs in a row replied with nothing but
+            // "*tilts head slightly, then waves with both antennae*". Stage directions are correctly not
+            // spoken, so there was no audio to find - and the gate reported that as a broken speaker path
+            // for nine minutes at a time. The prompt has to make speech the only way to comply.
+            await app.FillAsync(Composer, "Reply with spoken words only, no actions or asterisks: "
+                                        + "say the sentence 'Hello, this is Reachy speaking.'");
             await app.Locator(Composer).PressAsync("Enter");
 
             // ⚠️ THE VOICE MODEL MAY BE COLD. Reloading the tab drops it, and the first chunk after that
@@ -281,6 +287,7 @@ try
             // legible while it happens.
             var deadline = DateTime.UtcNow.AddMinutes(9);
             var lastStatus = "";
+            var lastReplyLength = -1;
             while (DateTime.UtcNow < deadline)
             {
                 lock (log)
@@ -293,12 +300,38 @@ try
                     {
                         lastStatus = now;
                         Console.WriteLine($"[status] {now}");
+                        // Nothing is coming. Waiting out the remaining minutes proves nothing.
+                        if (now.Contains("action only", StringComparison.OrdinalIgnoreCase)) break;
+                    }
+
+                    // ⚠️ THE FOOTER GOES STALE DURING GENERATION. While the model is writing, progress is
+                    // reported through `_busyNote` and the reply bubble, NOT through `_status` - so the
+                    // footer holds whatever it last said and a busy run looks like a wedged one. The
+                    // bubble is the honest signal: it grows.
+                    var bubble = (await app.Locator(".msg.assistant .text").Last.TextContentAsync() ?? "").Trim();
+                    if (bubble.Length != lastReplyLength)
+                    {
+                        lastReplyLength = bubble.Length;
+                        Console.WriteLine($"[writing] {bubble.Length} chars: "
+                            + (bubble.Length > 90 ? bubble[..90] + "…" : bubble));
                     }
                 }
-                catch { /* the footer is not load-bearing for this wait */ }
+                catch { /* neither is load-bearing for this wait */ }
 
                 await Task.Delay(2000);
             }
+
+            // 🔴 PRINT WHAT THE CHARACTER ACTUALLY WROTE. Without it, "no audio" has at least two causes
+            // that look identical from outside: the model replied with nothing but a stage direction, or
+            // it replied normally and the stage-direction splitter lifted the words out too. Those need
+            // opposite fixes - one is the prompt, the other is SpokenText - and guessing between them
+            // costs a full run each time.
+            try
+            {
+                var reply = (await app.Locator(".msg.assistant .text").Last.TextContentAsync() ?? "").Trim();
+                Console.WriteLine($"[reply] {(reply.Length > 400 ? reply[..400] + "…" : reply)}");
+            }
+            catch (Exception ex) { Console.WriteLine($"[reply] could not read the bubble: {ex.Message}"); }
 
             string[] snapshot;
             lock (log) snapshot = log.ToArray();
@@ -321,10 +354,15 @@ try
                         + "holds the Reachy body, or the holder resolution disagreed");
             else
             {
-                // Say which half did not happen: no reply at all is a different bug from a reply that
-                // never became audio, and the previous message could not tell them apart.
+                // Say which half did not happen. "No reply at all", "the reply had no words in it" and
+                // "the words never became audio" are three different bugs, and one timeout message for
+                // all three sends whoever reads it to the wrong place - which is exactly what happened.
                 var gotReply = snapshot.Any(l => l.Contains("HF-SPEAK"));
-                fails.Add(gotReply
+                var mimedOnly = lastStatus.Contains("action only", StringComparison.OrdinalIgnoreCase);
+                fails.Add(mimedOnly
+                    ? "the character MIMED instead of speaking - its whole reply was a stage direction, so "
+                    + "there was nothing to synthesise. Not a speaker fault; the prompt has to ask for words."
+                    : gotReply
                     ? "the reply arrived but no audio was produced within the timeout - the voice model "
                     + "was probably still loading; look for [HF-SPEAK] first audio"
                     : "nothing was spoken at all within the timeout - no reply reached the speech path");
