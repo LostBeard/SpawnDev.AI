@@ -101,6 +101,27 @@ foreach (var p in ctx.Pages)
 // listing embeds it in an iframe that comes and goes, and the Hugging Face token the SDK stores lives in
 // the APP's origin (static.hf.space) - it signed in from there - so a top-level tab on that origin is
 // signed in too, and is far easier to drive. A new tab, never the person's existing one.
+// 🔴 THE SPACE LISTING HIDES THE APP FROM PLAYWRIGHT. Opened through huggingface.co the app is a
+// CROSS-ORIGIN IFRAME, and Playwright over CDP does not surface out-of-process iframes as frames at all -
+// so the app is running, visible to the person, and invisible here. Worse, that iframe HOLDS THE ROBOT
+// SESSION: the signalling server only auto-picks a FREE robot, so opening a second tab reports "No
+// reachable robots" and the run fails for a reason that has nothing to do with the code.
+//
+// So take over that tab rather than adding one. Navigating it to the app directly makes the same app a
+// TOP-LEVEL page - drivable, and its old session is released on unload, which frees the robot for the
+// page that replaces it. One tab, one model load, one session.
+var listing = ctx.Pages.FirstOrDefault(p => p.Url.Contains("huggingface.co/spaces", StringComparison.OrdinalIgnoreCase));
+if (app == null && listing != null)
+{
+    Console.WriteLine("[cdp] the app is an iframe on the Space listing, which Playwright cannot see - "
+                    + "taking that tab to the app directly...");
+    Hook(listing);
+    await listing.GotoAsync(AppUrl, new() { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 60000 });
+    host = listing;
+    app = listing.MainFrame;
+    adopted = listing;   // not ours to close - reloaded on the way out, like any adopted tab
+}
+
 if (app == null)
 {
     Console.WriteLine($"[cdp] app not loaded; opening {AppUrl} in a new tab...");
