@@ -21,6 +21,7 @@ dotnet run tools/<name>.cs -- [url]
 | `check-ui-layout.cs` | **Is the app still usable?** Message-box width against the composer, the model picker naming the model actually selected, a default avatar on the stage, and no horizontal scroll - at 1040px AND at 420px. Every check is a defect Captain found by LOOKING, that every functional gate passed. |
 | `drive-ai-imgtest.cs` | Direct SD-Turbo image generation, bypassing the LLM. |
 | `drive-ai-model.cs` · `drive-ai-coreside.cs` | Model selection / core-side paths. |
+| `deploy-space.cs` | **Publishes the demo and deploys it to the Hugging Face Space** (`LostBeard/spawndev-ai`) - the only place the Reachy WebRTC path works, since an HTTPS page cannot reach the robot's LAN daemon. Takes no arguments, so right-click → "dotnet run script" works; `--dry-run` stages without pushing. Verifies the live page afterwards. See below. |
 | `check-abi-drift.cs` | **Does the shipped IL still agree with the assemblies it loads next to?** Resolves every member reference between the SpawnDev assemblies in an output folder. Catches the one failure a build, a restore and a publish are all blind to - see below. Exits 1 on any break, and `run-ai-gate.cmd` runs it before the suite. |
 | `check-webgpu-adapter.cs` | Which WebGPU adapter the browser actually gave us. |
 | `build-index.cs` | Site index generation. |
@@ -42,6 +43,36 @@ downloading that turned a model load into **626 seconds**.
 
 Use `tap-shared-worker.cs` to read that console, and `AsyncFSFileStore.ForceWritableFallback` to exercise
 the fallback path in a dedicated worker where a gate can assert on it.
+
+## Deploying to the Hugging Face Space
+
+```
+dotnet run tools/deploy-space.cs              # or right-click -> "dotnet run script"
+dotnet run tools/deploy-space.cs -- --dry-run # build and stage, push nothing
+```
+
+The Space exists because **Reachy only works from there**. The robot's daemon speaks plain HTTP on the
+LAN, so an HTTPS page cannot reach it at all - the browser blocks it as mixed content - and the supported
+route from a hosted page is WebRTC through Hugging Face's signalling Space. GitHub Pages cannot do the
+sign-in half; a Space can, because `hf_oauth: true` gets it a registered OAuth app for free.
+
+🔴 **`tools/space/README.md` and `tools/space/.gitattributes` are the Space's own files, versioned here.**
+The deploy copies them in over the published output. They are not decoration:
+
+- The README's frontmatter carries **`hf_oauth: true`**, which is what makes Hugging Face inject
+  `OAUTH_CLIENT_ID` into the page. That id is the ONLY thing "Connect my Reachy" can sign in with -
+  passing an invented client id fails with *"Not authenticated - call login() or pass a token"*, which
+  reads like a token problem and is not. The deploy REFUSES to push a README without it (red-checked).
+- `.gitattributes` is what puts `.wasm`/`.dat`/`.wav`/`.onnx` into LFS. Hugging Face rejects a push whose
+  binaries are not in LFS; deleting that file once cost two rejected pushes.
+
+⚠️ **The tool finds the repo from `[CallerFilePath]`, not from the working directory or
+`AppContext.BaseDirectory`** - a single-file `dotnet run` builds into `%TEMP%\dotnet\...`, so anything
+relative to the assembly lands nowhere near the repo, and Explorer's right-click sets an arbitrary
+working directory. Verified by running it from `C:\`.
+
+⚠️ It verifies AFTER pushing that the Space still serves the page and still injects `OAUTH_CLIENT_ID`. A
+green push is not a working page, and the two things a bad deploy silently loses are exactly those.
 
 ## 🔴 The thing no build, restore or publish can see: a source-compatible, binary-BREAKING bump
 

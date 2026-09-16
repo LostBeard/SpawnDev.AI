@@ -208,17 +208,40 @@
                         robot. Everyone else in the scene is drawn on screen.
                     </span>
                 </label>
-                @if (ReachyDriver.MixedContentWarning(JS.Get<string?>("location.origin")) is { } warn)
+                @* Two ways in, and which one is OFFERED FIRST depends on the page's scheme. Over HTTPS the
+                   LAN address cannot work at all, so leading with it would be inviting the user to debug
+                   a connection the browser has already decided to block. *@
+                @{ var mixed = ReachyDriver.MixedContentWarning(JS.Get<string?>("location.origin")); }
+                @if (mixed is { } warn)
                 {
                     <p class="sethint warn">@warn</p>
                 }
                 <div class="setactions">
-                    <input class="voice-name" placeholder="robot address, e.g. 192.168.1.170"
-                           @bind="_robotAddress" disabled="@(_robotBusy || Robot.IsConnected)" />
-                    <button class="chip" @onclick="ToggleRobotAsync" disabled="@_robotBusy">
-                        @(_robotBusy ? "…" : Robot.IsConnected ? "Park & disconnect" : "Connect")
+                    <button class="chip" @onclick="ConnectRobotWebRtcAsync"
+                            disabled="@(_robotBusy || Robot.IsConnected)"
+                            title="Sign in with Hugging Face and connect to your own Reachy Mini over WebRTC. Wireless robots only.">
+                        @(_robotBusy ? "…" : "🤗 Connect my Reachy")
                     </button>
+                    @if (Robot.IsConnected)
+                    {
+                        <button class="chip" @onclick="RobotSelfTestAsync" disabled="@_robotBusy"
+                                title="Lift the head a known amount and read the robot's own answer back - checks the pose format is right">
+                            🔧 Test motion
+                        </button>
+                        <button class="chip" @onclick="ToggleRobotAsync" disabled="@_robotBusy">Park &amp; disconnect</button>
+                    }
                 </div>
+                @if (mixed is null)
+                {
+                    @* Only on a local page, where plain HTTP to the daemon is actually reachable. *@
+                    <div class="setactions">
+                        <input class="voice-name" placeholder="or a robot address on this LAN"
+                               @bind="_robotAddress" disabled="@(_robotBusy || Robot.IsConnected)" />
+                        <button class="chip" @onclick="ToggleRobotAsync" disabled="@(_robotBusy || Robot.IsConnected)">
+                            @(_robotBusy ? "…" : "Connect on LAN")
+                        </button>
+                    </div>
+                }
                 <span class="sethint">@Robot.Status</span>
             </div>
 
@@ -582,8 +605,10 @@
                         title="Keep the voice you just spoke in, so replies stop re-cloning it every turn">
                     @(_savingVoice ? "…" : "💾🗣️")
                 </button>
+                @* ⚠️ No example names here. This is a demo anyone opens, and a placeholder naming the
+                   author's family reads as somebody else's project left switched on. *@
                 <input class="voice-name" placeholder="name this voice" @bind="_newVoiceName"
-                       disabled="@_savingVoice" title="Whose voice is this? e.g. Nikki, Aubs" />
+                       disabled="@_savingVoice" title="A name for this voice, so you can pick it again later" />
             }
             @* ⚠️ Not offered for a BUILT-IN voice: it lives inside the model, there is nothing on disk to
                delete, and a delete button that cannot delete is worse than no button. *@

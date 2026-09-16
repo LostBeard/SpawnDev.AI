@@ -1,4 +1,6 @@
+using SpawnDev.AI.Demo.Reachy;
 using SpawnDev.Reachy;
+using SpawnDev.SpawnJS;
 
 namespace SpawnDev.AI.Demo;
 
@@ -15,15 +17,35 @@ namespace SpawnDev.AI.Demo;
 /// <para>
 /// 🔴 THE ROBOT SPEAKS PLAIN HTTP ON THE LAN. A page served over HTTPS cannot reach it at all - the
 /// browser blocks it as mixed content, and the failure surfaces as an opaque network error rather than
-/// anything mentioning security. So this works from a locally served demo (<c>http://localhost</c> is a
-/// secure context) and NOT from the public GitHub Pages build. <see cref="MixedContentWarning"/> says so
-/// rather than letting the user debug a connection that cannot succeed.
+/// anything mentioning security. That is why there are TWO transports:
+/// <list type="bullet">
+/// <item><see cref="ConnectAsync"/> - plain HTTP to the daemon. Only from a local page.</item>
+/// <item><see cref="ConnectWebRtcAsync"/> - WebRTC, signalled through a Hugging Face Space, which works
+/// from any HTTPS page and reaches whichever robots the signed-in account owns.</item>
+/// </list>
+/// The choreography does not know the difference: both satisfy <c>IReachyMotion</c>, so
+/// <c>ReachyBody</c>'s gestures are written once.
 /// </para>
 /// </remarks>
 public sealed class ReachyDriver : IAsyncDisposable
 {
-    private ReachyMiniClient? _client;
+    private IReachyLifecycle? _lifecycle;
+    private IDisposable? _owned;      // the LAN client, when we made one. The SDK client is not IDisposable.
     private ReachyBody? _body;
+
+    /// <summary>How the robot is reached.</summary>
+    public enum Link
+    {
+        /// <summary>No connection.</summary>
+        None,
+        /// <summary>Plain HTTP to the daemon on the LAN. Local pages only.</summary>
+        LanDaemon,
+        /// <summary>WebRTC, signalled through the Hugging Face Space. Works from any HTTPS page.</summary>
+        WebRtc,
+    }
+
+    /// <summary>Which transport is live.</summary>
+    public Link Transport { get; private set; } = Link.None;
 
     /// <summary>The robot's address, as last connected.</summary>
     public string Address { get; private set; } = "";
@@ -44,10 +66,105 @@ public sealed class ReachyDriver : IAsyncDisposable
     /// </remarks>
     public static string? MixedContentWarning(string? pageOrigin)
         => pageOrigin != null && pageOrigin.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-            ? "This page is served over HTTPS, and the robot's daemon speaks plain HTTP on your LAN - the "
-            + "browser will block the connection as mixed content. Run the demo locally (http://localhost) "
-            + "to drive the robot."
+            ? "This page is served over HTTPS, and the robot's daemon speaks plain HTTP on your LAN, so the "
+            + "browser blocks that connection as mixed content. Connect over WebRTC instead - it signs in "
+            + "with Hugging Face and reaches your robot through the signalling server."
             : null;
+
+    /// <summary>
+    /// Connect over WebRTC, signalled through the Hugging Face Space.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the path that works from a hosted page. <c>autoConnect</c> does the whole bring-up -
+    /// Hugging Face sign-in, signalling connect, robot pick, WebRTC session, wake - and auto-picks when
+    /// exactly one robot on the account is free.
+    /// </para>
+    /// <para>
+    /// ⚠️ Wireless robots only, and the robot must be signed in to Hugging Face under the SAME account as
+    /// whoever is looking at the page. Someone else's robot is not listed and cannot be reached; that is
+    /// the signalling server's rule, not ours.
+    /// </para>
+    /// <para>
+    /// ✅ VERIFIED END TO END on a real wireless Reachy Mini, 2026-09-16: Hugging Face sign-in,
+    /// signalling, robot pick, WebRTC session, wake, and commanded head motion arriving correctly
+    /// (see <see cref="ReachyWebRtcTransport.HeadMatrixIsRowMajor"/> for the pose-format measurement).
+    /// </para>
+    /// </remarks>
+    public async Task<bool> ConnectWebRtcAsync(SpawnJSRuntime js, CancellationToken ct = default)
+    {
+        await DisconnectAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // 🔴 THE CLIENT ID IS THE SPACE'S, NOT A NAME WE INVENT. A Hugging Face Space with
+            // `hf_oauth: true` has its OAuth app registered for us and injects the id into the page as
+            // window.huggingface.variables.OAUTH_CLIENT_ID. Passing an arbitrary string instead means the
+            // SDK has no registered client, and the failure reads as
+            // "Not authenticated - call login() or pass a token" rather than as a bad client id.
+            var clientId = js.Get<string?>("huggingface.variables.OAUTH_CLIENT_ID");
+            var sdk = await ReachyMiniJs.CreateAsync(js, AppName, clientId).ConfigureAwait(false);
+
+            // ⚠️ autoConnect does NOT start a sign-in. It expects a token to already be there and throws
+            // if there is not one, so the redirect has to be driven from here. login() navigates the page
+            // away to Hugging Face; the user lands back on this page signed in, and presses connect again.
+            Status = "Checking your Hugging Face sign-in...";
+            if (!await sdk.AuthenticateAsync().ConfigureAwait(false))
+            {
+                Status = "Sending you to Hugging Face to sign in - you will come back here.";
+                sdk.Login();
+                return false;
+            }
+
+            Status = "Looking for your robot...";
+            await sdk.AutoConnectAsync().ConfigureAwait(false);
+
+            var transport = new ReachyWebRtcTransport(sdk);
+            _lifecycle = transport;
+            _owned = null;
+            _body = new ReachyBody(transport);
+            _body.Log += m => Console.WriteLine($"[reachy] {m}");
+            Transport = Link.WebRtc;
+            Address = sdk.Username is { Length: > 0 } u ? $"{u}'s robot (WebRTC)" : "your robot (WebRTC)";
+            Status = $"Connected to {Address}.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not connect over WebRTC: {ex.Message}";
+            return false;
+        }
+    }
+
+    /// <summary>Name this app advertises to the robot and to Hugging Face.</summary>
+    private const string AppName = "SpawnDev.AI";
+
+    /// <summary>
+    /// Move the robot a known amount and read the daemon's own answer back, to settle whether the head
+    /// pose's translation is being sent in the layout the daemon expects.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 The SDK documents the head pose as a flat 4x4 and never says row- or column-major. Guessing
+    /// wrong does NOT raise anything: the daemon clamps silently, so every gesture still "works" and just
+    /// never lifts the head. That is indistinguishable from a tuning problem by eye, which is why this
+    /// exists as a button rather than as something to infer from a performance.
+    /// </remarks>
+    public async Task<string> SelfTestAsync(CancellationToken ct = default)
+    {
+        if (_lifecycle is not ReachyWebRtcTransport webrtc)
+            return "Connect over WebRTC first - this checks the WebRTC pose format specifically.";
+        try
+        {
+            var verdict = await webrtc.VerifyHeadMatrixConventionAsync(ct: ct).ConfigureAwait(false);
+            await webrtc.GoHomeAsync(0.8, ct).ConfigureAwait(false);
+            Status = verdict;
+            return verdict;
+        }
+        catch (Exception ex)
+        {
+            Status = $"Self-test failed: {ex.Message}";
+            return Status;
+        }
+    }
 
     /// <summary>
     /// Connect and enable the motors.
@@ -86,7 +203,9 @@ public sealed class ReachyDriver : IAsyncDisposable
             await client.WakeUpAsync(ct).ConfigureAwait(false);
             await Task.Delay(1500, ct).ConfigureAwait(false);
 
-            _client = client;
+            _lifecycle = client;
+            _owned = client;
+            Transport = Link.LanDaemon;
             _body = new ReachyBody(client);
             _body.Log += m => Console.WriteLine($"[reachy] {m}");
             Address = address.Trim();
@@ -136,18 +255,21 @@ public sealed class ReachyDriver : IAsyncDisposable
     /// </remarks>
     public async Task DisconnectAsync(CancellationToken ct = default)
     {
-        var client = _client;
+        var life = _lifecycle;
+        var owned = _owned;
         _body = null;
-        _client = null;
-        if (client == null) return;
+        _lifecycle = null;
+        _owned = null;
+        Transport = Link.None;
+        if (life == null) return;
 
         try
         {
-            await client.GoHomeAsync(1.0, ct).ConfigureAwait(false);
+            await life.GoHomeAsync(1.0, ct).ConfigureAwait(false);
             await Task.Delay(1100, ct).ConfigureAwait(false);
-            await client.GotoSleepAsync(ct).ConfigureAwait(false);
+            await life.GotoSleepAsync(ct).ConfigureAwait(false);
             await Task.Delay(1500, ct).ConfigureAwait(false);
-            await client.SetMotorModeAsync(MotorMode.Disabled).ConfigureAwait(false);
+            await life.SetMotorModeAsync(MotorMode.Disabled, ct).ConfigureAwait(false);
             Status = "Parked and disconnected.";
         }
         catch (Exception ex)
@@ -156,7 +278,15 @@ public sealed class ReachyDriver : IAsyncDisposable
         }
         finally
         {
-            client.Dispose();
+            // 🔴 RELEASE THE SESSION, not just the hardware. Parking puts the robot to sleep; the
+            // signalling server still counts it as claimed until the session is stopped, and the next
+            // connect from this same page then finds "no reachable robots".
+            if (life is IAsyncDisposable session)
+            {
+                try { await session.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception ex) { Console.WriteLine($"[reachy] session teardown failed: {ex.Message}"); }
+            }
+            owned?.Dispose();
         }
     }
 

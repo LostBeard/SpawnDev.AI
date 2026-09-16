@@ -37,6 +37,39 @@ public partial class Home
         finally { _robotBusy = false; StateHasChanged(); }
     }
 
+    /// <summary>
+    /// Connect to the viewer's OWN Reachy Mini over WebRTC, signed in with Hugging Face.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Whose robot this reaches depends entirely on who is signed in - the signalling server only lists
+    /// robots registered to that account. Nothing here is specific to any one robot or owner.
+    /// </remarks>
+    async Task ConnectRobotWebRtcAsync()
+    {
+        if (_robotBusy) return;
+        _robotBusy = true;
+        StateHasChanged();
+        try
+        {
+            await Robot.ConnectWebRtcAsync(JS);
+            _status = Robot.Status;
+        }
+        finally { _robotBusy = false; StateHasChanged(); }
+    }
+
+    /// <summary>Move the robot a known amount and report whether the pose format is right.</summary>
+    async Task RobotSelfTestAsync()
+    {
+        if (_robotBusy) return;
+        _robotBusy = true;
+        StateHasChanged();
+        try
+        {
+            _status = await Robot.SelfTestAsync();
+        }
+        finally { _robotBusy = false; StateHasChanged(); }
+    }
+
     /// <summary>The room. With no agents in it the page behaves exactly as it always did.</summary>
     readonly AgentRoom _room = new();
 
