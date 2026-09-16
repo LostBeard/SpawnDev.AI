@@ -526,7 +526,7 @@
             @* Hands-free: listen, send, and speak the reply back in your own voice, then listen again.
                NOT disabled while busy - stopping a runaway loop is exactly what you want mid-turn. *@
             <button class="primary @(_handsFree ? "listening" : "")" @onclick="ToggleHandsFreeAsync"
-                    title="@(_handsFree ? "Stop hands-free conversation" : "Hands-free: talk, and it talks back in your voice")">
+                    title="@(_handsFree ? "Stop hands-free conversation" : "Hands-free: talk, and it talks back")">
                 @(_handsFree ? "🛑 Hands-free" : "💬🔊")
             </button>
             @* STOP SPEAKING. The user has read the reply and wants to answer - waiting out the voice is the
