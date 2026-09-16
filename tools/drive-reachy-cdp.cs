@@ -26,6 +26,9 @@ using System.Runtime.CompilerServices;
 
 var cdp = ArgValue("--cdp") ?? "http://localhost:9222";
 var doSpeak = args.Contains("--speak");
+// --ask lets a real reported prompt be replayed verbatim. A defect that only shows on a long answer (a
+// list, several paragraphs) cannot be reproduced by the short canned turn this normally sends.
+var askText = ArgValue("--ask");
 var expectBuild = ArgValue("--expect-build") ?? LastDeployedBuild();
 const string AppHost = "static.hf.space";
 // 🔴 ?worker=dedicated IS NOT OPTIONAL. A SHARED worker's console never reaches page.Console, and this
@@ -35,6 +38,8 @@ const string AppUrl = "https://lostbeard-spawndev-ai.static.hf.space/?worker=ded
 // ⚠️ NOT just "textarea". Once the character editor is in the DOM there are THREE, and a bare textarea
 // selector is a strict-mode violation that fails the run at the last step, after all the expensive parts
 // have already succeeded. The composer is the single-row one.
+// The app as a PERSON should use it: the default shared worker, which reports load progress live.
+const string AppUrlPlain = "https://lostbeard-spawndev-ai.static.hf.space/";
 const string Composer = "textarea[placeholder^=\"Message\"]";
 // The button carries the model SIZE when one is known ("Start the AI server (1.2 GB model)"), so match
 // on the stable prefix, never the whole label.
@@ -473,7 +478,15 @@ try
             // for nine minutes at a time. The prompt has to make speech the only way to comply.
             // Asks for BOTH halves: words to speak and an action to perform. A reply with only one of
             // them cannot exercise the path where they happen together, which is every real reply.
-            await app.FillAsync(Composer, "Say hello, and tilt your head while you do.");
+            // ⚠️ THE COMPOSER EXISTS LONG BEFORE IT IS USABLE. It is disabled while the page is busy, and
+            // the first turn after a failed preload loads the whole model - minutes. Filling a disabled
+            // textarea fails with "element is not enabled" after 30s, which reads as a broken selector
+            // rather than as the app legitimately being busy.
+            Console.WriteLine("[cdp] waiting for the composer to be enabled (the model may be loading)...");
+            for (var w = 0; w < 360 && !await app.Locator(Composer).IsEnabledAsync(); w++)
+                await Task.Delay(1000);
+
+            await app.FillAsync(Composer, askText ?? "Say hello, and tilt your head while you do.");
             await app.Locator(Composer).PressAsync("Enter");
 
             // ⚠️ THE VOICE MODEL MAY BE COLD. Reloading the tab drops it, and the first chunk after that
@@ -485,13 +498,34 @@ try
             // - so a run stuck in a cold model load looks IDENTICAL to one that never started, for nine
             // minutes, and then reports a timeout that names nothing. Echoing the footer makes the wait
             // legible while it happens.
+            // 🔴 A REPLY IS SPOKEN IN CHUNKS, so the FIRST "play end" is not the end of the reply. This used
+            // to break on it, run its assertions and then reload the tab in the finally - straight over the
+            // rest of the answer. Captain, watching the robot: "it spoke 1/2 then the page reloaded". The
+            // gate was cutting off the very thing it exists to verify.
+            //
+            // Done means: something has finished playing, AND nothing new has started for a while. There is
+            // no "reply finished speaking" event to wait on, and the gap between chunks is a synthesis -
+            // seconds, not milliseconds - so the quiet period has to be generous.
             var deadline = DateTime.UtcNow.AddMinutes(9);
             var lastStatus = "";
             var lastReplyLength = -1;
+            var quietSince = DateTime.MaxValue;
+            var clipsSeen = 0;
             while (DateTime.UtcNow < deadline)
             {
                 lock (log)
-                    if (log.Any(l => l.Contains("[reachy-speak] play end"))) break;
+                {
+                    var starts = log.Count(l => l.Contains("[reachy-speak] play start"));
+                    var ends = log.Count(l => l.Contains("[reachy-speak] play end"));
+                    if (starts > clipsSeen) { clipsSeen = starts; quietSince = DateTime.MaxValue; }
+                    if (ends > 0 && ends == starts && quietSince == DateTime.MaxValue)
+                        quietSince = DateTime.UtcNow;          // all started clips have finished
+                }
+                if (quietSince != DateTime.MaxValue && (DateTime.UtcNow - quietSince).TotalSeconds > 25)
+                {
+                    Console.WriteLine($"[cdp] speech finished: {clipsSeen} clip(s)");
+                    break;
+                }
 
                 try
                 {
@@ -619,8 +653,15 @@ finally
         // costing nothing.
         try
         {
-            await adopted.ReloadAsync(new() { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 60000 });
-            Console.WriteLine("[cdp] reloaded the pre-existing tab - the model it loaded is released.");
+            // 🔴 BACK TO THE PLAIN URL, not AppUrl. This drives the app with ?worker=dedicated because a
+            // shared worker's console never reaches page.Console - but a DEDICATED worker cannot answer a
+            // progress poll while it loads a model (OPFSStream takes the synchronous access handle and
+            // ILGPU's compile is synchronous; neither yields, so the message loop does not run). Leaving
+            // the person on that URL leaves them with an indeterminate progress bar on every model load,
+            // and Captain reported exactly that - a defect this tool created and then left behind.
+            await adopted.GotoAsync(AppUrlPlain,
+                new() { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 60000 });
+            Console.WriteLine("[cdp] restored the tab to the default URL - shared worker, live load progress.");
         }
         catch (Exception ex) { Console.WriteLine($"[cdp] could not reload the adopted tab: {ex.Message}"); }
     }

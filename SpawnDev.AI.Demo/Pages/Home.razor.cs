@@ -1391,7 +1391,25 @@ public partial class Home : IDisposable
         // as a transferred ArrayBuffer instead of a JSON number array, which for a five-second chunk at
         // 24 kHz was ~1.4 MB of decimal text serialised in the worker and parsed here - on the path whose
         // entire job is to start talking quickly.
-        var (samples, rate, _, ms, _) = await Ai.SpeakInVoicePcmAsync(chunk, useVoice);
+        // 🔴 THE CALLER OWNS THE LENGTH, SO SAY SO. AiVoiceEngine.MaxSpokenCharacters is 320 by default and
+        // trims at a sentence end - a PRODUCT choice for callers that hand it a whole reply. This page is
+        // not one of them: it splits the reply into chunks and speaks them in order, so a second, hidden
+        // cut inside the engine can only delete sentences the page fully intended to say.
+        //
+        // MEASURED 2026-09-16: a reply ending in a bulleted list has no sentence terminators for the
+        // splitter to break on, so the whole answer came back as ONE chunk - and the engine trimmed it to
+        // ~320 characters. Captain heard "only the first 2 sentences", twice. One 485 KB / 15.18 s clip,
+        // no chunk 2. The splitter should also break on list items (that is a separate fix, and would have
+        // made this render sooner); the silent deletion is this one.
+        var (samples, rate, _, ms, spoken) =
+            await Ai.SpeakInVoicePcmAsync(chunk, useVoice, maxSpokenCharacters: chunk.Length);
+
+        // ⚠️ AND CHECK. The engine reports what it actually rendered precisely so a caller can tell; the
+        // page was discarding it, which is why text disappeared silently instead of loudly.
+        if (!string.IsNullOrEmpty(spoken) && spoken.Length < chunk.Length)
+            Console.WriteLine($"[HF-SPEAK] TRIMMED: asked for {chunk.Length} characters, the engine spoke "
+                + $"{spoken.Length}. {chunk.Length - spoken.Length} characters were not said aloud.");
+
         return (samples, rate, ms);
     }
 
