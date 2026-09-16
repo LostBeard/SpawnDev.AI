@@ -282,6 +282,10 @@ public partial class Home : IDisposable
         _ = Prefs.SetAsync(AppPreferences.ModelKey, _model);
         _messages.Add(new Msg { Role = "user", Text = text });
         _busy = true; _streaming = ""; ResetSpeculativeChunk();
+        // 🔴 THE LONGEST SILENCE IN THE INTERACTION. The model is generating: there is no audio yet, and
+        // whatever the screen is showing is in another room. A motionless robot here is indistinguishable
+        // from one that did not hear the question, and the natural response to that is to ask again.
+        Robot.Mood(SpawnDev.Reachy.ReachyMood.Thinking);
         _stoppedByUser = false;
         _generationCts = new CancellationTokenSource();
         string? spokenReply = null;
@@ -401,6 +405,9 @@ public partial class Home : IDisposable
             StateHasChanged();
             await ScrollToBottom();
         }
+
+        // Back to alive-but-unoccupied unless speech takes over a moment from now.
+        Robot.Mood(SpawnDev.Reachy.ReachyMood.Idle);
 
         // Speaking happens AFTER the finally, so the reply is on screen and the composer is usable while
         // it talks. Doing it inside the turn would leave the UI "busy" for the whole utterance.
@@ -1441,6 +1448,9 @@ public partial class Home : IDisposable
             // a token table and a 54 MB vocoder) showed the user a finished text answer and then nothing
             // whatsoever for minutes. Indistinguishable from "it just doesn't speak".
             _speaking = true;
+            // The reply's own stage directions are a better performance than any status animation, so
+            // this hands the body over rather than competing with it.
+            Robot.Mood(SpawnDev.Reachy.ReachyMood.Speaking);
             // 🔴 IT SAYS WHAT IS ACTUALLY HAPPENING. This read "Preparing the voice…" and was WRONG every
             // time: EnsureVoiceReadyAsync is awaited ABOVE, so by the time this runs the voice is already
             // prepared - and a built-in voice (the default, Kokoro) has nothing to prepare at all and
@@ -1693,6 +1703,9 @@ public partial class Home : IDisposable
         finally
         {
             _speaking = false;
+            // Done talking - back to alive-but-unoccupied, so the robot settles rather than freezing
+            // wherever the last stage direction left it.
+            Robot.Mood(SpawnDev.Reachy.ReachyMood.Idle);
             _busyNote = "";
             _progressInfo = null;
             _progressPending = false;
@@ -1846,6 +1859,10 @@ public partial class Home : IDisposable
             return;
         }
         _listeningThroughRobot = robotEars != null;
+        // SHOW IT ON THE ROBOT. Antennae up and held is the one posture that unmistakably means "go on,
+        // I am hearing you" - and to someone in another room it is the ONLY indication the microphone
+        // opened at all.
+        Robot.Mood(SpawnDev.Reachy.ReachyMood.Listening);
         // A LOG LINE, not only the status string. The status is replaced within a second by the live
         // level readout, so which microphone opened is unrecoverable from the UI a moment later - and it
         // is the first thing anyone needs when the answer is "it cannot hear me".

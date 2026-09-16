@@ -86,7 +86,7 @@ void Hook(IPage p)
 {
     var t = m.Text;
     if (!t.Contains("[BUILD]") && !t.Contains("reachy", StringComparison.OrdinalIgnoreCase)
-        && !t.Contains("HF-MIC") && !t.Contains("[capture]")
+        && !t.Contains("HF-MIC") && !t.Contains("[capture]") && !t.Contains("[reachy-mood]")
         && !t.Contains("HF-SPEAK") && !t.Contains("ROOM")) return;
     lock (log) log.Add(t);
     Console.WriteLine($"[console] {t}");
@@ -404,6 +404,18 @@ try
 
             string[] snapshot;
             lock (log) snapshot = log.ToArray();
+
+            // DOES THE ROBOT SHOW WHAT IT IS DOING? To someone in another room the posture is the entire
+            // interface, and a robot that is merely CORRECT while motionless is indistinguishable from
+            // one that did not hear the question.
+            var moods = snapshot.Where(l => l.Contains("[reachy-mood]")).ToArray();
+            Console.WriteLine($"[cdp] moods: {string.Join(" -> ", moods.Select(m => m.Split(' ').Last()))}");
+            if (!moods.Any(m => m.Contains("Thinking")))
+                fails.Add("the robot never showed it was thinking - a person in another room has nothing "
+                        + "to distinguish a reply being generated from the question never landing");
+            if (!snapshot.Any(l => l.Contains("gesture ")))
+                fails.Add("the robot performed no gesture during the whole turn");
+
             var started = snapshot.Any(l => l.Contains("[reachy-speak] play start"));
             var ended = snapshot.Any(l => l.Contains("[reachy-speak] play end"));
 

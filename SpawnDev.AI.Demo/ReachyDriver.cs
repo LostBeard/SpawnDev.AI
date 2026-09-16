@@ -32,6 +32,7 @@ public sealed class ReachyDriver : IAsyncDisposable
     private IReachyLifecycle? _lifecycle;
     private IDisposable? _owned;      // the LAN client, when we made one. The SDK client is not IDisposable.
     private ReachyBody? _body;
+    private ReachyPresence? _presence;
 
     /// <summary>How the robot is reached.</summary>
     public enum Link
@@ -164,6 +165,7 @@ public sealed class ReachyDriver : IAsyncDisposable
             _owned = null;
             _body = new ReachyBody(transport);
             _body.Log += m => Console.WriteLine($"[reachy] {m}");
+            StartPresence();
             Transport = Link.WebRtc;
             Address = sdk.Username is { Length: > 0 } u ? $"{u}'s robot (WebRTC)" : "your robot (WebRTC)";
             Status = $"Connected to {Address}.";
@@ -216,6 +218,36 @@ public sealed class ReachyDriver : IAsyncDisposable
             Status = $"Self-test failed: {ex.Message}";
             return Status;
         }
+    }
+
+    /// <summary>
+    /// Tell the robot what the app is doing, so a person in another room can see it.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE ROBOT IS THE INTERFACE WHEN IT IS NOT NEXT TO THE SCREEN. "Listening", "thinking" and "idle"
+    /// are obvious on a page - a level meter, a spinner, a cursor - and on the robot they were one state:
+    /// perfectly still. Someone who has just spoken to a motionless robot cannot tell whether it heard
+    /// them, is working, has finished, or is broken, and the natural response to all four is to repeat
+    /// themselves.
+    ///
+    /// ⚠️ Fire-and-forget on purpose. This is decoration on a wireless link, and a turn must never wait on
+    /// it - nor fail because of it.
+    /// </remarks>
+    public void Mood(ReachyMood mood)
+    {
+        if (_presence is not { } presence) return;
+        _ = presence.SetAsync(mood).ContinueWith(
+            t => Console.WriteLine($"[reachy-mood] {mood} failed: {t.Exception?.GetBaseException().Message}"),
+            TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    /// <summary>Start the idle life the moment a body exists, so the robot is never simply frozen.</summary>
+    private void StartPresence()
+    {
+        if (_body is not { } body) return;
+        body.StartIdle(GestureStyle.Default);
+        _presence = new ReachyPresence(body);
+        _presence.Log += m => Console.WriteLine(m);
     }
 
     /// <summary>
@@ -287,6 +319,7 @@ public sealed class ReachyDriver : IAsyncDisposable
             Transport = Link.LanDaemon;
             _body = new ReachyBody(client);
             _body.Log += m => Console.WriteLine($"[reachy] {m}");
+            StartPresence();
             Address = address.Trim();
             Status = $"Connected to {Address}, motors enabled.";
             return true;
@@ -337,6 +370,14 @@ public sealed class ReachyDriver : IAsyncDisposable
         var life = _lifecycle;
         var owned = _owned;
         _body = null;
+        // Stop animating before the body goes; an in-flight gesture against a disposed transport is an
+        // unhandled exception on a background task, which exits the WASM runtime rather than failing.
+        if (_presence is { } presence)
+        {
+            _presence = null;
+            try { await presence.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex) { Console.WriteLine($"[reachy-mood] dispose: {ex.Message}"); }
+        }
         _lifecycle = null;
         _owned = null;
         Speaker = null;
