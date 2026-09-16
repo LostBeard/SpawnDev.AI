@@ -341,6 +341,14 @@
                                 title="Lift the head a known amount and read the robot's own answer back - checks the pose format is right">
                             🔧 Test motion
                         </button>
+                        @* ⚠️ A SEPARATE CHECK FROM MOTION, because they fail separately and the speaker's
+                           only symptom is silence - the daemon accepts audio without validating it and
+                           never transcodes, so a wrong rate or bit depth returns success and plays
+                           nothing. No model is involved, so this answers in seconds. *@
+                        <button class="chip" @onclick="RobotSpeakerTestAsync" disabled="@_robotBusy"
+                                title="Play a 1-second tone out of the robot's own speaker - checks the audio path with no model in the way">
+                            🔊 Test speaker
+                        </button>
                         <button class="chip" @onclick="ToggleRobotAsync" disabled="@_robotBusy">Park &amp; disconnect</button>
                     }
                 </div>

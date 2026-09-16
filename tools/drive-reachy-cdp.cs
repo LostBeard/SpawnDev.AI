@@ -229,6 +229,37 @@ try
         if (!verdict.Contains("ROW-MAJOR") && !verdict.Contains("COLUMN-MAJOR"))
             fails.Add($"the motion self-test did not report a layout: {verdict.Trim()}");
 
+        // ── THE SPEAKER, PROVED WITHOUT A MODEL ─────────────────────────────────────────────────────
+        // 🔴 RUN THIS BEFORE THE REAL REPLY. Reaching the robot's speaker through a chat turn costs a
+        // language model and then a cold voice-model load, and a failure anywhere in that chain looks
+        // identical to a broken audio path. The tone isolates resample -> 16 kHz WAV -> upload -> play,
+        // which is the part that has never been verified, and answers in seconds.
+        Console.WriteLine("[cdp] testing the robot speaker (a 1-second tone should come out of Reachy)...");
+        lock (log) log.Clear();
+        await app.ClickAsync(".settings.room button.chip:has-text(\"Test speaker\")", new() { Timeout = 15000 });
+
+        var toneDeadline = DateTime.UtcNow.AddSeconds(45);
+        while (DateTime.UtcNow < toneDeadline)
+        {
+            lock (log)
+                if (log.Any(l => l.Contains("[reachy-speak] play end"))) break;
+            await Task.Delay(500);
+        }
+
+        string[] tone;
+        lock (log) tone = log.ToArray();
+        var toneVerdict = await app.Locator(".settings.room .robotstatus").Last.TextContentAsync() ?? "";
+        Console.WriteLine($"[cdp] speaker test: {toneVerdict.Trim()}");
+
+        if (!tone.Any(l => l.Contains("[reachy-speak] uploading")))
+            fails.Add($"the speaker path was never entered: {toneVerdict.Trim()}");
+        else if (!tone.Any(l => l.Contains("[reachy-speak] uploaded as")))
+            fails.Add("the clip was encoded but the upload to the robot never completed");
+        else if (!tone.Any(l => l.Contains("[reachy-speak] play end")))
+            fails.Add("the clip uploaded and started but never finished playing");
+        else
+            Console.WriteLine("[cdp] ROBOT SPEAKER: tone encoded, uploaded and played to completion.");
+
         if (doSpeak)
         {
             // ── Does a bodied character speak OUT OF THE ROBOT? ─────────────────────────────────────

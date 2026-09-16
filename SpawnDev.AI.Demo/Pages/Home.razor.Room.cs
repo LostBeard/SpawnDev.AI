@@ -70,6 +70,19 @@ public partial class Home
         finally { _robotBusy = false; StateHasChanged(); }
     }
 
+    /// <summary>Play a tone out of the robot, so the speaker path can be checked in seconds.</summary>
+    async Task RobotSpeakerTestAsync()
+    {
+        if (_robotBusy) return;
+        _robotBusy = true;
+        StateHasChanged();
+        try
+        {
+            _status = await Robot.SpeakerTestAsync();
+        }
+        finally { _robotBusy = false; StateHasChanged(); }
+    }
+
     /// <summary>
     /// True when the character currently speaking is the one holding the physical robot.
     /// </summary>

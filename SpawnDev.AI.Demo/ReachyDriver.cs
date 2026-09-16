@@ -201,6 +201,33 @@ public sealed class ReachyDriver : IAsyncDisposable
     }
 
     /// <summary>
+    /// Play a tone out of the robot's own speaker, and say what happened.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ The daemon does not validate audio and does not transcode, so a wrong format is SILENCE rather
+    /// than an error - which means this check is judged by ear and has to be trivially easy to run. It
+    /// deliberately involves no language model and no voice model: reaching the speaker through a real
+    /// reply costs minutes and a failure could belong to either of them.
+    /// </remarks>
+    public async Task<string> SpeakerTestAsync(CancellationToken ct = default)
+    {
+        if (Speaker is not { } speaker)
+            return "Connect over WebRTC first - the robot's speaker is only reachable that way.";
+        try
+        {
+            Status = "Playing a 1-second tone out of the robot...";
+            var seconds = await speaker.PlayTestToneAsync(ct: ct).ConfigureAwait(false);
+            Status = $"Played a {seconds:F2}s 440 Hz tone through the robot. Did you hear it?";
+            return Status;
+        }
+        catch (Exception ex)
+        {
+            Status = $"Robot speaker test failed: {ex.Message}";
+            return Status;
+        }
+    }
+
+    /// <summary>
     /// Connect and enable the motors.
     /// </summary>
     /// <remarks>
