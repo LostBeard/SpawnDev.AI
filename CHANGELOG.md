@@ -4,6 +4,26 @@ Notable changes per release. Preview - APIs will change.
 
 ## Unreleased - built-in voices, and speech that finishes before it finishes playing
 
+### Changed - engine to SpawnDev.ILGPU.ML 5.2.15: models load faster and the download bar works
+
+The first thing a visitor to the demo experiences is waiting for a model, so both of these are visible in
+the product rather than only in a benchmark. MEASURED on WebGPU / RTX 4070 with Qwen3-1.7B-Q8_0 (1,749 MiB):
+
+**A cached model now loads in 2.8 s instead of 4.5 s** (408 -> 614 MB/s). The "parse" stage fell 2.2 s to
+0.6 s. It was never I/O: the GGUF header is 5.7 MiB of a 1,749 MiB file, but it holds 303,323
+length-prefixed tokenizer strings that were being read one field at a time. Reading the header region once
+and parsing it in memory is the whole fix - the same bytes parse in 16 ms instead of 2,657 ms.
+
+**The download progress bar now moves on a slow connection.** A download segment was simultaneously the
+throughput unit, the progress increment and the resume checkpoint, fixed at 64 MiB - so on a 2 MB/s link
+the bar froze for 32 seconds at a time, and a dropped connection re-downloaded up to 64 MiB. Segments are
+now sized from the measured connection rate to take about 1.5 s each (capped at 16 MiB), which holds that
+update interval from 0.5 to 120 MB/s without costing throughput (35.9 s vs 64 MiB's 35.8 s on the same
+1.83 GB download, with 113 progress reports instead of 31).
+
+`SpawnDev.AI.ServerHost` moves to SpawnDev.ILGPU 5.2.12 to match what the engine already resolves.
+
+
 ### Added - Kokoro built-in voices, and they are the default
 
 Speaking is the slowest thing in a turn. The voice model this app had CLONES - it is the only thing that
