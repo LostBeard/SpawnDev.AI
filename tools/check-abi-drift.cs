@@ -25,8 +25,11 @@
 // Exits 1 on any unresolved reference, so it is usable as a gate.
 using Mono.Cecil;
 
+// ⚠️ Keyed off the WORKING directory, not AppContext.BaseDirectory: a single-file `dotnet run` builds
+// into %TEMP%\dotnet\..., so anything relative to the assembly lands nowhere near the repo. The README
+// says to run these from the repo root, which is what this assumes.
 var dir = args.FirstOrDefault(a => !a.StartsWith("--"))
-          ?? Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..",
+          ?? Path.Combine(Directory.GetCurrentDirectory(),
                           "SpawnDev.AI.Demo", "bin", "Release", "net10.0");
 var all = args.Contains("--all");
 
