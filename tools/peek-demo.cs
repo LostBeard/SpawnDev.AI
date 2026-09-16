@@ -65,6 +65,30 @@ for (var i = Math.Max(0, n - 4); i < n; i++)
         Console.WriteLine("        ^ no <em> - anything action-like here was written WITHOUT asterisks");
 }
 
+// ── Layout, measured ────────────────────────────────────────────────────────────────────────────────
+// "It does not scroll" has several distinct causes that look identical: the box has no overflow to
+// scroll, the box scrolls but nothing anchors it, or it anchors and then the content grows AFTER the
+// anchor (images). The numbers tell them apart.
+var m = await app.EvaluateAsync<System.Text.Json.JsonElement>(@"() => {
+    const t = document.querySelector('.transcript');
+    if (!t) return { error: 'no .transcript' };
+    const cs = getComputedStyle(t);
+    const imgs = [...t.querySelectorAll('img')];
+    return {
+        overflowY: cs.overflowY,
+        minHeight: cs.minHeight,
+        clientH: Math.round(t.clientHeight),
+        scrollH: Math.round(t.scrollHeight),
+        scrollTop: Math.round(t.scrollTop),
+        fromBottom: Math.round(t.scrollHeight - t.scrollTop - t.clientHeight),
+        canScroll: t.scrollHeight > t.clientHeight + 1,
+        images: imgs.length,
+        imagesUndecoded: imgs.filter(i => !i.complete || i.naturalHeight === 0).length,
+        imgHeights: imgs.slice(-3).map(i => Math.round(i.getBoundingClientRect().height))
+    };
+}");
+Console.WriteLine($"[peek] transcript: {m}");
+
 // ── The robot ───────────────────────────────────────────────────────────────────────────────────────
 if (await app.Locator(".settings.room .robotstatus").CountAsync() > 0)
     Console.WriteLine($"[peek] robot: {(await app.Locator(".settings.room .robotstatus").Last.TextContentAsync() ?? "").Trim()}");

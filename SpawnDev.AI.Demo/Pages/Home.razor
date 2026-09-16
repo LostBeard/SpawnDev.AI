@@ -600,7 +600,12 @@
                     @foreach (var img in msg.Images)
                     {
                         <figure class="genimg">
-                            <img src="@img.Url" alt="@img.Label" />
+                            @* 🔴 AN IMAGE ARRIVES AFTER THE SCROLL THAT WAS MEANT TO SHOW IT. The message
+                               is added, the transcript scrolls, and THEN the picture decodes and adds
+                               ~514px below the fold - so "scroll when content is added" is only true if
+                               the image counts as content, and it does not exist yet at that moment.
+                               Scrolling again on load is what makes the rule actually hold. *@
+                            <img src="@img.Url" alt="@img.Label" @onload="@(() => ScrollToBottom())" />
                             <figcaption>
                                 <span>@img.Label</span>
                                 <a class="dl" href="@img.Url" download="@($"{Sanitize(img.Label)}.png")">⬇ Download</a>

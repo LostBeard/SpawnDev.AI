@@ -596,18 +596,26 @@ public partial class Home : IDisposable
     /// chat app does, and the threshold is generous because a half-rendered line should not count as
     /// having scrolled away.
     /// </remarks>
+    /// <summary>
+    /// Put the newest content in view. Called after anything is added to the transcript.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 IT SCROLLS. UNCONDITIONALLY. Two cleverer versions of this shipped and both failed the same
+    /// way: each tried to decide whether the user "wanted" to be scrolled by measuring how far from the
+    /// bottom the view was, and content that grows on its own makes that measurement a lie. A generated
+    /// image is 514px tall (MEASURED), so the moment one lands the bottom is 514px away and the guard
+    /// concludes the reader has scrolled up - for the rest of the session. Captain, twice: "the chat
+    /// window does not scroll down when the chat extends past teh end", then "that chat window stil dows
+    /// not scroll with content".
+    ///
+    /// ⚠️ The "don't yank the reader" behaviour was never asked for. It was my own addition, and it is
+    /// the entire reason this needed fixing twice. If it is ever wanted it belongs behind a real scroll
+    /// EVENT - user intent from a user gesture - and not behind a measurement taken after the content
+    /// already moved. Until someone asks, the div scrolls to the bottom when content is added.
+    /// </remarks>
     Task ScrollToBottom(bool force = false)
     {
-        try
-        {
-            using var el = _scrollRef.As<HTMLElement>();
-            if (!force)
-            {
-                var distanceFromBottom = el.ScrollHeight - el.ScrollTop - el.ClientHeight;
-                if (distanceFromBottom > 120) return Task.CompletedTask;
-            }
-            el.ScrollTop = el.ScrollHeight;
-        }
+        try { using var el = _scrollRef.As<HTMLElement>(); el.ScrollTop = el.ScrollHeight; }
         catch { }
         return Task.CompletedTask;
     }
