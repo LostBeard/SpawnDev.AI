@@ -279,7 +279,7 @@ public partial class Home : IDisposable
         // them has already happened, and SetAsync is a no-op when nothing changed.
         _ = Prefs.SetAsync(AppPreferences.ModelKey, _model);
         _messages.Add(new Msg { Role = "user", Text = text });
-        _busy = true; _streaming = "";
+        _busy = true; _streaming = ""; ResetSpeculativeChunk();
         _stoppedByUser = false;
         _generationCts = new CancellationTokenSource();
         string? spokenReply = null;
@@ -338,6 +338,10 @@ public partial class Home : IDisposable
                     // the browser; a number an order of magnitude off was describing a different quantity.
                     firstDeltaAt ??= DateTime.UtcNow;
                     _streaming += delta; deltas++;
+                    // Start rendering the first spoken chunk as soon as the stream has settled it, so
+                    // hands-free does not sit in silence for ~9 s after the text lands. See
+                    // MaybeStartSpeculativeChunk.
+                    MaybeStartSpeculativeChunk();
                     if (renderClock.ElapsedMilliseconds >= 100)
                     {
                         renderClock.Restart();
@@ -1106,6 +1110,70 @@ public partial class Home : IDisposable
     /// Sentence boundaries come from the engine's own splitter; this only decides how many of those pieces
     /// share one synthesis. See <see cref="SpeakChunkCharactersAfterFirst"/> for why that is not uniform.
     /// </remarks>
+    /// <summary>
+    /// Reply text -> the words actually spoken, plus the stage directions lifted out of them.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 ONE FUNCTION, BOTH CALLERS, ON PURPOSE. This is used by <c>SpeakCoreAsync</c> and by the
+    /// speculative pre-render that starts during generation. If they each did their own asterisk
+    /// handling they would drift, and the pre-render would produce audio for text the reply never says -
+    /// the one failure mode of speculating that a listener cannot detect.
+    /// </remarks>
+    static (string Speakable, IReadOnlyList<string> Actions) ToSpeakableText(string text, bool inScene)
+    {
+        var (marked, markedActions) = StageDirections.SplitForBody(text);
+        var speakable = marked;
+        var actionList = new List<string>(markedActions);
+        if (inScene)
+        {
+            var prose = SpawnDev.Reachy.SpokenText.Split(marked);
+            speakable = prose.Spoken;
+            actionList.AddRange(prose.Actions);
+        }
+        return (speakable, actionList);
+    }
+
+    // ── Speculative first chunk ──────────────────────────────────────────────────────────────────
+    //
+    // 🔴 THE NINE SECONDS TJ REPORTED. A reply's first chunk takes ~9.8 s to synthesise on WebGPU
+    // (MEASURED 2026-09-15), and today that whole 9.8 s happens AFTER the text has finished streaming -
+    // so hands-free has a nine-second hole between the answer appearing and the voice starting.
+    //
+    // ⭐ The first chunk is decidable long before the reply ends. SplitIntoSpeakableChunks closes a chunk
+    // at a sentence end using only text already seen, so once a PREFIX already yields two chunks, chunk 0
+    // can never change - appending more text cannot move a boundary that is already behind it. That is
+    // the licence to start rendering it while the model is still writing.
+    //
+    // ⚠️ HANDS-FREE ONLY. The renderer and the LLM share one GPU in one worker, so this does not create
+    // free time - it MOVES the synthesis earlier, and the text finishes slightly later for it. In
+    // hands-free nobody is reading the text, so that trade is all upside; with the keyboard it would slow
+    // the thing the user is actually watching.
+    //
+    // ⚠️ VALIDATED, NOT TRUSTED. The audio is used only if the finished reply's chunk 0 is byte-identical
+    // to what was speculated. `spokenReply` is ResolveArtifactsAsync(_streaming), not the raw stream, so a
+    // late artifact rewrite can change the text - in which case this is discarded and the chunk rendered
+    // normally. Wrong audio is far worse than a slow start.
+    string? _specChunkText;
+    Task<(float[] Samples, int Rate, double Ms)>? _specChunkTask;
+
+    void ResetSpeculativeChunk()
+    {
+        _specChunkText = null;
+        _specChunkTask = null;
+    }
+
+    /// <summary>Starts rendering chunk 0 if the stream has settled it and nothing is rendering yet.</summary>
+    void MaybeStartSpeculativeChunk()
+    {
+        if (!_handsFree || _specChunkTask != null || string.IsNullOrWhiteSpace(_voiceId)) return;
+        var (speakable, _) = ToSpeakableText(_streaming, _room.RolePlay);
+        if (string.IsNullOrWhiteSpace(speakable)) return;
+        var chunks = SpeakableChunks(speakable);
+        if (chunks.Count < 2) return;          // chunk 0 not settled yet - see the remarks above
+        _specChunkText = chunks[0];
+        _specChunkTask = SynthesizeChunkAsync(_specChunkText, _voiceId);
+    }
+
     internal static List<string> SpeakableChunks(string speakable)
     {
         var fine = AiVoiceEngine.SplitIntoSpeakableChunks(
@@ -1389,17 +1457,7 @@ public partial class Home : IDisposable
             // models write "Her head tilts to one side" with no markers at all, and left alone it is read
             // aloud. Running it over the ALREADY-split text is safe - SplitForBody emits no asterisks, so
             // the second pass can only do the prose work.
-            var inScene = _room.RolePlay;
-            var (marked, markedActions) = StageDirections.SplitForBody(text);
-            string speakable = marked;
-            var actionList = new List<string>(markedActions);
-            if (inScene)
-            {
-                var prose = SpawnDev.Reachy.SpokenText.Split(marked);
-                speakable = prose.Spoken;
-                actionList.AddRange(prose.Actions);
-            }
-            IReadOnlyList<string> actions = actionList;
+            var (speakable, actions) = ToSpeakableText(text, _room.RolePlay);
             if (actions.Count > 0)
                 Console.WriteLine($"[HF-SPEAK] {actions.Count} stage direction(s) not spoken: "
                     + string.Join(", ", actions));
@@ -1434,7 +1492,28 @@ public partial class Home : IDisposable
             int spokenChunks = 0;
 
             // Chunk 0 is synthesised up front; from then on the NEXT one renders while the current plays.
-            var pending = SynthesizeChunkAsync(chunks[0], voice);
+            // ⭐ Reuse the chunk rendered DURING generation, but only if the finished reply asks for
+            // byte-identical text. `spokenReply` is ResolveArtifactsAsync(_streaming), so a late artifact
+            // rewrite can change it - and speaking audio the reply does not say is the one failure a
+            // listener cannot detect. On any mismatch the speculation is dropped and this renders
+            // normally, which costs exactly what it cost before.
+            Task<(float[] Samples, int Rate, double Ms)> pending;
+            if (_specChunkTask != null && _specChunkText == chunks[0])
+            {
+                pending = _specChunkTask;
+                // ⚠️ "REUSED", not "without waiting". The task may still be running - whether it saved
+                // anything is the `waited` figure on the first-audio line below, not this message.
+                Console.WriteLine($"[HF-SPEAK] first chunk reusing the render started during generation "
+                                + $"({chunks[0].Length} chars)");
+            }
+            else
+            {
+                if (_specChunkTask != null)
+                    Console.WriteLine("[HF-SPEAK] pre-rendered chunk DISCARDED - the finished reply's first "
+                                    + "chunk differs from what was speculated; rendering it properly");
+                pending = SynthesizeChunkAsync(chunks[0], voice);
+            }
+            ResetSpeculativeChunk();
             DateTime lastClipEndedAt = default;
             for (int i = 0; i < chunks.Count; i++)
             {
@@ -1495,8 +1574,16 @@ public partial class Home : IDisposable
                     speakTicker.Cancel();
                     try { await ticker; } catch { /* already reported by the ticker itself */ }
                     _progressInfo = null; _progressPending = false;
+                    // ⚠️ `waitedMs` IS THE NUMBER THAT SAYS WHETHER PRE-RENDERING HELPED, and it was
+                    // missing here while chunk 2+ has always reported it. Reusing a speculative task is
+                    // NOT the same as the audio being ready - the task may still be running - so
+                    // "pre-rendered" on its own proves nothing. A small waited means the pre-render
+                    // finished ahead of the reply; a waited close to the synthesis time means it started
+                    // too late or was starved by the LLM sharing the GPU, and the speculation bought
+                    // nothing.
                     Console.WriteLine($"[HF-SPEAK] first audio after "
-                        + $"{(DateTime.UtcNow - speakStarted).TotalSeconds:F1}s ({ms:F0} ms synthesis)");
+                        + $"{(DateTime.UtcNow - speakStarted).TotalSeconds:F1}s (waited {waitedMs:F0} ms "
+                        + $"for synthesis, synth took {ms:F0} ms)");
                 }
 
                 // 🔴 THE GAP BETWEEN CHUNKS, MEASURED rather than guessed at. Captain: "there is still a
