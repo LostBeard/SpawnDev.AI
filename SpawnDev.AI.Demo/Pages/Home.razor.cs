@@ -4,6 +4,7 @@ using SpawnDev.SpawnJS.JSObjects;
 using SpawnDev.AI;
 using SpawnDev.AI.Server;
 using SpawnDev.SpawnJS;
+using SpawnDev.SpawnJS.RazorRenderer;
 using SpawnDev.ILGPU.ML.Preprocessing;
 
 namespace SpawnDev.AI.Demo.Pages;
@@ -600,19 +601,16 @@ public partial class Home : IDisposable
     {
         try
         {
-            // 🔴 Renderer.GetElement, NOT ElementReference.As<T>(). `.As<T>()` resolves through
-            // `ElementReference.Context`, which is only a Blazor `WebElementReferenceContext` when a BLAZOR
-            // WebAssembly renderer captured the ref. This app runs on SpawnDomRenderer, where it is not -
-            // so `.As<HTMLElement>()` returned null and this method never scrolled anything, through three
-            // rounds of "fixes" to logic that could not run. The `catch { }` that used to wrap it all is
-            // what made that invisible, and the symptom got blamed on flex, then on stickiness, then on
-            // image load order.
+            // ⚠️ THIS IS SpawnDev.SpawnJS.RazorRenderer's As<T>(), not the Blazor package's. They have the
+            // same name and shape on purpose; the difference is which renderer's captures they understand.
+            // The Blazor one only recognises a WebElementReferenceContext, so under SpawnDomRenderer it
+            // returned a null-forgiving null and this method never scrolled anything - three rounds of
+            // "fixes" went into flex, then scroll-anchoring, then image load order, while the code that was
+            // supposed to do the work had never once run. RazorRenderer 2.1.10 tags its own captures, so
+            // the call a consumer would naturally write now resolves.
             //
-            // ⚠️ Nothing else in the ecosystem was affected: SpawnDomRenderer's own components already use
-            // this API (UiVirtualList, UiDataGrid), and this was the only @ref in the app. It is also the
-            // better call - it reaches the node through the renderer's logical tree, so it works inside a
-            // shadow root where a document query cannot.
-            using var el = Renderer.GetElement<HTMLElement>(_scrollRef);
+            // ⚠️ Null is a REAL answer: @ref fields are not populated until after the first render.
+            using var el = _scrollRef.As<HTMLElement>();
             if (el == null)
             {
                 if (!_scrollComplained) { _scrollComplained = true; Console.WriteLine("[scroll] the transcript ref is not captured yet"); }
@@ -634,7 +632,7 @@ public partial class Home : IDisposable
                 {
                     try
                     {
-                        using var e = Renderer.GetElement<HTMLElement>(_scrollRef);
+                        using var e = _scrollRef.As<HTMLElement>();
                         if (e != null) e.ScrollTop = e.ScrollHeight;
                     }
                     catch (Exception ex) { Console.WriteLine($"[scroll] observer callback: {ex.Message}"); }
