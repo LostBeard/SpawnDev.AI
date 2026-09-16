@@ -250,6 +250,9 @@ public partial class Home : IDisposable
         StateHasChanged();
     }
 
+    /// <summary>True while any of the three panels is showing.</summary>
+    bool AnyPanelOpen => _showSettings || _showModels || _showRoom;
+
     void ToggleSettings() => ShowPanel("settings");
     void ResetSystemPrompt() { _systemPrompt = DefaultSystemPrompt; StateHasChanged(); }
 

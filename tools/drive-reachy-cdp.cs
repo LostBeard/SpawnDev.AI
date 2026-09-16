@@ -209,6 +209,34 @@ try
             fails.Add($"{layout.GetProperty("openPanels").GetInt32()} panels are open at once - they stack "
                     + "and push the conversation away");
 
+        // 🔴 MEASURE THE CHAT WITH A PANEL OPEN. "Only one panel opens at a time" says nothing about how
+        // much room is left for the conversation, and the honest answer was about twenty pixels - which,
+        // as Captain put it, "might as well be zero". Closed-state layout passes happily while the open
+        // state is unusable, so the open state is what has to be measured.
+        await app.ClickAsync("button.gear:has-text(\"📦\")", new() { Timeout = 15000 });
+        var withPanel = await app.EvaluateAsync<System.Text.Json.JsonElement>(@"() => {
+            const t = document.querySelector('.transcript');
+            const p = document.querySelector('.settings');
+            const c = document.querySelector('.composer');
+            return {
+                transcript: t ? Math.round(t.getBoundingClientRect().height) : 0,
+                panel: p ? Math.round(p.getBoundingClientRect().height) : 0,
+                composerInView: c ? (c.getBoundingClientRect().bottom <= window.innerHeight + 1) : false,
+                windowH: window.innerHeight
+            };
+        }");
+        Console.WriteLine($"[cdp] layout with a panel open: {withPanel}");
+
+        var chatH = withPanel.GetProperty("transcript").GetInt32();
+        if (chatH < 120)
+            fails.Add($"with a panel open the conversation is {chatH}px tall - the panel has taken the "
+                    + "chat window rather than sharing the space with it");
+        if (!withPanel.GetProperty("composerInView").GetBoolean())
+            fails.Add("with a panel open the composer is off the bottom of the window");
+
+        // Put it back the way it was found.
+        await app.ClickAsync("button.gear:has-text(\"📦\")", new() { Timeout = 15000 });
+
     // ── The room panel, where the robot lives ───────────────────────────────────────────────────────
     if (await app.Locator(".settings.room").CountAsync() == 0)
         await app.ClickAsync("button.gear:has-text(\"🎭\")", new() { Timeout = 15000 });

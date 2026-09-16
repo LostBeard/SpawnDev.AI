@@ -545,7 +545,11 @@
            stage used to be empty with it - so a first visit showed neither of the two things this demo
            exists to show. Nova stands here instead, and reacts while it speaks, exactly as a character
            does. One body, drawn only when the room is NOT in use, so it never competes with the cast. *@
-        @if (!RoomActive)
+        @* ⚠️ THE STAGE STANDS DOWN WHILE A PANEL IS OPEN. It is decoration, and a panel is a task the
+           user deliberately opened - three things (stage, panel, transcript) sharing one column is how
+           the conversation ended up with twenty usable pixels. The bodies come back the moment the panel
+           is closed, and nothing about them is lost meanwhile. *@
+        @if (!RoomActive && !AnyPanelOpen)
         {
             <div class="stage">
                 <div class="stage-slot" title="@DefaultAgentName">
@@ -556,7 +560,7 @@
                 </div>
             </div>
         }
-        @if (RoomActive && EmbodiedAgents().Any())
+        @if (RoomActive && !AnyPanelOpen && EmbodiedAgents().Any())
         {
             <div class="stage">
                 @foreach (var (agent, kind) in EmbodiedAgents())
@@ -852,8 +856,17 @@
            a 100vh column pushes the transcript and the composer off screen. It takes at most half the
            window and scrolls inside itself; the chat stays visible behind it, which is the whole point of
            a panel rather than a page. */
+        /* 🔴 THE PANEL IS WHAT GIVES WAY, NOT THE CONVERSATION. Making the panels mutually exclusive
+           stopped them stacking on EACH OTHER and did nothing about the real problem: a panel and the
+           transcript compete for one column, and `flex: 1` will shrink the chat to nothing without
+           complaint. Captain: "they still stack ontop of the chat window which is left with liek 20
+           pixels which might as well be zero".
+           ⚠️ `min-height: 0` HERE TOO. Without it this box also refuses to shrink below its content, so
+           `max-height` caps it while the flex algorithm still cannot take space back from it when the
+           window is short - the same trap that stopped the transcript scrolling, one element over. */
         flex: 0 1 auto;
-        max-height: 50vh;
+        min-height: 0;
+        max-height: 40vh;
         overflow-y: auto;
         overscroll-behavior: contain;
     }
@@ -1196,7 +1209,11 @@
            transcript scrolling. Captain: "the chat window does not scroll down when the chat extends past
            teh end." The scroll code was correct the whole time; it was scrolling an element that had no
            overflow to scroll. One line, and it is invisible in every screenshot. */
-        min-height: 0;
+        /* A FLOOR, so the chat is never squeezed to a sliver. This is not the `min-height: auto` that
+           broke scrolling - that meant "as tall as my content", which is unbounded. A fixed floor still
+           lets everything past it scroll, and it outranks the panel above because the panel is allowed
+           to shrink and this is not. */
+        min-height: 9rem;
         overflow-y: auto;
         overscroll-behavior: contain;   /* don't rubber-band the page when the transcript hits its end */
         padding: 1rem 0;
