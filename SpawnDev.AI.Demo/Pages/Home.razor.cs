@@ -148,7 +148,15 @@ public partial class Home : IDisposable
     string _input = "", _streaming = "";
     /// <summary>Who the in-progress bubble belongs to. Empty = the solo assistant.</summary>
     string _streamingWho = "";
-    ElementReference _scrollRef;
+    /// <summary>The transcript, as a typed <c>@ref</c> target.</summary>
+    /// <remarks>
+    /// ⭐ <c>ElementRef&lt;T&gt;</c> rather than a bare <see cref="ElementReference"/>: the type says what
+    /// the element IS, so nothing downstream has to name <c>HTMLElement</c> again or get it wrong. It
+    /// stores only the reference and resolves on demand, so no JS slot is held between uses - which
+    /// matters because <c>@ref</c> re-captures on re-render and there is nowhere in that syntax to dispose
+    /// a previous value.
+    /// </remarks>
+    ElementRef<HTMLElement> _scrollRef;
 
     async Task StartAsync()
     {
@@ -610,7 +618,7 @@ public partial class Home : IDisposable
             // the call a consumer would naturally write now resolves.
             //
             // ⚠️ Null is a REAL answer: @ref fields are not populated until after the first render.
-            using var el = _scrollRef.As<HTMLElement>();
+            using var el = _scrollRef.Get();
             if (el == null)
             {
                 if (!_scrollComplained) { _scrollComplained = true; Console.WriteLine("[scroll] the transcript ref is not captured yet"); }
@@ -632,7 +640,7 @@ public partial class Home : IDisposable
                 {
                     try
                     {
-                        using var e = _scrollRef.As<HTMLElement>();
+                        using var e = _scrollRef.Get();
                         if (e != null) e.ScrollTop = e.ScrollHeight;
                     }
                     catch (Exception ex) { Console.WriteLine($"[scroll] observer callback: {ex.Message}"); }
