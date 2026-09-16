@@ -650,7 +650,11 @@ public sealed class AiVoiceTests
         {
             var sw = Stopwatch.StartNew();
             var (samples, rate, model, ms, spoken) =
-                await _client.SpeakInVoiceAsync(lines[i], "test-voice");
+                // 🔴 THE PCM OVERLOAD, because that is what the app speaks through. This test used to call
+                // SpeakInVoiceAsync and was cited as proof the transferred-buffer path worked - it never
+                // touched it, so it could not have failed. A test that exercises the path the product does
+                // NOT use is worth less than no test, because it gets quoted as evidence.
+                await _client.SpeakInVoicePcmAsync(lines[i], "test-voice");
             sw.Stop();
 
             if (samples == null || samples.Length == 0)
@@ -747,7 +751,7 @@ public sealed class AiVoiceTests
         for (int i = 0; i < lines.Length; i++)
         {
             var sw = Stopwatch.StartNew();
-            var (samples, rate, model, ms, spoken) = await _client.SpeakInVoiceAsync(lines[i], voiceId);
+            var (samples, rate, model, ms, spoken) = await _client.SpeakInVoicePcmAsync(lines[i], voiceId);
             sw.Stop();
 
             if (samples == null || samples.Length == 0)

@@ -70,6 +70,24 @@ public partial class Home
         finally { _robotBusy = false; StateHasChanged(); }
     }
 
+    /// <summary>
+    /// True when the character currently speaking is the one holding the physical robot.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Resolved through <see cref="AvatarActions.SoleRobotHolder"/>, the SAME way the on-screen bodies
+    /// are, so the voice and the body cannot disagree about who is really driving the hardware. A second
+    /// character that wants the one Reachy is drawn on screen, and must sound that way too.
+    /// </remarks>
+    bool SpeakingAgentDrivesRobot()
+    {
+        if (!Robot.IsConnected || Robot.Speaker == null || string.IsNullOrEmpty(_speakingAgentId))
+            return false;
+        var agent = _room.Agents.FirstOrDefault(a => a.Id == _speakingAgentId);
+        return agent != null
+            && AvatarActions.EffectiveAvatar(agent, AvatarActions.SoleRobotHolder(_room.Agents))
+               == AvatarKind.Reachy;
+    }
+
     /// <summary>The room. With no agents in it the page behaves exactly as it always did.</summary>
     readonly AgentRoom _room = new();
 

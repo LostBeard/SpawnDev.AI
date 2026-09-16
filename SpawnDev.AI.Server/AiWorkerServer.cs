@@ -1,4 +1,5 @@
 using SpawnDev.SpawnJS.JSObjects;
+using SpawnDev.SpawnJS.WebWorkers;
 using System.Text.Json;
 using ILGPU.Runtime;
 using SpawnDev.ILGPU;
@@ -48,7 +49,20 @@ public interface IAiWorkerApi
     /// ⚠️ The buffer is float32 PCM and nothing else; the sample rate and the rest live in the metadata
     /// JSON. Do not try to infer the rate from the length.
     /// </para>
+    /// <para>
+    /// 🔴 <c>[return: WorkerTransfer(true)]</c> IS LOAD-BEARING. The dispatcher's default is
+    /// <c>TransferRequired</c>, which transfers only types that DEMAND it (a MessagePort, a
+    /// MediaStreamTrack). An <see cref="ArrayBuffer"/> is merely transfer-ABLE, so without this attribute
+    /// it is structured-CLONED instead - the audio still arrives and every test still passes, it just
+    /// costs a full copy of the buffer on a path whose whole point is not copying it. Nothing reports
+    /// that; the only symptom is the cost you were trying to remove still being there.
+    /// </para>
+    /// <para>
+    /// ⚠️ Transferring NEUTERS the buffer on the worker side. That is correct here - it is built for this
+    /// return and never touched again - but it means the worker must not keep a reference to it.
+    /// </para>
     /// </remarks>
+    [return: WorkerTransfer(true)]
     Task<ArrayBuffer> SpeakPcmAsync(string bodyJson, Action<string> onMeta, CancellationToken ct = default);
 
     /// <summary>
@@ -284,6 +298,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     }
 
     /// <inheritdoc/>
+    [return: WorkerTransfer(true)]
     public async Task<ArrayBuffer> SpeakPcmAsync(string bodyJson, Action<string> onMeta,
         CancellationToken ct = default)
     {
@@ -296,10 +311,14 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
         int Int(string name, int dflt) => body.TryGetProperty(name, out var e)
             && e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out var v) ? v : dflt;
 
-        int? maxSpoken = body.TryGetProperty("max_spoken_characters", out var mEl) && mEl.TryGetInt32(out var m)
-            ? m : null;
-        int? noiseSeed = body.TryGetProperty("noise_seed", out var nEl) && nEl.TryGetInt32(out var n)
-            ? n : null;
+        // 🔴 ValueKind MUST be checked before TryGetInt32. TryGetProperty returns TRUE for a property that
+        // is present with a NULL value, and TryGetInt32 on a Null element THROWS rather than returning
+        // false - "JsonElementHasWrongType, Number, Null". The client serialises an absent option as
+        // `null` rather than omitting it, so this fires on the ordinary case of not passing one.
+        int? maxSpoken = body.TryGetProperty("max_spoken_characters", out var mEl)
+            && mEl.ValueKind == JsonValueKind.Number && mEl.TryGetInt32(out var m) ? m : null;
+        int? noiseSeed = body.TryGetProperty("noise_seed", out var nEl)
+            && nEl.ValueKind == JsonValueKind.Number && nEl.TryGetInt32(out var n) ? n : null;
 
         // Both forms the JSON route accepts, so this is a change of WIRE SHAPE and nothing else. A
         // prepared voice is the one the app uses: the reference crosses once, at /api/voices, and a reply

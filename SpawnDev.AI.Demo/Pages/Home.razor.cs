@@ -1598,7 +1598,14 @@ public partial class Home : IDisposable
                 // clip ending and this one starting, and `waited` is how much of it was synthesis.
                 var silenceMs = lastClipEndedAt == default ? 0
                     : (DateTime.UtcNow - lastClipEndedAt).TotalMilliseconds;
-                var seconds = await _speaker.PlayAsync(samples, rate);
+                // 🔴 THE CHARACTER HOLDING THE ROBOT SPEAKS OUT OF THE ROBOT. That is most of what having a
+                // body means to whoever is listening - more than the gestures - and it is the difference
+                // between a voice coming from the desk and a voice coming from the thing in the room.
+                // Everyone else in the scene stays on the page's own output.
+                var robotSpeaker = SpeakingAgentDrivesRobot() ? Robot.Speaker : null;
+                var seconds = robotSpeaker != null
+                    ? await robotSpeaker.PlayAsync(samples, rate, _speakCts?.Token ?? default)
+                    : await _speaker.PlayAsync(samples, rate);
                 if (i > 0)
                     Console.WriteLine($"[HF-SPEAK] chunk {i + 1}/{chunks.Count}: silence {silenceMs:F0} ms "
                         + $"(waited {waitedMs:F0} ms for synthesis, synth took {ms:F0} ms), plays {seconds:F1}s");

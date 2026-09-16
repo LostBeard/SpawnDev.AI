@@ -47,6 +47,15 @@ public sealed class ReachyDriver : IAsyncDisposable
     /// <summary>Which transport is live.</summary>
     public Link Transport { get; private set; } = Link.None;
 
+    /// <summary>
+    /// The robot's speaker, when one is connected over WebRTC. Null otherwise.
+    /// </summary>
+    /// <remarks>
+    /// A character holding the robot speaks through THIS instead of the page's audio output - that is
+    /// most of what "having a body" means to a listener, more than the gestures.
+    /// </remarks>
+    public ReachySpeaker? Speaker { get; private set; }
+
     /// <summary>The robot's address, as last connected.</summary>
     public string Address { get; private set; } = "";
 
@@ -119,6 +128,10 @@ public sealed class ReachyDriver : IAsyncDisposable
             await sdk.AutoConnectAsync().ConfigureAwait(false);
 
             var transport = new ReachyWebRtcTransport(sdk);
+            // The robot's own speaker, so a character with a body sounds like it is in the room. Only on
+            // the WebRTC transport: the LAN daemon path has its own sound API and is not wired to this.
+            Speaker = new ReachySpeaker(sdk);
+            Speaker.Log += m => Console.WriteLine(m);
             _lifecycle = transport;
             _owned = null;
             _body = new ReachyBody(transport);
@@ -260,6 +273,7 @@ public sealed class ReachyDriver : IAsyncDisposable
         _body = null;
         _lifecycle = null;
         _owned = null;
+        Speaker = null;
         Transport = Link.None;
         if (life == null) return;
 

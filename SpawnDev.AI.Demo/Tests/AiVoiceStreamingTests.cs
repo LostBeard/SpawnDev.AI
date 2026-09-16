@@ -87,7 +87,7 @@ public sealed class AiVoiceStreamingTests
         // ⚠️ One throwaway utterance FIRST so the measured reply does not also pay one-time kernel
         // compilation and pool growth. A real session pays that at load, before anybody speaks - charging
         // it to the first chunk would describe the first reply of a session as though it were every reply.
-        await _client.SpeakInVoiceAsync("Ready.", voiceId);
+        await _client.SpeakInVoicePcmAsync("Ready.", voiceId);
 
         var renderMs = new double[chunks.Count];
         var audioSec = new double[chunks.Count];
@@ -95,7 +95,7 @@ public sealed class AiVoiceStreamingTests
         for (int i = 0; i < chunks.Count; i++)
         {
             var sw = Stopwatch.StartNew();
-            var (samples, rate, _, _, spoken) = await _client.SpeakInVoiceAsync(chunks[i], voiceId);
+            var (samples, rate, _, _, spoken) = await _client.SpeakInVoicePcmAsync(chunks[i], voiceId);
             sw.Stop();
 
             if (samples == null || samples.Length == 0)
