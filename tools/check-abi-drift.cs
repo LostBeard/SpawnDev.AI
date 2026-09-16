@@ -98,6 +98,28 @@ foreach (var f in files)
     var missingByTarget = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
     var refCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
+    // TYPE references first. A member reference only exists where a member is CALLED, so a type that was
+    // renamed or removed but is merely named - a field's type, a base class, a parameter type on a method
+    // this assembly never invokes - would slip past the member pass and surface as a TypeLoadException
+    // instead. Same failure, same invisibility to the build; it just costs a different exception.
+    foreach (var tr in consumer.MainModule.GetTypeReferences())
+    {
+        var t = (TypeReference)tr;
+        while (t is GenericInstanceType g) t = g.ElementType;
+        var tgt = t.Scope?.Name;
+        if (tgt is null || !defined.TryGetValue(tgt, out var tdef)) continue;
+        if (string.Equals(tgt, consumer.Name.Name, StringComparison.OrdinalIgnoreCase)) continue;
+
+        refCounts[tgt] = refCounts.GetValueOrDefault(tgt) + 1;
+        var full = OpenForm(t.FullName);
+        if (!tdef.Types.Contains(full))
+        {
+            if (!missingByTarget.TryGetValue(tgt, out var s))
+                missingByTarget[tgt] = s = new SortedSet<string>(StringComparer.Ordinal);
+            s.Add($"TYPE   {full}");
+        }
+    }
+
     foreach (var mr in consumer.MainModule.GetMemberReferences())
     {
         var declRef = mr.DeclaringType;
