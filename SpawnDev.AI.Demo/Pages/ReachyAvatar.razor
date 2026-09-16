@@ -6,26 +6,44 @@
     @* @key on the animated group is what makes the SAME action play twice in a row. A CSS animation does
        not restart when its class is re-applied to a node that already has it, so a character nodding twice
        would nod once and then stand still. Re-keying forces Blazor to swap the element, which restarts it. *@
+    @* 🔴 DRAWN FROM THE REAL ROBOT, not from "a robot". Captain: "the avatars are currentyl very
+       lackign in the AI demo... i want it to be a good representation of Reachy, at least the default
+       one." What was here was an ellipse with two dots - it could have been any machine, and a stand-in
+       that does not look like the hardware breaks the one promise this component makes, which is that a
+       scene reads the same whether it plays on screen or on the robot.
+       Reachy Mini's identity is four things, and all four are below: a domed cream SHELL, a wide dark
+       VISOR carrying the eyes, two thin antennae with BALL TIPS, and a squat fabric-banded BASE. *@
     <svg viewBox="0 0 100 110" class="body" @key="_beat">
         <g class="act-@Action.ToString().ToLowerInvariant()">
-            <!-- antennae: the expressive part, since there are no arms or eyebrows -->
+            @* Antennae: the expressive part, since there are no arms and no eyebrows. Curved, not
+               straight lines - on the real unit they are flexible stalks and they bend. *@
             <g class="antennae">
-                <line class="ant left" x1="36" y1="30" x2="26" y2="10" />
-                <circle class="tip" cx="26" cy="9" r="3.5" />
-                <line class="ant right" x1="64" y1="30" x2="74" y2="10" />
-                <circle class="tip" cx="74" cy="9" r="3.5" />
+                <path class="ant left" d="M39 28 Q32 18 29 9" />
+                <circle class="tip" cx="29" cy="8" r="3.2" />
+                <path class="ant right" d="M61 28 Q68 18 71 9" />
+                <circle class="tip" cx="71" cy="8" r="3.2" />
             </g>
-            <!-- head -->
             <g class="head">
-                <ellipse class="skull" cx="50" cy="48" rx="26" ry="23" />
-                <circle class="eye" cx="40" cy="46" r="5.5" />
-                <circle class="eye" cx="60" cy="46" r="5.5" />
-                <circle class="pupil" cx="40" cy="46" r="2.4" />
-                <circle class="pupil" cx="60" cy="46" r="2.4" />
+                @* The shell: a cylinder with a domed top, flat-bottomed where it meets the neck. *@
+                <path class="shell" d="M24 63 L24 45 Q24 23 50 23 Q76 23 76 45 L76 63 Q76 68 69 68 L31 68 Q24 68 24 63 Z" />
+                @* One soft shade down the right, so the dome reads as round rather than as a sticker. *@
+                <path class="shade" d="M61 24.5 Q76 30 76 45 L76 63 Q76 68 69 68 L61 68 Z" />
+                @* The visor is the single most recognisable thing about this robot - a dark band across
+                   the whole face with the cameras set into it, NOT two eyes floating on the shell. *@
+                <rect class="visor" x="27" y="38" width="46" height="23" rx="11" />
+                <circle class="eye" cx="40" cy="49.5" r="6.4" />
+                <circle class="eye" cx="60" cy="49.5" r="6.4" />
+                <circle class="pupil left" cx="40" cy="49.5" r="2.9" />
+                <circle class="pupil right" cx="60" cy="49.5" r="2.9" />
             </g>
         </g>
-        <!-- body: fixed, so the head has something to move against -->
-        <path class="torso" d="M30 74 Q50 68 70 74 L76 100 Q50 106 24 100 Z" />
+        @* Base: fixed, so the head has something to move against. The band is the speaker/fabric
+           section, which is most of what the body looks like from across a room. *@
+        <g class="base">
+            <rect class="neck" x="38" y="66" width="24" height="6" rx="3" />
+            <path class="torso" d="M29 72 L71 72 L75 98 Q75 106 50 106 Q25 106 25 98 Z" />
+            <path class="band" d="M27.2 86 L72.8 86 L75 98 Q75 106 50 106 Q25 106 25 98 Z" />
+        </g>
     </svg>
     <div class="label">@Name</div>
 </div>
@@ -74,20 +92,43 @@
         overflow: visible;
     }
 
-    .reachy .skull {
-        fill: #1b2233;
-        stroke: #3a4a63;
-        stroke-width: 2;
+    /* ⚠️ CREAM, not dark. The old body was page-coloured and vanished into the panel behind it; the real
+       robot is an off-white shell, and against this dark UI that is also what makes it legible at 74px. */
+    .reachy .shell {
+        fill: #ece7dd;
+        stroke: #b9b0a0;
+        stroke-width: 1.4;
+    }
+
+    .reachy .shade {
+        fill: #d5cdbe;
+        opacity: .85;
+    }
+
+    .reachy .visor {
+        fill: #141924;
+        stroke: #2b3344;
+        stroke-width: 1.2;
+    }
+
+    .reachy .neck {
+        fill: #b3aa9a;
     }
 
     .reachy .torso {
-        fill: #151b28;
-        stroke: #273043;
-        stroke-width: 2;
+        fill: #e3ded3;
+        stroke: #b9b0a0;
+        stroke-width: 1.4;
     }
 
+    .reachy .band {
+        fill: #49556b;
+    }
+
+    /* The eye is the camera housing inside the visor; the pupil is the only lit thing on the robot, which
+       is why it carries the app's accent and the blink. */
     .reachy .eye {
-        fill: #0b0f18;
+        fill: #2a3446;
     }
 
     .reachy .pupil {
@@ -95,9 +136,10 @@
     }
 
     .reachy .ant {
-        stroke: #3a4a63;
-        stroke-width: 2.5;
+        stroke: #6b7385;
+        stroke-width: 2.2;
         stroke-linecap: round;
+        fill: none;
     }
 
     .reachy .tip {
@@ -132,8 +174,12 @@
     }
 
     /* The second eye is a beat behind, which is what stops two circles pulsing in lockstep from reading
-       as a flashing light rather than a blink. */
-    .reachy .pupil:nth-of-type(2) {
+       as a flashing light rather than a blink.
+       ⚠️ This was `.pupil:nth-of-type(2)` and MATCHED NOTHING. `nth-of-type` counts among siblings of the
+       same ELEMENT type, and the second `circle` in that group is an `eye`, not a pupil - so the rule was
+       asking for a circle that is both the 2nd circle and a pupil, which no element was. The offset never
+       applied and both eyes blinked in lockstep the whole time. A class says what was meant. */
+    .reachy .pupil.right {
         animation-delay: .06s;
     }
 

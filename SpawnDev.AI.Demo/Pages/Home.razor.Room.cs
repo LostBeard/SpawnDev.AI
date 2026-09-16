@@ -78,15 +78,13 @@ public partial class Home
     /// are, so the voice and the body cannot disagree about who is really driving the hardware. A second
     /// character that wants the one Reachy is drawn on screen, and must sound that way too.
     /// </remarks>
+    /// <summary>Whether the voice currently speaking should come out of the robot rather than the page.</summary>
+    /// <remarks>The rule itself is <see cref="AvatarActions.SpeakerDrivesRobot"/>, which is pure and tested;
+    /// this only supplies the two facts the page owns - that a robot is linked and has a speaker.</remarks>
     bool SpeakingAgentDrivesRobot()
-    {
-        if (!Robot.IsConnected || Robot.Speaker == null || string.IsNullOrEmpty(_speakingAgentId))
-            return false;
-        var agent = _room.Agents.FirstOrDefault(a => a.Id == _speakingAgentId);
-        return agent != null
-            && AvatarActions.EffectiveAvatar(agent, AvatarActions.SoleRobotHolder(_room.Agents))
-               == AvatarKind.Reachy;
-    }
+        => Robot.IsConnected
+        && Robot.Speaker != null
+        && AvatarActions.SpeakerDrivesRobot(_room.Agents, _speakingAgentId);
 
     /// <summary>The room. With no agents in it the page behaves exactly as it always did.</summary>
     readonly AgentRoom _room = new();
@@ -467,7 +465,9 @@ public partial class Home
                     // resumeListening: false - the mic reopens ONCE when the whole round is over, below.
                     // Reopening it here would record the user while the next character is still to speak,
                     // and capture that character's synthesised voice as if the user had said it.
-                    if (!string.IsNullOrEmpty(agent.VoiceId)
+                    // `_muted` is the same global switch the header shows - a character with a voice is
+                    // still a character with a voice, it just is not heard while the page is silenced.
+                    if (!_muted && !string.IsNullOrEmpty(agent.VoiceId)
                         && !(_generationCts?.IsCancellationRequested ?? false))
                         await SpeakReplyAsync(line.Text, agent.VoiceId, resumeListening: false);
 

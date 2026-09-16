@@ -155,4 +155,66 @@ public sealed class AvatarActionTests
                 + "not produce any and the body will never move");
         return Task.CompletedTask;
     }
+
+    /// <summary>Who the robot speaks for, in every room shape the app can actually be in.</summary>
+    /// <remarks>
+    /// 🔴 THIS RULE DECIDES WHERE A VOICE COMES OUT, and until 2026-09-16 it lived inside the page reading
+    /// four instance fields, so the only way to exercise it was a browser plus a robot plus a Hugging Face
+    /// sign-in. It was also WRONG in the commonest case: with no character holding the body, a connected
+    /// robot was never used, so "Connect my Reachy" linked the hardware and then changed nothing anyone
+    /// could hear. Nothing failed - which is exactly why it survived.
+    ///
+    /// ⚠️ The empty-room case is the one that matters most and is the easiest to leave out, because a test
+    /// author naturally writes rooms with characters in them. The demo's default state has NONE.
+    /// </remarks>
+    [AiTest(Timeout = 30_000)]
+    public Task RobotGoesToWhoeverSpeaksUnlessSomebodyHoldsIt()
+    {
+        var empty = new List<ChatAgent>();
+
+        // The solo assistant, no room at all: the robot the user just connected gets used.
+        if (!AvatarActions.SpeakerDrivesRobot(empty, null))
+            throw new Exception("with nobody holding the robot, the solo assistant must drive it - "
+                + "otherwise connecting a robot changes nothing the user can hear");
+        if (!AvatarActions.SpeakerDrivesRobot(empty, ""))
+            throw new Exception("an empty speaking-agent id is the solo assistant and must drive it too");
+
+        // A room whose characters are all on-screen: still nobody holds it, so it is still up for grabs.
+        var screenOnly = new List<ChatAgent>
+        {
+            new("a", "A", "m", "p", null, null, AvatarKind.Screen),
+            new("b", "B", "m", "p", null, null, AvatarKind.Screen),
+        };
+        if (!AvatarActions.SpeakerDrivesRobot(screenOnly, "a"))
+            throw new Exception("no character claimed the robot, so the speaker must get it");
+
+        // Somebody holds it. Now it is theirs alone.
+        var held = new List<ChatAgent>
+        {
+            new("holder", "Holder", "m", "p", null, null, AvatarKind.Reachy),
+            new("other", "Other", "m", "p", null, null, AvatarKind.Screen),
+        };
+        if (!AvatarActions.SpeakerDrivesRobot(held, "holder"))
+            throw new Exception("the holder must drive the robot when it is the one speaking");
+        if (AvatarActions.SpeakerDrivesRobot(held, "other"))
+            throw new Exception("a character that does not hold the robot must NOT drive it - two voices "
+                + "on one head is the contention this rule exists to prevent");
+        if (AvatarActions.SpeakerDrivesRobot(held, null))
+            throw new Exception("the solo assistant must not take a robot a character is holding");
+        if (AvatarActions.SpeakerDrivesRobot(held, "nobody-by-this-id"))
+            throw new Exception("an unknown speaker must not drive a held robot");
+
+        // Two claimants: the first in speaking order keeps it, the second falls back to a screen body.
+        var contested = new List<ChatAgent>
+        {
+            new("first", "First", "m", "p", null, null, AvatarKind.Reachy),
+            new("second", "Second", "m", "p", null, null, AvatarKind.Reachy),
+        };
+        if (!AvatarActions.SpeakerDrivesRobot(contested, "first"))
+            throw new Exception("the first claimant keeps the robot");
+        if (AvatarActions.SpeakerDrivesRobot(contested, "second"))
+            throw new Exception("the second claimant must be drawn on screen, not fight for the head");
+
+        return Task.CompletedTask;
+    }
 }

@@ -205,6 +205,8 @@ public partial class Home : IDisposable
                 _voiceId = savedVoice;
                 _voiceName = VoiceDisplayName(savedVoice);
             }
+            // Only an explicit "1" mutes: a missing or unreadable preference must leave the demo audible.
+            _muted = Prefs.Get(AppPreferences.MuteKey) == "1";
             // Characters are metadata only - no audio, no model - so listing them costs a directory read.
             await LoadCharactersAsync();
             // The catalogue is metadata too, and it is what lets the picker state a size before asking
@@ -402,7 +404,13 @@ public partial class Home : IDisposable
 
         // Speaking happens AFTER the finally, so the reply is on screen and the composer is usable while
         // it talks. Doing it inside the turn would leave the UI "busy" for the whole utterance.
-        if (_handsFree && !string.IsNullOrWhiteSpace(spokenReply))
+        //
+        // 🔴 NOT `_handsFree` ANY MORE. Captain: "ai should always read their responses out loud if their
+        // persona has a voice selected with the exception of a global page mute". Gating on hands-free
+        // meant the demo was mute for everyone who typed - including anyone who had just connected a
+        // Reachy and was waiting to hear it, which is how a working speaker path reads as a broken one.
+        // A voice IS selected by default, so the condition below is true on a first visit, by design.
+        if (!_muted && !string.IsNullOrWhiteSpace(spokenReply) && !string.IsNullOrWhiteSpace(_voiceId))
             await SpeakReplyAsync(spokenReply!);
     }
 
@@ -675,6 +683,30 @@ public partial class Home : IDisposable
     string _voiceId = BundledVoices.DefaultId;
     string _voiceName = "";
     bool _savingVoice;
+
+    /// <summary>Global page mute. One click silences every voice, including a robot's.</summary>
+    /// <remarks>
+    /// 🔴 THE COUNTERWEIGHT TO SPEAKING BY DEFAULT. Captain: "ai should always read their responses out
+    /// loud if their persona has a voice selected with the exception of a global page mute that allows
+    /// toggling all tts with 1 click". Those two halves are one design and neither works alone: without
+    /// always-speaking the demo is silent unless hands-free happens to be on, and without one-click mute
+    /// always-speaking is something the user cannot escape mid-reply.
+    ///
+    /// ⚠️ It gates the CALL, not the synthesis, so a muted page renders no audio at all rather than
+    /// rendering it and dropping it on the floor - which on this engine is seconds of GPU work per chunk.
+    /// </remarks>
+    bool _muted;
+
+    /// <summary>Silence or unsilence every voice, and remember it.</summary>
+    async Task ToggleMuteAsync()
+    {
+        _muted = !_muted;
+        // ⚠️ Stop what is ALREADY talking. A mute that only applies to the next reply is not a mute - the
+        // user pressed it because of the sound happening right now.
+        if (_muted) StopSpeaking();
+        await Prefs.SetAsync(AppPreferences.MuteKey, _muted ? "1" : "0");
+        StateHasChanged();
+    }
 
     /// <summary>Name typed for the voice about to be saved. Defaults to something usable.</summary>
     string _newVoiceName = "My voice";

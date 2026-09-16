@@ -62,6 +62,12 @@
                         title="Group chat: characters, scene, and who is in the room">
                     @(RoomActive ? $"🎭 {_room.Agents.Count}" : "🎭")
                 </button>
+                @* GLOBAL MUTE. One click, always reachable, and it stops what is talking right now - not
+                   only the next reply. Replies are spoken by default, so this is the way out of that. *@
+                <button class="gear @(_muted ? "on" : "")" @onclick="ToggleMuteAsync"
+                        title="@(_muted ? "Muted - click to let replies be spoken again" : "Mute every voice, including the robot")">
+                    @(_muted ? "🔇" : "🔊")
+                </button>
             </div>
         }
     </header>
@@ -79,6 +85,113 @@
                 <div class="setactions">
                     <button class="linkbtn" @onclick="ResetSystemPrompt" disabled="@_busy">Reset to default</button>
                     <span class="setcount">@_systemPrompt.Length chars</span>
+                </div>
+            </div>
+            @* ── VOICE ──
+               🔴 THIS LIVES IN THE PERSONA, NOT THE COMPOSER. Captain: "i still do not see where a user
+               goes to record voices for tts use. there does not need to be a voice select in the main ui
+               as the voice select is supposed to be under persona editor." It was a bare dropdown in the
+               message toolbar between a microphone button and two diagnostics buttons, which is where a
+               setting goes to be invisible - and the SAVE control only appeared AFTER you had already
+               spoken, so the one path to recording a voice was reachable only by accident.
+               This panel IS the solo assistant's persona (prompt, temperature, length), so its voice
+               belongs here beside them. Characters pick their own in the character editor. *@
+            <div class="setrow">
+                <label class="setlbl">
+                    Voice
+                    <span class="sethint">
+                        Replies are spoken out loud in this voice. Silence everything with 🔊 in the header.
+                    </span>
+                </label>
+        @* SAVED VOICES. Without these the reply is cloned from the user's LAST TURN on every single
+           reply - re-sending the reference PCM over the worker, making the engine re-derive prompt
+           features that never change, and cloning from the recogniser's transcript rather than a clean
+           one. A saved voice is derived once, persists in OPFS across reloads, and is chosen here. *@
+        <select class="voice-picker" disabled="@_savingVoice"
+                title="Which voice replies are spoken in"
+                @onchange="e => SelectVoiceAsync(e.Value?.ToString() ?? string.Empty)">
+            @* 🔴 EVERY ENTRY IS A NAMED VOICE. Captain: "nothing should ever mean 'clone me each
+               turn' because that is just asinine." There used to be an option whose value was the
+               EMPTY STRING and whose meaning was "copy this person's voice on every reply" - and it
+               was the first entry and the default, so it is what you got by touching nothing.
+               Cloning is now what 💾🗣️ does: once, deliberately, producing a voice with a name. *@
+            @* ⭐ BUILT-IN VOICES FIRST, and they are the default. Nothing to record and nothing to
+               clone: the voice is a name the model already knows, and it renders FASTER THAN REALTIME
+               in a browser (measured 1.84s for 2.27s of audio on WebGPU). Everything below this group
+               is cloned by a model that renders 3.6x SLOWER than realtime, which is the pause between
+               spoken chunks - so which group a user lands in is most of how the app feels. *@
+            <optgroup label="Built-in voices — fast, nothing to record">
+                @foreach (var id in BundledVoices.BuiltInIds)
+                {
+                    <option value="@id" selected="@(_voiceId == id)">🔊 @BundledVoices.BuiltInDisplayName(id)</option>
+                }
+            </optgroup>
+            @* Included CLIPS, which are cloned like any other recording - they exist so the cloning
+               path is usable on a fresh install. Each carries its licence in BundledVoices.cs. *@
+            <optgroup label="Cloned from a clip — slower">
+            @foreach (var v in BundledVoices.All)
+            {
+                <option value="@v.Id" selected="@(_voiceId == v.Id)" title="@($"{v.Licence} — {v.Attribution}")">
+                    🎧 @v.DisplayName
+                </option>
+            }
+            @foreach (var v in _savedVoices)
+            {
+                <option value="@v.Id" selected="@(_voiceId == v.Id)">🗣️ @v.DisplayName</option>
+            }
+            </optgroup>
+        </select>
+        @* 🔴 THE RECORDING PATH HAS TO BE VISIBLE BEFORE IT IS USABLE. Captain: "i still do not see
+           where a user goes to record voices for tts use." It was here all along - but only rendered
+           once `_lastHeardSamples` had something in it, so the only way to discover how to save a voice
+           was to have already done the thing that saves one. The controls still need audio to act on;
+           what changed is that the panel now SAYS SO instead of showing nothing. *@
+        @if (_lastHeardSamples == null || _lastHeardSamples.Length == 0)
+        {
+            <span class="sethint">
+                To add your own voice: press 💬🔊 in the message bar and say a sentence. The moment it has
+                heard you, a 💾🗣️ button appears here to keep that voice and name it.
+            </span>
+        }
+        @if (_lastHeardSamples != null && _lastHeardSamples.Length > 0)
+        {
+            <button class="primary" disabled="@_savingVoice"
+                    @onclick='() => SaveCurrentVoiceAsync(_newVoiceName)'
+                    title="Keep the voice you just spoke in, so replies stop re-cloning it every turn">
+                @(_savingVoice ? "…" : "💾🗣️")
+            </button>
+            @* ⚠️ No example names here. This is a demo anyone opens, and a placeholder naming the
+               author's family reads as somebody else's project left switched on. *@
+            <input class="voice-name" placeholder="name this voice" @bind="_newVoiceName"
+                   disabled="@_savingVoice" title="A name for this voice, so you can pick it again later" />
+        }
+        @* ⚠️ Not offered for a BUILT-IN voice: it lives inside the model, there is nothing on disk to
+           delete, and a delete button that cannot delete is worse than no button. *@
+        @if (!string.IsNullOrEmpty(_voiceId) && !BundledVoices.IsBuiltIn(_voiceId))
+        {
+            <button class="primary" @onclick="() => DeleteVoiceAsync(_voiceId)"
+                    title="@($"Delete the saved voice {_voiceName} from this device")">🗑️🗣️</button>
+        }
+            </div>
+            @* ── DIAGNOSTICS ──
+               Both of these bypass the language model on purpose, which makes them useful for looking at
+               image generation alone and misleading as a normal way to use the app. Off the composer,
+               kept working. *@
+            <div class="setrow">
+                <label class="setlbl">
+                    Diagnostics
+                    <span class="sethint">Image generation without the language model in the way.</span>
+                </label>
+                <div class="setactions">
+                    <button class="linkbtn" @onclick="DirectImageFromPromptAsync"
+                            disabled="@(_busy || string.IsNullOrWhiteSpace(_input))"
+                            title="Generate an image directly from what is typed in the composer (bypass the LLM)">
+                        🖼️ Draw what is typed
+                    </button>
+                    <button class="linkbtn" @onclick="TestDirectImageAsync" disabled="@_busy"
+                            title="IMGTEST: direct SD-Turbo, fixed lighthouse prompt (bypass LLM)">
+                        🔬 Fixed test image
+                    </button>
                 </div>
             </div>
             <div class="setgrid">
@@ -242,7 +355,12 @@
                         </button>
                     </div>
                 }
-                <span class="sethint">@Robot.Status</span>
+                @* `robotstatus` is a TEST HOOK, not styling. The robot panel sits inside .settings.room
+                   alongside the character editor, so "the last .sethint in the room panel" is the
+                   character-notes hint, not this - which is exactly what a gate read instead of the
+                   self-test verdict, and then reported the self-test as broken. A named hook cannot
+                   drift like a positional one. *@
+                <span class="sethint robotstatus">@Robot.Status</span>
             </div>
 
             <div class="setrow">
@@ -560,65 +678,6 @@
                 <button class="primary stop" @onclick="StopSpeaking"
                         title="Stop speaking so you can answer">■🔊</button>
             }
-            @* SAVED VOICES. Without these the reply is cloned from the user's LAST TURN on every single
-               reply - re-sending the reference PCM over the worker, making the engine re-derive prompt
-               features that never change, and cloning from the recogniser's transcript rather than a clean
-               one. A saved voice is derived once, persists in OPFS across reloads, and is chosen here. *@
-            <select class="voice-picker" disabled="@_savingVoice"
-                    title="Which voice replies are spoken in"
-                    @onchange="e => SelectVoiceAsync(e.Value?.ToString() ?? string.Empty)">
-                @* 🔴 EVERY ENTRY IS A NAMED VOICE. Captain: "nothing should ever mean 'clone me each
-                   turn' because that is just asinine." There used to be an option whose value was the
-                   EMPTY STRING and whose meaning was "copy this person's voice on every reply" - and it
-                   was the first entry and the default, so it is what you got by touching nothing.
-                   Cloning is now what 💾🗣️ does: once, deliberately, producing a voice with a name. *@
-                @* ⭐ BUILT-IN VOICES FIRST, and they are the default. Nothing to record and nothing to
-                   clone: the voice is a name the model already knows, and it renders FASTER THAN REALTIME
-                   in a browser (measured 1.84s for 2.27s of audio on WebGPU). Everything below this group
-                   is cloned by a model that renders 3.6x SLOWER than realtime, which is the pause between
-                   spoken chunks - so which group a user lands in is most of how the app feels. *@
-                <optgroup label="Built-in voices — fast, nothing to record">
-                    @foreach (var id in BundledVoices.BuiltInIds)
-                    {
-                        <option value="@id" selected="@(_voiceId == id)">🔊 @BundledVoices.BuiltInDisplayName(id)</option>
-                    }
-                </optgroup>
-                @* Included CLIPS, which are cloned like any other recording - they exist so the cloning
-                   path is usable on a fresh install. Each carries its licence in BundledVoices.cs. *@
-                <optgroup label="Cloned from a clip — slower">
-                @foreach (var v in BundledVoices.All)
-                {
-                    <option value="@v.Id" selected="@(_voiceId == v.Id)" title="@($"{v.Licence} — {v.Attribution}")">
-                        🎧 @v.DisplayName
-                    </option>
-                }
-                @foreach (var v in _savedVoices)
-                {
-                    <option value="@v.Id" selected="@(_voiceId == v.Id)">🗣️ @v.DisplayName</option>
-                }
-                </optgroup>
-            </select>
-            @if (_lastHeardSamples != null && _lastHeardSamples.Length > 0)
-            {
-                <button class="primary" disabled="@_savingVoice"
-                        @onclick='() => SaveCurrentVoiceAsync(_newVoiceName)'
-                        title="Keep the voice you just spoke in, so replies stop re-cloning it every turn">
-                    @(_savingVoice ? "…" : "💾🗣️")
-                </button>
-                @* ⚠️ No example names here. This is a demo anyone opens, and a placeholder naming the
-                   author's family reads as somebody else's project left switched on. *@
-                <input class="voice-name" placeholder="name this voice" @bind="_newVoiceName"
-                       disabled="@_savingVoice" title="A name for this voice, so you can pick it again later" />
-            }
-            @* ⚠️ Not offered for a BUILT-IN voice: it lives inside the model, there is nothing on disk to
-               delete, and a delete button that cannot delete is worse than no button. *@
-            @if (!string.IsNullOrEmpty(_voiceId) && !BundledVoices.IsBuiltIn(_voiceId))
-            {
-                <button class="primary" @onclick="() => DeleteVoiceAsync(_voiceId)"
-                        title="@($"Delete the saved voice {_voiceName} from this device")">🗑️🗣️</button>
-            }
-            <button class="primary" @onclick="DirectImageFromPromptAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_input))" title="Generate an image directly from your prompt (bypass the LLM)">🖼️</button>
-            <button class="primary" @onclick="TestDirectImageAsync" disabled="@_busy" title="IMGTEST: direct SD-Turbo, fixed lighthouse prompt (bypass LLM)">🔬</button>
             </div>
         </div>
         @* Two bars, because "it is not hearing me" has two independent halves and one bar cannot
@@ -1306,10 +1365,11 @@
 
         .composer .send { min-width: 5rem; }
 
-        /* The voice name is the only free-text field down here; let it take the slack on a wide row and
-           shrink on a narrow one rather than forcing the row to overflow. */
-        .composer-tools .voice-name { flex: 1 1 9rem; min-width: 0; }
-        .composer-tools .voice-picker { max-width: 14rem; }
+    /* ⚠️ These followed the voice controls out of the composer. Left scoped to .composer-tools they
+       would have matched nothing, and the picker would have stretched the full width of the settings
+       panel - a rule that silently stops applying is how a moved control ends up looking broken. */
+    .settings .voice-name { flex: 1 1 9rem; min-width: 0; }
+    .settings .voice-picker { max-width: 22rem; }
 
     .levels { display: flex; flex-direction: column; gap: 3px; margin: 4px 0 0; }
     .lvl-row { display: flex; align-items: center; gap: 6px; font-size: 11px; opacity: .85; }

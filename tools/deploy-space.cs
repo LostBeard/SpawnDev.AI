@@ -64,6 +64,14 @@ async Task<int> Run()
     var published = Directory.GetFiles(wwwroot, "*", SearchOption.AllDirectories).Length;
     Console.WriteLine($"      {published} files published");
 
+    // 🔴 WHICH BUILD IS THIS. The app prints the same stamp to the browser console on startup as
+    // "[BUILD] SpawnDev.AI.Demo <ver> built <stamp>". Recording it here is what lets a later gate tell a
+    // real failure apart from a browser serving a cached copy of yesterday's app - the single most
+    // expensive confusion in a hosted-page loop, because stale code fails in ways the source cannot
+    // explain. drive-reachy-cdp.cs reads this file and refuses to trust a page that disagrees with it.
+    var stamp = ReadBuildStamp(wwwroot);
+    Console.WriteLine($"      build stamp: {stamp ?? "NOT FOUND - the gate will not be able to detect a stale page"}");
+
     // ── 2. Get the Space repo ───────────────────────────────────────────────────────────────────────
     var work = Path.Combine(Path.GetTempPath(), "spawndev-ai-space-repo");
     if (Directory.Exists(Path.Combine(work, ".git")))
@@ -166,9 +174,53 @@ async Task<int> Run()
         return 2;
     }
 
+    if (stamp != null)
+    {
+        File.WriteAllText(Path.Combine(repo, "tools", ".last-deployed-build"), stamp);
+        Console.WriteLine($"  build deployed  : {stamp}");
+    }
+
     Console.WriteLine();
     Console.WriteLine($"DEPLOYED -> {SpaceUrl}");
     return 0;
+}
+
+/// <summary>
+/// The BuildStampUtc this publish carries, read out of the published assembly itself.
+/// </summary>
+/// <remarks>
+/// ⚠️ Read from the BITS, not from a file date and not from MSBuild's own notion of "now". A file date
+/// changes when a file is copied; what has to be compared against the browser is the exact value the
+/// running assembly will report, and that value only exists inside the assembly.
+///
+/// The layout is a custom-attribute blob: after the ASCII key "BuildStampUtc" comes a single length byte
+/// and then the value, both as .NET serialization strings, which is why the two are adjacent in the file.
+/// </remarks>
+static string? ReadBuildStamp(string wwwroot)
+{
+    var fw = Path.Combine(wwwroot, "_framework");
+    if (!Directory.Exists(fw)) return null;
+    // Publish fingerprints the name (SpawnDev.AI.Demo.<hash>.wasm), so match on the prefix.
+    var asm = Directory.GetFiles(fw, "SpawnDev.AI.Demo*").FirstOrDefault(f =>
+        f.EndsWith(".wasm", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase));
+    if (asm == null) return null;
+
+    var bytes = File.ReadAllBytes(asm);
+    var key = System.Text.Encoding.ASCII.GetBytes("BuildStampUtc");
+    for (var i = 0; i + key.Length + 2 < bytes.Length; i++)
+    {
+        var hit = true;
+        for (var k = 0; k < key.Length; k++) if (bytes[i + k] != key[k]) { hit = false; break; }
+        if (!hit) continue;
+        var lenAt = i + key.Length;
+        int len = bytes[lenAt];
+        if (len is < 1 or > 127 || lenAt + 1 + len > bytes.Length) continue;
+        var value = System.Text.Encoding.UTF8.GetString(bytes, lenAt + 1, len);
+        // Only accept something that looks like the stamp we write, so a coincidental match cannot pass.
+        if (System.Text.RegularExpressions.Regex.IsMatch(value, @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"))
+            return value;
+    }
+    return null;
 }
 
 /// <summary>

@@ -113,21 +113,31 @@ public sealed class ReachyDriver : IAsyncDisposable
             var clientId = js.Get<string?>("huggingface.variables.OAUTH_CLIENT_ID");
             var sdk = await ReachyMiniJs.CreateAsync(js, AppName, clientId).ConfigureAwait(false);
 
-            // ⚠️ autoConnect does NOT start a sign-in. It expects a token to already be there and throws
-            // if there is not one, so the redirect has to be driven from here. login() navigates the page
-            // away to Hugging Face; the user lands back on this page signed in, and presses connect again.
-            Status = "Checking your Hugging Face sign-in...";
-            if (!await sdk.AuthenticateAsync().ConfigureAwait(false))
+            // 🔴 autoConnect FIRST, login() only as the fallback. The docs describe autoConnect as the
+            // whole chain - auth, signalling, robot pick, session, wake - and "auth" includes completing
+            // the Hugging Face redirect, i.e. exchanging the ?code= the browser comes back with for a
+            // token. Calling authenticate() in front of it, as this used to, is a check for an EXISTING
+            // token only: it answers false on the way back from a sign-in, so the code is never
+            // exchanged, login() fires again, and the page redirects FOREVER. Observed: two round trips
+            // in a row, each landing on ?code= and immediately leaving again.
+            Status = "Signing in to Hugging Face and looking for your robot...";
+            try
             {
+                await sdk.AutoConnectAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex) when (NeedsSignIn(ex))
+            {
+                // Genuinely no token and nothing to exchange: send them to sign in. The page navigates
+                // away, and on the way back autoConnect above completes the handshake.
                 Status = "Sending you to Hugging Face to sign in - you will come back here.";
                 sdk.Login();
                 return false;
             }
 
-            Status = "Looking for your robot...";
-            await sdk.AutoConnectAsync().ConfigureAwait(false);
-
             var transport = new ReachyWebRtcTransport(sdk);
+            // Every command the robot receives, with the gap since the last one. This is what makes
+            // "the movement is jerky" a readable timeline instead of an impression.
+            transport.Log += m => Console.WriteLine($"[reachy-cmd] {m}");
             // The robot's own speaker, so a character with a body sounds like it is in the room. Only on
             // the WebRTC transport: the LAN daemon path has its own sound API and is not wired to this.
             Speaker = new ReachySpeaker(sdk);
@@ -150,6 +160,17 @@ public sealed class ReachyDriver : IAsyncDisposable
 
     /// <summary>Name this app advertises to the robot and to Hugging Face.</summary>
     private const string AppName = "SpawnDev.AI";
+
+    /// <summary>
+    /// Whether a failure from the SDK means "nobody is signed in" rather than something being broken.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Matched on the message because the SDK reports it as a plain error. Getting this wrong in the
+    /// permissive direction is a redirect loop, so it matches the SDK's own wording and nothing looser.
+    /// </remarks>
+    private static bool NeedsSignIn(Exception ex)
+        => ex.Message.Contains("Not authenticated", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("call login()", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Move the robot a known amount and read the daemon's own answer back, to settle whether the head

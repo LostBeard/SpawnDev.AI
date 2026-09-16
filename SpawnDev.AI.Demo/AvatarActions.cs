@@ -90,4 +90,38 @@ public static class AvatarActions
         => agent.Avatar == AvatarKind.Reachy && agent.Id != robotHolderId
             ? AvatarKind.Screen      // somebody else has the robot - draw this one instead of dropping it
             : agent.Avatar;
+
+    /// <summary>
+    /// Whether the voice that is speaking right now should come out of the physical robot.
+    /// </summary>
+    /// <param name="agents">The room. Empty when the solo assistant is answering.</param>
+    /// <param name="speakingAgentId">Who is talking, or null/empty for the solo assistant.</param>
+    /// <returns>True when this speaker owns the robot for the current utterance.</returns>
+    /// <remarks>
+    /// 🔴 A CONNECTED ROBOT THAT NOBODY HOLDS IS STILL THE THING THE USER JUST CONNECTED. The rule used to
+    /// require a room character explicitly assigned <see cref="AvatarKind.Reachy"/>, so pressing "Connect
+    /// my Reachy" on a first visit did nothing audible: the robot linked, the reply came out of the page's
+    /// own speakers, and nothing said why. Building a character and handing it the body is a configuration
+    /// step standing in front of the demo's whole point.
+    ///
+    /// ⚠️ It is a PURE FUNCTION on purpose. This decision used to live inside the page, reading four
+    /// instance fields, which meant the one rule that decides where a character's voice comes out could
+    /// not be tested without a browser and a robot. The caller supplies connectedness; everything else
+    /// about who wins is here.
+    /// </remarks>
+    public static bool SpeakerDrivesRobot(IEnumerable<ChatAgent> agents, string? speakingAgentId)
+    {
+        var list = agents as IReadOnlyList<ChatAgent> ?? agents.ToList();
+        var holder = SoleRobotHolder(list);
+
+        // Nobody in the room claimed it - whoever is talking gets it, including the solo assistant, which
+        // has no agent id at all.
+        if (holder == null) return true;
+
+        // Somebody did. Only they may drive it, and only while they are the one speaking - otherwise two
+        // characters would issue conflicting moves to one head.
+        if (string.IsNullOrEmpty(speakingAgentId)) return false;
+        var agent = list.FirstOrDefault(a => a.Id == speakingAgentId);
+        return agent != null && EffectiveAvatar(agent, holder) == AvatarKind.Reachy;
+    }
 }

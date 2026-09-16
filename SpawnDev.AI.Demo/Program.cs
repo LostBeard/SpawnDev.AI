@@ -1,3 +1,4 @@
+using SpawnDev.AI.Demo;
 using SpawnDev.AI.Demo.Pages;
 using SpawnDev.AI.Demo.Tests;
 using SpawnDev.AI.Server;
@@ -7,6 +8,10 @@ using SpawnDev.SpawnJS;
 using SpawnDev.SpawnJS.RazorRenderer;
 using SpawnDev.SpawnJS.WebWorkers;
 using SpawnDev.WebTorrent;
+
+// Which build is actually running. First line in the console, on purpose - a stale build in a
+// browser explains more failures than any theory, and until now this app could not answer it.
+BuildStamp.Print();
 
 var builder = SpawnJSAppBuilder.CreateDefault(args, out var JS);
 

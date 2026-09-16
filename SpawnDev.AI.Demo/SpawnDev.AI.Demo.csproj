@@ -30,4 +30,18 @@
 		<ProjectReference Include="..\SpawnDev.AI.Server\SpawnDev.AI.Server.csproj" />
 	</ItemGroup>
 
+	<!-- 🔴 STAMP THE BUILD TIME INTO THE ASSEMBLY. A browser is the easiest place to be served a stale
+	     build - cached index.html, an old boot manifest, a CDN behind a deploy - and every one of those
+	     looks like the code being wrong. BuildStamp prints this on startup so "did my change reach the
+	     page" is answerable instead of guessed at. Evaluated at build time, deliberately: a value
+	     computed at startup cannot tell new code from old. -->
+	<PropertyGroup>
+		<BuildStampUtc>$([System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"))</BuildStampUtc>
+	</PropertyGroup>
+	<ItemGroup>
+		<AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+			<_Parameter1>BuildStampUtc</_Parameter1>
+			<_Parameter2>$(BuildStampUtc)</_Parameter2>
+		</AssemblyAttribute>
+	</ItemGroup>
 </Project>

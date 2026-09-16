@@ -35,6 +35,14 @@ public sealed class AppPreferences
     /// <summary>The chat model the picker is set to.</summary>
     public const string ModelKey = "chatModel";
 
+    /// <summary>"1" when every voice is silenced. See the mute button in the header.</summary>
+    /// <remarks>
+    /// ⚠️ Stored as a PREFERENCE, so it is allowed to come back null - and null means NOT muted, which is
+    /// the safe default for a store that silently fails. A mute that defaults to ON when storage is
+    /// unreadable would present as "the demo does not speak", which is the hardest kind of bug to see.
+    /// </remarks>
+    public const string MuteKey = "muted";
+
     private readonly IAsyncFS _fs;
     private Dictionary<string, string> _values = new(StringComparer.Ordinal);
     private bool _loaded;
