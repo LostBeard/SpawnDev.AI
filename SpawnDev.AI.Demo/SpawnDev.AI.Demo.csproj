@@ -15,8 +15,6 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<!-- Add Blazor support to SpawnJS -->
-		<PackageReference Include="SpawnDev.SpawnJS.Blazor" Version="2.1.17" />
 
 		<PackageReference Include="SpawnDev.Reachy" Version="0.1.0-preview.3" />
 		<PackageReference Include="SpawnDev.Reachy.Browser" Version="0.1.0-preview.4" />
