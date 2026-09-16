@@ -102,7 +102,18 @@ public partial class Home
     /// </remarks>
     void PerformReply(string? reply)
     {
-        var actions = StageDirections.SplitForBody(reply).Actions;
+        // 🔴 THE SAME EXTRACTION THE VOICE USES, OR THE TWO DISAGREE. This called SplitForBody alone,
+        // while speech goes through ToSpeakableText - which is SplitForBody PLUS, in a scene, the SDK's
+        // SpokenText.Split that lifts UN-ASTERISKED prose. Models write "tilts head" with no markers all
+        // the time, so the voice correctly skipped it ("1 stage direction(s) not spoken: tilts head")
+        // while the body was never told it happened. Captain: "The stage direction does not work... the
+        // avatar does not act out the stage direction. and honestlyy the reachy is still not doign them
+        // either."
+        //
+        // ⚠️ Two extractors over one reply is the defect, not the phrasing. RenderRich already documents
+        // the rule - "the SAME predicate the voice uses decides which is which, so the page and the
+        // speaker never disagree" - and this was the path that disagreed.
+        var actions = ToSpeakableText(reply ?? "", _room.RolePlay).Actions;
         _soloActionCts?.Cancel();
         _soloActionCts?.Dispose();
         _soloActionCts = null;

@@ -1,3 +1,4 @@
+using SpawnDev.AI.Demo.Pages;
 using SpawnDev.AI.Server;
 
 namespace SpawnDev.AI.Demo.Tests;
@@ -292,4 +293,54 @@ public sealed class AiSpeechTests
     }
 
 
+
+    /// <summary>Whisper's narration of noise never reaches the composer, let alone gets sent.</summary>
+    /// <remarks>
+    /// 🔴 GIVEN SILENCE OR ROOM TONE, WHISPER DOES NOT RETURN NOTHING. It returns a bracketed description
+    /// of what it thinks it heard - "(clicking)", "(coughs)", "[BLANK_AUDIO]". Only [BLANK_AUDIO] was
+    /// handled, so everything else was treated as something the user said. Captain saw one arrive while
+    /// the robot's microphone was open: "(c" in the outgoing text box.
+    ///
+    /// ⚠️ In hands-free an annotation is not merely typed, it is SENT, and the assistant answers a noise -
+    /// which is the entire interaction model for a Reachy in another room, listening continuously.
+    ///
+    /// ⭐ Pure string work: no model, no microphone, runs everywhere in milliseconds.
+    /// </remarks>
+    [AiTest(Timeout = 30_000)]
+    public Task NoiseNarrationIsNotTreatedAsSpeech()
+    {
+        void Nothing(string input)
+        {
+            var got = Home.StripNonSpeechAnnotations(input);
+            if (got.Length != 0)
+                throw new Exception($"\"{input}\" is Whisper describing a noise, but it came back as "
+                    + $"\"{got}\" - in hands-free that is sent as a question");
+        }
+
+        void Keeps(string input, string expected)
+        {
+            var got = Home.StripNonSpeechAnnotations(input);
+            if (got != expected)
+                throw new Exception($"\"{input}\" should reduce to \"{expected}\", got \"{got}\"");
+        }
+
+        Nothing("(c");                       // the case that started this - truncated mid-annotation
+        Nothing("[BLANK_AUDIO]");
+        Nothing("(clicking)");
+        Nothing("  (car door closes)  ");
+        Nothing("[ Silence ]");
+        Nothing("");
+        Nothing("   ");
+
+        // Real speech survives, including speech that merely sits next to an annotation.
+        Keeps("hello there", "hello there");
+        Keeps("(clicking) put the kettle on", "put the kettle on");
+        Keeps("(coughs) hello there (clears throat)", "hello there");
+
+        // ⚠️ A parenthesis INSIDE a sentence is not an annotation - dropping it would delete words the
+        // person actually said.
+        Keeps("tell me about SpawnDev (the library) please", "tell me about SpawnDev (the library) please");
+
+        return Task.CompletedTask;
+    }
 }

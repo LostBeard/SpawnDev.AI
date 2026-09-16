@@ -91,7 +91,7 @@ void Hook(IPage p)
 {
     var t = m.Text;
     if (!t.Contains("[BUILD]") && !t.Contains("reachy", StringComparison.OrdinalIgnoreCase)
-        && !t.Contains("HF-MIC") && !t.Contains("[capture]") && !t.Contains("[reachy-mood]") && !t.Contains("[scroll]")
+        && !t.Contains("HF-MIC") && !t.Contains("[capture]") && !t.Contains("[reachy-mood]") && !t.Contains("[scroll]") && !t.Contains("[BODY]")
         && !t.Contains("HF-SPEAK") && !t.Contains("ROOM")) return;
     lock (log) log.Add(t);
     Console.WriteLine($"[console] {t}");
@@ -580,6 +580,27 @@ try
                 if (n == 0) Console.WriteLine("[msg] the transcript is EMPTY - the turn left nothing behind");
             }
             catch (Exception ex) { Console.WriteLine($"[msg] could not read the transcript: {ex.Message}"); }
+
+            // ── DID THE ON-SCREEN AVATAR ACTUALLY MOVE? ──────────────────────────────────────────────
+            // The robot's gesture is visible in the console; the avatar's is not - it is a CSS class on an
+            // SVG group, applied for under a second. Nothing in a log can confirm it, so this watches the
+            // DOM for the class to appear. Captain: "the avatar does not act out the stage direction",
+            // and every instrument so far has only been able to say what was EXTRACTED, not what moved.
+            var avatarSeen = new HashSet<string>();
+            for (var i = 0; i < 40; i++)
+            {
+                try
+                {
+                    var cls = await app.EvaluateAsync<string?>(
+                        "() => { const g = document.querySelector('.stage svg g[class^=act-]');"
+                        + " return g ? g.getAttribute('class') : null; }");
+                    if (!string.IsNullOrEmpty(cls)) avatarSeen.Add(cls!);
+                }
+                catch { }
+                await Task.Delay(250);
+            }
+            var stagePresent = await app.Locator(".stage").CountAsync() > 0;
+            Console.WriteLine($"[cdp] avatar: stage present={stagePresent}, classes seen=[{string.Join(", ", avatarSeen)}]");
 
             string[] snapshot;
             lock (log) snapshot = log.ToArray();

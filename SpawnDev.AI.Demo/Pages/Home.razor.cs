@@ -117,7 +117,17 @@ public partial class Home : IDisposable
         + "about the SpawnDev open-source libraries, the apps built with them, or the crew, authoritative "
         + "reference information from GitHub is added to the conversation automatically - answer from it and "
         + "do not say you need a repository name. When the user asks for a picture, photo, or drawing, the app "
-        + "generates the image automatically - you don't need to do anything, so never say you can't make images.";
+        + "generates the image automatically - you don't need to do anything, so never say you can't make images. "
+        // 🔴 IT CANNOT LOOK ANYTHING UP, AND NOBODY TOLD IT. The only tools are image generation and a
+        // host-allowlisted GitHub lookup (api.github.com / raw.githubusercontent.com); there is no web
+        // search. Captain: it "said it did not know about DayZ at first and asked if I wante dit to look
+        // it up.. then it gave tips that seem like theyare actualyl about DayZ". Offering to fetch
+        // something it can never fetch leaves the user waiting on a search that will not happen, and it
+        // had the answer in its weights the whole time.
+        + "You have NO internet access and no web search: the only things looked up for you are SpawnDev "
+        + "repositories on GitHub, and that happens automatically. Never offer to search, look something "
+        + "up, or check a source - you cannot. Answer from what you already know, and if you are unsure, "
+        + "say so plainly and answer anyway rather than promising to find out.";
     bool _showSettings;
     string _systemPrompt = DefaultSystemPrompt;
     float _temperature = 0.3f;
@@ -690,6 +700,50 @@ public partial class Home : IDisposable
             }
         }
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Remove Whisper's non-speech annotations, and return empty if that is all there was.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 WHISPER NARRATES NOISE. Given room tone it does not return nothing - it returns a bracketed
+    /// description of what it thinks it heard: "(clicking)", "(coughs)", "(car door closes)",
+    /// "[BLANK_AUDIO]". Captain saw one arrive in the composer while the robot's microphone was open:
+    /// <i>"(c" appeared in the user's outgoing text box... it seemed out of the ordinary</i>. Only
+    /// [BLANK_AUDIO] was being handled, so every other annotation was treated as something the user said.
+    ///
+    /// ⚠️ IT MATTERS MOST WHERE IT IS HARDEST TO SEE. A robot listening in another room hears that room
+    /// continuously, and in hands-free an annotation is not merely typed - it is SENT, and the assistant
+    /// answers a noise. That is the whole interaction model for a Reachy away from the PC.
+    ///
+    /// ⚠️ Conservative on purpose: an annotation is only dropped when it is the WHOLE utterance or sits at
+    /// an edge. "(clicking) put the kettle on" keeps the sentence; a person who genuinely says something
+    /// in parentheses mid-speech keeps every word.
+    /// </remarks>
+    internal static string StripNonSpeechAnnotations(string? text)
+    {
+        var t = (text ?? "").Trim();
+        if (t.Length == 0) return "";
+
+        // Strip whole bracketed spans at the START or END, repeatedly - a noisy clip often produces two.
+        var previous = "";
+        while (t != previous)
+        {
+            previous = t;
+            t = System.Text.RegularExpressions.Regex.Replace(t, @"^\s*[\(\[][^)\]]*[\)\]]\s*", "");
+            t = System.Text.RegularExpressions.Regex.Replace(t, @"\s*[\(\[][^)\]]*[\)\]]\s*$", "");
+            t = t.Trim();
+        }
+
+        // An UNCLOSED annotation is the case that started this: Whisper truncated mid-word and produced
+        // "(c". A lone fragment opening a bracket and never closing it is not speech either.
+        if (t.StartsWith('(') || t.StartsWith('[')) 
+        {
+            var closed = t.IndexOf(')') >= 0 || t.IndexOf(']') >= 0;
+            if (!closed) return "";
+        }
+
+        return t;
     }
 
     // ── Storage management: OPFS is INVISIBLE to Chrome DevTools ("Clear site data" doesn't touch
@@ -2202,7 +2256,7 @@ public partial class Home : IDisposable
             var samples = captured;
 
             var (text, _, ms) = await Ai.TranscribeAsync(samples, WhisperRate);
-            text = (text ?? "").Trim();
+            text = StripNonSpeechAnnotations(text);
 
             if (text.Length == 0)
             {
