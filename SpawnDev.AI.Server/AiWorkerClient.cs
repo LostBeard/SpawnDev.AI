@@ -382,6 +382,64 @@ public sealed class AiWorkerClient
     /// is what works over both transports today and is the wrong shape for audio. A transferred
     /// Float32Array is the follow-up; this signature does not change when it lands.
     /// </remarks>
+    /// <summary>
+    /// Synthesise speech, with the PCM crossing as a TRANSFERRED buffer instead of a JSON number array.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE SHAPE THE OTHER OVERLOAD'S OWN NOTE ASKED FOR. Sending PCM as JSON renders every float as a
+    /// decimal string: a five-second reply at 24 kHz is 120,000 floats, about 1.4 MB of text serialised,
+    /// posted and parsed - per chunk, on the path whose entire job is to start talking quickly. And the
+    /// samples went straight back into a <c>Float32Array</c> to be played, so the audio began in JS and
+    /// ended in JS having taken a full lap through the managed heap for nothing.
+    /// <para>
+    /// <see cref="SpawnDev.SpawnJS.JSObjects.ArrayBuffer"/> is <c>[Transferable]</c>, so the worker hands the buffer over rather
+    /// than copying it, and there is no serialisation on either side.
+    /// </para>
+    /// <para>
+    /// ⚠️ STILL ONE HOP SHORT of the ideal. The caller below reads the buffer into a <c>float[]</c>
+    /// because the player takes one. Removing that last copy means an overload on
+    /// <c>AudioPlayback</c> (in SpawnDev.ILGPU.ML) that accepts a <c>Float32Array</c>, at which
+    /// point the audio never touches .NET on the page at all.
+    /// </para>
+    /// </remarks>
+    public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
+        SpeakPcmAsync(
+        string text, string referenceText, float[] referenceSamples, int referenceSampleRate,
+        int? maxSpokenCharacters = null, int? noiseSeed = null, CancellationToken ct = default)
+    {
+        if (_worker == null) await InitAsync();
+        var body = JsonSerializer.Serialize(new
+        {
+            text,
+            reference_text = referenceText,
+            reference_samples = referenceSamples,
+            sample_rate = referenceSampleRate,
+            max_spoken_characters = maxSpokenCharacters,
+            noise_seed = noiseSeed,
+        }, J);
+
+        // ⚠️ A List.Add, not `metaJson = m`. Run takes an EXPRESSION TREE, and an expression tree may not
+        // contain an assignment - a method call is the way to get a value out of the callback.
+        var meta = new List<string>(1);
+        var buffer = await _worker!.Run<IAiWorkerApi, SpawnDev.SpawnJS.JSObjects.ArrayBuffer>(
+            s => s.SpeakPcmAsync(body, new Action<string>(meta.Add), ct));
+        var metaJson = meta.Count > 0 ? meta[0] : null;
+
+        using (buffer)
+        {
+            using var view = new SpawnDev.SpawnJS.JSObjects.Float32Array(buffer);
+            var samples = view.ToArray();
+            if (metaJson == null) return (samples, 0, "", 0, "");
+            using var doc = JsonDocument.Parse(metaJson);
+            var r = doc.RootElement;
+            return (samples,
+                r.TryGetProperty("sample_rate", out var sr) ? sr.GetInt32() : 0,
+                r.TryGetProperty("model", out var md) ? md.GetString() ?? "" : "",
+                r.TryGetProperty("inference_ms", out var im) ? im.GetDouble() : 0,
+                r.TryGetProperty("spoken_text", out var st) ? st.GetString() ?? "" : "");
+        }
+    }
+
     public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
         SpeakAsync(
         string text, string referenceText, float[] referenceSamples, int referenceSampleRate,
@@ -698,6 +756,46 @@ public sealed class AiWorkerClient
         return doc.RootElement.TryGetProperty("voices", out var v) && v.ValueKind == JsonValueKind.Array
             ? v.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToArray()
             : Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// Speak in a prepared voice, with the PCM crossing as a TRANSFERRED buffer rather than JSON.
+    /// </summary>
+    /// <remarks>
+    /// This is the one the app speaks through, so it is the one that matters: see
+    /// <see cref="SpeakPcmAsync"/> for why the JSON shape was costing a serialise-and-parse of roughly
+    /// 1.4 MB of text per five-second chunk.
+    /// </remarks>
+    public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
+        SpeakInVoicePcmAsync(string text, string voiceId, int? maxSpokenCharacters = null,
+        int? noiseSeed = null, CancellationToken ct = default)
+    {
+        if (_worker == null) await InitAsync();
+        var body = JsonSerializer.Serialize(new
+        {
+            text,
+            voice_id = voiceId,
+            max_spoken_characters = maxSpokenCharacters,
+            noise_seed = noiseSeed,
+        }, J);
+
+        var meta = new List<string>(1);
+        var buffer = await _worker!.Run<IAiWorkerApi, SpawnDev.SpawnJS.JSObjects.ArrayBuffer>(
+            s => s.SpeakPcmAsync(body, new Action<string>(meta.Add), ct));
+
+        using (buffer)
+        {
+            using var view = new SpawnDev.SpawnJS.JSObjects.Float32Array(buffer);
+            var samples = view.ToArray();
+            if (meta.Count == 0) return (samples, 24000, "", 0, text);
+            using var doc = JsonDocument.Parse(meta[0]);
+            var r = doc.RootElement;
+            return (samples,
+                r.TryGetProperty("sample_rate", out var sr) ? sr.GetInt32() : 24000,
+                r.TryGetProperty("model", out var md) ? md.GetString() ?? "" : "",
+                r.TryGetProperty("inference_ms", out var im) ? im.GetDouble() : 0,
+                r.TryGetProperty("spoken_text", out var st) ? st.GetString() ?? text : text);
+        }
     }
 
     /// <summary>Speak in a voice prepared by <see cref="PrepareVoiceAsync"/>. No reference on the wire.</summary>

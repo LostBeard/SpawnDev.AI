@@ -1215,7 +1215,11 @@ public partial class Home : IDisposable
         // voice; there is no mode in which it happens by itself.
         var useVoice = voiceId ?? _voiceId;
         if (string.IsNullOrEmpty(useVoice)) useVoice = BundledVoices.DefaultId;
-        var (samples, rate, _, ms, _) = await Ai.SpeakInVoiceAsync(chunk, useVoice);
+        // ⚠️ The Pcm overload, not SpeakInVoiceAsync. Same result, different WIRE SHAPE: the PCM comes back
+        // as a transferred ArrayBuffer instead of a JSON number array, which for a five-second chunk at
+        // 24 kHz was ~1.4 MB of decimal text serialised in the worker and parsed here - on the path whose
+        // entire job is to start talking quickly.
+        var (samples, rate, _, ms, _) = await Ai.SpeakInVoicePcmAsync(chunk, useVoice);
         return (samples, rate, ms);
     }
 

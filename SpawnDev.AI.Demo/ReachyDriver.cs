@@ -1,4 +1,4 @@
-using SpawnDev.AI.Demo.Reachy;
+using SpawnDev.Reachy.Browser;
 using SpawnDev.Reachy;
 using SpawnDev.SpawnJS;
 

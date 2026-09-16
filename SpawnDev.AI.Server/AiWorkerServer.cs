@@ -1,3 +1,4 @@
+using SpawnDev.SpawnJS.JSObjects;
 using System.Text.Json;
 using ILGPU.Runtime;
 using SpawnDev.ILGPU;
@@ -27,6 +28,28 @@ public interface IAiWorkerApi
     /// </para></summary>
     Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Synthesise speech and return the PCM as a TRANSFERRED buffer, with everything else as JSON
+    /// through <paramref name="onMeta"/>.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 WHY THIS EXISTS ALONGSIDE <see cref="HandleRequestAsync"/>. Speech came back through the
+    /// ordinary JSON route, which meant the PCM crossed as a JSON NUMBER ARRAY - every float rendered as
+    /// a decimal string and parsed back. A five-second reply at 24 kHz is 120,000 floats, so roughly
+    /// 1.4 MB of text serialised, posted and parsed, per chunk, on the path whose whole job is to start
+    /// talking quickly. The audio then went straight back into a Float32Array to be played, so it began
+    /// in JS and ended in JS having made a full lap through the managed heap for nothing.
+    /// <para>
+    /// <see cref="ArrayBuffer"/> is <c>[Transferable]</c>, so SpawnJS.WebWorkers moves it across the
+    /// worker boundary by transfer rather than by copy - no serialisation at all.
+    /// </para>
+    /// <para>
+    /// ⚠️ The buffer is float32 PCM and nothing else; the sample rate and the rest live in the metadata
+    /// JSON. Do not try to infer the rate from the length.
+    /// </para>
+    /// </remarks>
+    Task<ArrayBuffer> SpeakPcmAsync(string bodyJson, Action<string> onMeta, CancellationToken ct = default);
 
     /// <summary>
     /// Time a fixed, pure-.NET workload inside the worker. Diagnostic only - no GPU, no interop.
@@ -258,6 +281,71 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             + $": idle {m.IdleReadMs:F0} ms, under write load {m.LoadedReadMs:F0} ms "
             + $"({m.Ratio:F2}x) while {m.WritesCompleted} write(s) completed");
         return JsonSerializer.Serialize(m, LayoutJson);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ArrayBuffer> SpeakPcmAsync(string bodyJson, Action<string> onMeta,
+        CancellationToken ct = default)
+    {
+        await EnsureInitializedAsync().ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(bodyJson);
+        var body = doc.RootElement;
+
+        string Str(string name) => body.TryGetProperty(name, out var e) && e.ValueKind == JsonValueKind.String
+            ? e.GetString() ?? "" : "";
+        int Int(string name, int dflt) => body.TryGetProperty(name, out var e)
+            && e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out var v) ? v : dflt;
+
+        int? maxSpoken = body.TryGetProperty("max_spoken_characters", out var mEl) && mEl.TryGetInt32(out var m)
+            ? m : null;
+        int? noiseSeed = body.TryGetProperty("noise_seed", out var nEl) && nEl.TryGetInt32(out var n)
+            ? n : null;
+
+        // Both forms the JSON route accepts, so this is a change of WIRE SHAPE and nothing else. A
+        // prepared voice is the one the app uses: the reference crosses once, at /api/voices, and a reply
+        // carries only its text and a voice id.
+        var voiceId = Str("voice_id");
+        AiSpeech result;
+        if (!string.IsNullOrWhiteSpace(voiceId))
+        {
+            if (!_voice!.HasVoice(voiceId))
+                throw new InvalidOperationException(
+                    $"voice '{voiceId}' is not prepared - prepare it before speaking in it.");
+            result = await _voice.SpeakWithVoiceAsync(text: Str("text"), voiceId, maxSpoken, noiseSeed)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            var reference = body.TryGetProperty("reference_samples", out var refEl)
+                && refEl.ValueKind == JsonValueKind.Array
+                ? refEl.EnumerateArray().Select(x => (float)x.GetDouble()).ToArray()
+                : System.Array.Empty<float>();
+
+            result = await _voice!.SpeakAsync(
+                Str("text"), Str("reference_text"), reference, Int("sample_rate", 0), maxSpoken,
+                // No read-back transcription here: this path exists to get audio to the speaker quickly,
+                // and a verification pass would run Whisper over every reply before a word is heard.
+                transcribe: null, noiseSeed, ct)
+                .ConfigureAwait(false);
+        }
+
+        // Metadata first, so a caller that only wants the numbers does not wait on the copy below.
+        onMeta(JsonSerializer.Serialize(new
+        {
+            sample_rate = result.SampleRate,
+            model = result.Model,
+            inference_ms = result.InferenceMs,
+            duration_seconds = result.DurationSeconds,
+            spoken_text = result.SpokenText,
+            samples = result.Samples.Length,
+        }));
+
+        // ⚠️ ONE copy, here, and it is the last one: float[] -> Float32Array puts the audio in JS, and the
+        // ArrayBuffer underneath it is what gets TRANSFERRED to the page. The engine handing back a
+        // float[] is the remaining .NET hop; fixing that means the GPU readback writing a typed array
+        // directly, which is a change inside AiVoiceEngine rather than in the wire.
+        using var typed = new Float32Array(result.Samples);
+        return typed.Buffer;
     }
 
     public async Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame,
