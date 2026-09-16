@@ -224,7 +224,33 @@ public partial class Home : IDisposable
 
     Task SendPreset(string text) { _input = text; return SendAsync(); }
 
-    void ToggleSettings() { _showSettings = !_showSettings; StateHasChanged(); }
+    /// <summary>
+    /// Show one panel at a time, or none.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THEY USED TO BE THREE INDEPENDENT BOOLEANS, so opening the models list while the room was open
+    /// stacked two unbounded panels on top of each other and shoved the conversation off the bottom of the
+    /// screen. Captain: <i>"when yo uopen things like the charcater editor and models list they all jsut
+    /// stack on top of each other which looks exactly like vibe coded trash people always call out"</i>.
+    ///
+    /// He is right, and the cause is that nothing ever OWNED the decision. Three toggles cannot express
+    /// "one of these", so the layout was whatever the user's click history happened to produce. One
+    /// setter can, and it also makes each gear button behave the way its appearance already promises: press
+    /// it to look at that thing, press it again to put it away.
+    ///
+    /// ⚠️ The panel also needs a height cap in CSS - exclusivity alone still lets ONE long list (every
+    /// model, every saved character) push the composer off screen.
+    /// </remarks>
+    void ShowPanel(string which)
+    {
+        var settings = which == "settings" && !_showSettings;
+        var models = which == "models" && !_showModels;
+        var room = which == "room" && !_showRoom;
+        _showSettings = settings; _showModels = models; _showRoom = room;
+        StateHasChanged();
+    }
+
+    void ToggleSettings() => ShowPanel("settings");
     void ResetSystemPrompt() { _systemPrompt = DefaultSystemPrompt; StateHasChanged(); }
 
     async Task OnKeyDown(KeyboardEventArgs e)
@@ -281,6 +307,9 @@ public partial class Home : IDisposable
         // them has already happened, and SetAsync is a no-op when nothing changed.
         _ = Prefs.SetAsync(AppPreferences.ModelKey, _model);
         _messages.Add(new Msg { Role = "user", Text = text });
+        // Their own message always pulls the view down - they just pressed send, so wherever they were
+        // reading, this is what they now want to see.
+        _ = ScrollToBottom(force: true);
         _busy = true; _streaming = ""; ResetSpeculativeChunk();
         // 🔴 THE LONGEST SILENCE IN THE INTERACTION. The model is generating: there is no audio yet, and
         // whatever the screen is showing is in another room. A motionless robot here is indistinguishable
@@ -544,9 +573,38 @@ public partial class Home : IDisposable
     static string Sanitize(string s)
         => string.Concat((s.Length > 40 ? s[..40] : s).Select(c => char.IsLetterOrDigit(c) ? c : '_'));
 
-    Task ScrollToBottom()
+    /// <summary>
+    /// Keep the newest message in view.
+    /// </summary>
+    /// <param name="force">
+    /// True to jump to the bottom whatever the user was looking at - right for a message THEY just sent.
+    /// False (the default) sticks to the bottom only if they are already there.
+    /// </param>
+    /// <remarks>
+    /// 🔴 THE SCROLL CODE WAS NEVER THE BUG. It set ScrollTop correctly the whole time, on an element that
+    /// had no overflow to scroll: <c>.transcript</c> is <c>flex: 1; overflow-y: auto</c> and a flex child
+    /// defaults to <c>min-height: auto</c>, meaning "never shrink below my content" - so the box simply
+    /// grew with the conversation and pushed the composer off the screen. The fix is one CSS line
+    /// (<c>min-height: 0</c>); this method is what it makes work.
+    ///
+    /// ⚠️ STICKY, NOT FORCED. Now that it actually scrolls, scrolling unconditionally would introduce the
+    /// opposite complaint: reading back through a conversation while a reply streams would yank the view
+    /// to the bottom ten times a second. Anchoring only when the user is already at the end is what every
+    /// chat app does, and the threshold is generous because a half-rendered line should not count as
+    /// having scrolled away.
+    /// </remarks>
+    Task ScrollToBottom(bool force = false)
     {
-        try { using var el = _scrollRef.As<HTMLElement>(); el.ScrollTop = el.ScrollHeight; }
+        try
+        {
+            using var el = _scrollRef.As<HTMLElement>();
+            if (!force)
+            {
+                var distanceFromBottom = el.ScrollHeight - el.ScrollTop - el.ClientHeight;
+                if (distanceFromBottom > 120) return Task.CompletedTask;
+            }
+            el.ScrollTop = el.ScrollHeight;
+        }
         catch { }
         return Task.CompletedTask;
     }

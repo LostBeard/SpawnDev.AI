@@ -56,9 +56,9 @@
                    to each other and to the user inside a shared scene. *@
                 @* MODELS. Sizes and "already downloaded" live here, because a name in a dropdown cannot
                    tell anyone that picking it costs 6.9 GB. *@
-                <button class="gear @(_showModels ? "on" : "")" @onclick="() => { _showModels = !_showModels; }"
+                <button class="gear @(_showModels ? "on" : "")" @onclick='() => ShowPanel("models")'
                         title="Choose a model - sizes, and what is already downloaded">📦</button>
-                <button class="gear @(_showRoom ? "on" : "")" @onclick="() => { _showRoom = !_showRoom; }"
+                <button class="gear @(_showRoom ? "on" : "")" @onclick='() => ShowPanel("room")'
                         title="Group chat: characters, scene, and who is in the room">
                     @(RoomActive ? $"🎭 {_room.Agents.Count}" : "🎭")
                 </button>
@@ -747,7 +747,13 @@
         color: #d6dbe4;
         display: flex;
         flex-direction: column;
+        /* ⚠️ dvh, not vh. On a phone 100vh is the viewport with the browser chrome HIDDEN, so the
+           composer sits permanently under the address bar until you scroll - and this column is the thing
+           that gives every child its height budget, so getting it wrong misplaces everything below. vh is
+           kept as the fallback for anything that does not know dvh. */
         height: 100vh;
+        height: 100dvh;
+        min-height: 0;
         box-sizing: border-box;
     }
 
@@ -841,14 +847,33 @@
         display: flex;
         flex-direction: column;
         gap: .9rem;
+        /* ⚠️ A PANEL MUST NOT BE ABLE TO EAT THE CONVERSATION. Only one opens at a time now, but one is
+           enough: the model list and the character list both grow without limit, and an uncapped panel in
+           a 100vh column pushes the transcript and the composer off screen. It takes at most half the
+           window and scrolls inside itself; the chat stays visible behind it, which is the whole point of
+           a panel rather than a page. */
+        flex: 0 1 auto;
+        max-height: 50vh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
     }
 
+        /* 🔴 A SECTION HEADER HAS TO LOOK LIKE ONE. This was .74rem grey against a .66rem grey hint - an
+           0.08rem difference in the same colour - so "Voice", "Models" and "System prompt" read as more
+           body text and the panel looked like an undifferentiated wall. Captain: "section labels are so
+           small they look liek normal text and not liek sections headers".
+           The label is a flex COLUMN whose first child is the bare title text and whose second is the
+           hint, so styling the label styles the title, and .sethint below resets itself back down. That is
+           why the hint has to explicitly undo the tracking and the caps. */
         .settings .setlbl {
             display: flex;
             flex-direction: column;
-            gap: .25rem;
-            font-size: .74rem;
-            color: #9fb0c8;
+            gap: .3rem;
+            font-size: .82rem;
+            font-weight: 700;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: #e8edf5;
         }
 
             .settings .setlbl b {
@@ -857,10 +882,25 @@
             }
 
     .sethint {
-        font-size: .66rem;
-        color: #6a7688;
-        line-height: 1.4;
+        font-size: .68rem;
+        color: #7d8a9e;
+        line-height: 1.5;
         font-weight: 400;
+        /* Undo the header treatment it inherits from .setlbl - a sentence of explanation set in spaced
+           capitals is unreadable, and this element is always a sentence. */
+        text-transform: none;
+        letter-spacing: normal;
+    }
+
+    /* ⚠️ SEPARATORS, not just gaps. Spacing alone does not say where one setting ends and the next
+       begins once every row has a title and a sentence under it - the eye needs a line. Applied between
+       siblings only, so the first row does not get a rule hanging above it. */
+    .settings .setrow + .setrow,
+    .settings .setrow + .setgrid,
+    .settings .setgrid + .setrow,
+    .settings .setgrid + .setgrid {
+        border-top: 1px solid #1d2430;
+        padding-top: .9rem;
     }
 
     .sysbox {
@@ -1150,7 +1190,15 @@
 
     .transcript {
         flex: 1;
+        /* 🔴 min-height:0 IS WHAT MAKES overflow-y WORK. A flex child defaults to min-height:auto, which
+           means "never shrink below my content" - so this box grew with the conversation, `overflow-y`
+           never engaged, and the composer was pushed off the bottom of the screen instead of the
+           transcript scrolling. Captain: "the chat window does not scroll down when the chat extends past
+           teh end." The scroll code was correct the whole time; it was scrolling an element that had no
+           overflow to scroll. One line, and it is invisible in every screenshot. */
+        min-height: 0;
         overflow-y: auto;
+        overscroll-behavior: contain;   /* don't rubber-band the page when the transcript hits its end */
         padding: 1rem 0;
         display: flex;
         flex-direction: column;

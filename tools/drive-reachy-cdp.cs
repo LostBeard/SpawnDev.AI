@@ -178,6 +178,37 @@ try
                     + "nothing below this line is evidence about the current code.");
     }
 
+    // ── LAYOUT: does the page still hold together? ───────────────────────────────────────────────
+        // 🔴 A LAYOUT BUG IS INVISIBLE TO EVERY FUNCTIONAL TEST. Every feature can work perfectly while the
+        // conversation scrolls off the bottom of the window and the composer is unreachable - which is
+        // exactly what happened: `.transcript` is a flex child with `overflow-y: auto` and no
+        // `min-height: 0`, so it grew instead of scrolling. These are the two facts that say the shell is
+        // intact, and both are measurable.
+        var layout = await app.EvaluateAsync<System.Text.Json.JsonElement>(@"() => {
+            const t = document.querySelector('.transcript');
+            const c = document.querySelector('.composer');
+            const panels = document.querySelectorAll('.settings');
+            return {
+                scrollable: t ? getComputedStyle(t).overflowY : 'missing',
+                minHeight: t ? getComputedStyle(t).minHeight : 'missing',
+                grows: t ? (t.scrollHeight > t.clientHeight + 4) : false,
+                composerInView: c ? (c.getBoundingClientRect().bottom <= window.innerHeight + 1) : false,
+                openPanels: panels.length
+            };
+        }");
+        Console.WriteLine($"[cdp] layout: {layout}");
+
+        // min-height:auto is the defect. Naming it directly means the failure says what to change.
+        if (layout.GetProperty("minHeight").GetString() is "auto" or "missing")
+            fails.Add("the transcript has min-height:auto, so overflow-y cannot engage - the conversation "
+                    + "will grow and push the composer off screen instead of scrolling");
+        if (!layout.GetProperty("composerInView").GetBoolean())
+            fails.Add("the composer is below the bottom of the window - the user cannot reach the box "
+                    + "they type into");
+        if (layout.GetProperty("openPanels").GetInt32() > 1)
+            fails.Add($"{layout.GetProperty("openPanels").GetInt32()} panels are open at once - they stack "
+                    + "and push the conversation away");
+
     // ── The room panel, where the robot lives ───────────────────────────────────────────────────────
     if (await app.Locator(".settings.room").CountAsync() == 0)
         await app.ClickAsync("button.gear:has-text(\"🎭\")", new() { Timeout = 15000 });
