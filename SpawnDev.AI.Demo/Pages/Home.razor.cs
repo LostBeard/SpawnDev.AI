@@ -422,6 +422,19 @@ public partial class Home : IDisposable
                             + $"(total {genClock.Elapsed.TotalSeconds:F1}s)");
             msg.Text = await ResolveArtifactsAsync(_streaming, msg.Images);
             _messages.Add(msg);
+            // 🔴 TAKE THE BODY BACK FROM THE THINKING LOOP FIRST. ReachyBody performs one gesture at a
+            // time and DROPS rather than queues - correct, since a backlog played after the moment it
+            // belonged to is worse than nothing - so a reply's own action arriving while the Thinking
+            // animation holds the mover is silently skipped ("busy, skipped gesture"). Captain: "reachy
+            // did not act out the stage direction (tilts head) at teh bgeinning before speaking". It
+            // worked in an earlier run purely on timing, which is the worst kind of working.
+            //
+            // Speaking is the right mood here even though the audio is seconds away: it means "the reply
+            // owns the body now", and the reply is what is about to be performed.
+            // ⚠️ AWAITED. The fire-and-forget form returns before the thinking loop has released the
+            // mover, so the action below lands while it is still busy and is dropped.
+            await Robot.MoodAsync(SpawnDev.Reachy.ReachyMood.Speaking);
+
             // The assistant has a body - act out whatever the reply described. Text turn or spoken turn,
             // the same reply drives it; see Home.razor.Body.cs.
             PerformReply(msg.Text);
@@ -446,8 +459,12 @@ public partial class Home : IDisposable
             await ScrollToBottom();
         }
 
-        // Back to alive-but-unoccupied unless speech takes over a moment from now.
-        Robot.Mood(SpawnDev.Reachy.ReachyMood.Idle);
+        // ⚠️ NOT back to Idle here any more. This ran between the reply's actions starting and the
+        // speech beginning, and restarting idle life underneath a performance is the same contention the
+        // Thinking loop caused. The mood returns to Idle when speech ends - or immediately below, if
+        // there is nothing to speak.
+        if (_muted || string.IsNullOrWhiteSpace(spokenReply) || string.IsNullOrWhiteSpace(_voiceId))
+            Robot.Mood(SpawnDev.Reachy.ReachyMood.Idle);
 
         // Speaking happens AFTER the finally, so the reply is on screen and the composer is usable while
         // it talks. Doing it inside the turn would leave the UI "busy" for the whole utterance.
@@ -1348,8 +1365,24 @@ public partial class Home : IDisposable
 
     internal static List<string> SpeakableChunks(string speakable)
     {
-        var fine = AiVoiceEngine.SplitIntoSpeakableChunks(
-            speakable, SpeakChunkCharacters, SpeakChunkMinimumCharacters);
+        // 🔴 SPLIT ON LINE BREAKS FIRST. The sentence splitter needs sentence terminators, and a list item
+        // - "- LostBeard (Todd Tanner) - Captain, library author" - has none, so a reply that ends in a
+        // bulleted list came back as ONE piece however long it was. MEASURED 2026-09-16: a single 485 KB /
+        // 15.18 s render, everything past ~320 characters silently dropped, and with the cap lifted a hard
+        // failure at Kokoro's 512-position limit instead. Captain heard "only the first 2 sentences",
+        // twice.
+        //
+        // ⭐ A line break IS a speech boundary. Every list item, heading and paragraph in a model's answer
+        // is separated by one, and treating it as a break also gets the first audio out sooner, because
+        // the first render stops being the whole reply.
+        var fine = new List<string>();
+        foreach (var line in speakable.Split('\r', '\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0) continue;
+            fine.AddRange(AiVoiceEngine.SplitIntoSpeakableChunks(
+                trimmed, SpeakChunkCharacters, SpeakChunkMinimumCharacters));
+        }
         if (fine.Count <= 1) return fine;
 
         var merged = new List<string> { fine[0] };
@@ -1401,8 +1434,16 @@ public partial class Home : IDisposable
         // ~320 characters. Captain heard "only the first 2 sentences", twice. One 485 KB / 15.18 s clip,
         // no chunk 2. The splitter should also break on list items (that is a separate fix, and would have
         // made this render sooner); the silent deletion is this one.
-        var (samples, rate, _, ms, spoken) =
-            await Ai.SpeakInVoicePcmAsync(chunk, useVoice, maxSpokenCharacters: chunk.Length);
+        // ⚠️ THE ENGINE CAP STAYS. Passing chunk.Length to defeat it looked right - this page chunks, so a
+        // second cut can only delete sentences - and it was WRONG: the cap is also what keeps an utterance
+        // inside Kokoro's positional table. MEASURED 2026-09-16, one un-splittable chunk with the cap
+        // lifted: "Shapes [1,635,128] and [1,512,128] are not broadcastable at dim 1" - the BERT position
+        // embedding is 512 wide and the text was 635 tokens. Silent truncation became a hard failure.
+        //
+        // 🔴 THE REAL DEFECT IS UPSTREAM AND IS FIXED IN SpeakableChunks: a bulleted list has no sentence
+        // terminators, so the splitter returned the whole reply as ONE piece. Chunks that are actually
+        // chunked never reach either limit, and the cap goes back to being the backstop it was.
+        var (samples, rate, _, ms, spoken) = await Ai.SpeakInVoicePcmAsync(chunk, useVoice);
 
         // ⚠️ AND CHECK. The engine reports what it actually rendered precisely so a caller can tell; the
         // page was discarding it, which is why text disappeared silently instead of loudly.

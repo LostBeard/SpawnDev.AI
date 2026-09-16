@@ -158,4 +158,59 @@ public sealed class AiVoiceStreamingTests
               + $"{totalAudioSec:F2}s of audio). It happens not to stall only because the chunk sizes hide "
               + "it; a longer reply at this rate cannot keep up.");
     }
+
+    /// <summary>A reply that ends in a list is still chunked, and no chunk is too long to synthesise.</summary>
+    /// <remarks>
+    /// 🔴 THE SHAPE THAT BROKE IT TWICE. A sentence splitter needs sentence terminators, and a list item -
+    /// "- LostBeard (Todd Tanner) - Captain, library author" - has none. So a reply ending in a bulleted
+    /// list came back as ONE chunk however long it was, and everything past the engine's 320-character cap
+    /// was silently dropped. Captain heard "only the first 2 sentences", twice.
+    ///
+    /// ⚠️ And lifting the cap was WORSE, which is why this asserts a LENGTH and not just a count: the cap
+    /// is also what keeps an utterance inside Kokoro's positional table. MEASURED with it lifted -
+    /// "Shapes [1,635,128] and [1,512,128] are not broadcastable at dim 1", the BERT position embedding
+    /// being 512 wide. Silent truncation became a hard failure. The fix has to be that chunks are actually
+    /// SHORT, not that the limits are removed.
+    ///
+    /// ⭐ No model, no GPU, no network - this is pure string work, so it runs everywhere and costs nothing.
+    /// </remarks>
+    [AiTest(Timeout = 30_000)]
+    public Task AReplyEndingInAListIsStillChunked()
+    {
+        // A raw string literal, so the line breaks in the fixture are REAL line breaks - which is the
+        // whole point of the case. Written out rather than escaped because this is what a model's answer
+        // actually looks like on screen, and the defect lives entirely in those breaks.
+        const string ListReply = """
+            SpawnDev.BlazorJS is a full Blazor WebAssembly and JavaScript interop library. It lets .NET developers reach browser APIs and handle JavaScript objects from C#.
+
+            The crew includes:
+            - LostBeard (Todd Tanner) - Captain, library author, keeper of the vision
+            - Riker (Claude CLI #1) - First Officer, implementation lead on consuming projects
+            - Data (Claude CLI #2) - Operations Officer, deep-library work and root-cause analysis
+            - Tuvok (Claude CLI #3) - Security and Research Officer, design and documentation
+            - Geordi (Claude CLI #4) - Chief Engineer, library internals and GPU kernels
+            - Seven (Claude CLI #5) - Wasm backend, GPU kernels, fail-loud verification
+            """;
+
+        var chunks = Home.SpeakableChunks(ListReply);
+
+        if (chunks.Count < 2)
+            throw new Exception($"a reply ending in a list produced {chunks.Count} chunk(s) - the list was "
+                + "not split, so everything past the engine's cap will be dropped without a sound");
+
+        // Every chunk has to be synthesisable. The engine trims at the default cap, so a chunk past it
+        // loses sentences; and far past it the model itself fails on its 512-position table.
+        foreach (var chunk in chunks)
+            if (chunk.Length > 400)
+                throw new Exception($"a chunk is {chunk.Length} characters: \"{chunk[..60]}...\". "
+                    + "It will be trimmed at the engine cap, or fail outright at the model's position limit");
+
+        // Nothing may be lost in the splitting itself - this is the reply the user can SEE on screen.
+        var joined = string.Concat(chunks).Replace(" ", "");
+        foreach (var name in new[] { "LostBeard", "Riker", "Data", "Tuvok", "Geordi", "Seven" })
+            if (!joined.Contains(name, StringComparison.Ordinal))
+                throw new Exception($"'{name}' is on screen but not in any chunk - it would never be said");
+
+        return Task.CompletedTask;
+    }
 }

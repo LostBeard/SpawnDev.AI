@@ -233,6 +233,23 @@ public sealed class ReachyDriver : IAsyncDisposable
     /// ⚠️ Fire-and-forget on purpose. This is decoration on a wireless link, and a turn must never wait on
     /// it - nor fail because of it.
     /// </remarks>
+    /// <summary>
+    /// Change mood and WAIT for the body to be handed over.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE FIRE-AND-FORGET FORM IS NOT ENOUGH BEFORE A PERFORMANCE. Stopping the thinking loop means
+    /// waiting out whatever gesture it already had in flight - <c>ReachyBody</c> allows one at a time and
+    /// DROPS rather than queues - so a reply's own action issued immediately after <see cref="Mood"/> is
+    /// skipped, logged only as "busy, skipped gesture". MEASURED 2026-09-16, and the reason a stage
+    /// direction at the start of a reply was not performed.
+    /// </remarks>
+    public async Task MoodAsync(ReachyMood mood, CancellationToken ct = default)
+    {
+        if (_presence is not { } presence) return;
+        try { await presence.SetAsync(mood, ct).ConfigureAwait(false); }
+        catch (Exception ex) { Console.WriteLine($"[reachy-mood] {mood} failed: {ex.Message}"); }
+    }
+
     public void Mood(ReachyMood mood)
     {
         if (_presence is not { } presence) return;

@@ -260,6 +260,9 @@ try
     {
         scroll = await app.EvaluateAsync<System.Text.Json.JsonElement>(@"() => {
             const t = document.querySelector('.transcript');
+            // GUARD IT. A probe that assumes the element is there crashes the whole run with a null
+            // property read, which says nothing about what was actually being tested.
+            if (!t) return { images: 0, decoded: 0, fromBottom: 0, canScroll: false };
             const imgs = [...t.querySelectorAll('img')];
             return {
                 images: imgs.length,
@@ -273,6 +276,7 @@ try
             await Task.Delay(1500);   // let the observer react, then read the settled position
             scroll = await app.EvaluateAsync<System.Text.Json.JsonElement>(@"() => {
                 const t = document.querySelector('.transcript');
+                if (!t) return { fromBottom: 0, canScroll: false };
                 return { fromBottom: Math.round(t.scrollHeight - t.scrollTop - t.clientHeight),
                          canScroll: t.scrollHeight > t.clientHeight + 1 };
             }");
