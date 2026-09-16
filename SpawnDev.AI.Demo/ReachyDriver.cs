@@ -56,6 +56,17 @@ public sealed class ReachyDriver : IAsyncDisposable
     /// </remarks>
     public ReachySpeaker? Speaker { get; private set; }
 
+    /// <summary>
+    /// The robot's own microphone array, once connected over WebRTC.
+    /// </summary>
+    /// <remarks>
+    /// The stream is handed over raw. Turning it into speech is the app's existing capture pipeline's job
+    /// (<c>MediaStreamCapture.StartFromAudioStreamAsync</c>), which is the same one the browser microphone
+    /// goes through - so a character listening through the robot uses the identical detector and
+    /// recogniser rather than a second path that can drift.
+    /// </remarks>
+    public ReachyEars? Ears { get; private set; }
+
     /// <summary>The robot's address, as last connected.</summary>
     public string Address { get; private set; } = "";
 
@@ -112,6 +123,13 @@ public sealed class ReachyDriver : IAsyncDisposable
             // "Not authenticated - call login() or pass a token" rather than as a bad client id.
             var clientId = js.Get<string?>("huggingface.variables.OAUTH_CLIENT_ID");
             var sdk = await ReachyMiniJs.CreateAsync(js, AppName, clientId).ConfigureAwait(false);
+
+            // 🔴 EARS BEFORE CONNECT, NOT AFTER. The SDK emits its media track exactly once, during the
+            // connect handshake, and has no accessor for the current stream - so a listener attached after
+            // AutoConnectAsync resolves hears nothing at all, on a robot that is working perfectly and
+            // with no error anywhere. This is the one ordering in this method that cannot be rearranged.
+            Ears = new ReachyEars(sdk);
+            Ears.Log += m => Console.WriteLine(m);
 
             // 🔴 autoConnect FIRST, login() only as the fallback. The docs describe autoConnect as the
             // whole chain - auth, signalling, robot pick, session, wake - and "auth" includes completing
@@ -322,6 +340,10 @@ public sealed class ReachyDriver : IAsyncDisposable
         _lifecycle = null;
         _owned = null;
         Speaker = null;
+        // Every += needs its -=, or the JS callback outlives this object. An unhandled exception on a
+        // runtime callback exits the WASM runtime rather than failing a turn.
+        try { Ears?.Dispose(); } catch (Exception ex) { Console.WriteLine($"[reachy-ears] dispose: {ex.Message}"); }
+        Ears = null;
         Transport = Link.None;
         if (life == null) return;
 

@@ -274,12 +274,30 @@ try
             // is a model load plus a synthesis - documented in this repo at 88.7 s cold for the load
             // alone. Four minutes ran out mid-render and the run reported a failure that had not
             // happened yet.
+            // ⚠️ WATCH THE PAGE, NOT ONLY THE CONSOLE. The speak path reports where it has got to by
+            // writing the page's status line ("Generating speech…", voice-model progress), not by logging
+            // - so a run stuck in a cold model load looks IDENTICAL to one that never started, for nine
+            // minutes, and then reports a timeout that names nothing. Echoing the footer makes the wait
+            // legible while it happens.
             var deadline = DateTime.UtcNow.AddMinutes(9);
+            var lastStatus = "";
             while (DateTime.UtcNow < deadline)
             {
                 lock (log)
                     if (log.Any(l => l.Contains("[reachy-speak] play end"))) break;
-                await Task.Delay(1000);
+
+                try
+                {
+                    var now = (await app.Locator("footer.sdai-ftr span").First.TextContentAsync() ?? "").Trim();
+                    if (now.Length > 0 && now != lastStatus)
+                    {
+                        lastStatus = now;
+                        Console.WriteLine($"[status] {now}");
+                    }
+                }
+                catch { /* the footer is not load-bearing for this wait */ }
+
+                await Task.Delay(2000);
             }
 
             string[] snapshot;
