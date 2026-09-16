@@ -70,14 +70,28 @@ IPage? adopted = null;   // an app tab that was ALREADY open, which we reload ra
 // 🔴 HOOKED BEFORE NAVIGATION, not after. [BUILD] is the FIRST line the app writes, so a listener attached
 // after GotoAsync misses the one line that says whether this page is even running the code under test.
 var log = new List<string>();
-void Hook(IPage p) => p.Console += (_, m) =>
+void Hook(IPage p)
+{
+    // ALWAYS CAPTURE ERRORS, whatever the filter says. An unhandled exception on a runtime callback
+    // EXITS the .NET WASM runtime and takes the page's UI with it - from outside that looks like an
+    // element "disappearing", and every locator after it times out pointing at the wrong thing. The one
+    // line that says what actually happened is the one a topic filter throws away.
+    p.PageError += (_, e) => Console.WriteLine($"[pageerror] {e}");
+    p.Crash += (_, _) => Console.WriteLine("[pagecrash] the renderer process crashed");
+    p.Console += (_, m) =>
+    {
+        if (m.Type == "error") Console.WriteLine($"[console.error] {m.Text}");
+    };
+    p.Console += (_, m) =>
 {
     var t = m.Text;
     if (!t.Contains("[BUILD]") && !t.Contains("reachy", StringComparison.OrdinalIgnoreCase)
+        && !t.Contains("HF-MIC") && !t.Contains("[capture]")
         && !t.Contains("HF-SPEAK") && !t.Contains("ROOM")) return;
     lock (log) log.Add(t);
     Console.WriteLine($"[console] {t}");
-};
+    };
+}
 
 foreach (var p in ctx.Pages)
     foreach (var f in p.Frames)
@@ -259,6 +273,61 @@ try
             fails.Add("the clip uploaded and started but never finished playing");
         else
             Console.WriteLine("[cdp] ROBOT SPEAKER: tone encoded, uploaded and played to completion.");
+
+        // -- THE ROBOT'S EARS, PROVED THE SAME WAY --------------------------------------------------
+        // A robot that speaks through its own speaker but hears through the laptop is not in the room
+        // with anyone. This does not need a person to talk: the array picks up the room, so chunks
+        // arriving with a non-zero peak is the stream flowing. What it CANNOT check is intelligibility.
+        Console.WriteLine("[cdp] checking that listening goes through the robot...");
+        lock (log) log.Clear();
+        await app.ClickAsync("button.primary:has-text(\"\U0001F4AC\U0001F50A\")", new() { Timeout = 15000 });
+
+        var earsDeadline = DateTime.UtcNow.AddSeconds(25);
+        var listenStatus = "";
+        while (DateTime.UtcNow < earsDeadline)
+        {
+            listenStatus = (await app.Locator("footer.sdai-ftr span").First.TextContentAsync() ?? "").Trim();
+            if (listenStatus.StartsWith("Listening", StringComparison.OrdinalIgnoreCase)) break;
+            await Task.Delay(1000);
+        }
+        Console.WriteLine($"[cdp] listen status: {listenStatus}");
+
+        // Let the array deliver a few seconds of room tone.
+        await Task.Delay(8000);
+
+        string[] earLog;
+        lock (log) earLog = log.ToArray();
+        var micLines = earLog.Where(l => l.Contains("[HF-MIC]")).ToArray();
+
+        // Stop hands-free before doing anything else - leaving it on would have the room talking to
+        // itself for the rest of the run.
+        try { await app.ClickAsync("button.primary:has-text(\"Hands-free\")", new() { Timeout = 10000 }); }
+        catch (Exception ex) { Console.WriteLine($"[cdp] could not stop hands-free: {ex.Message}"); }
+
+        // WHICH MICROPHONE OPENED IS A LOG LINE, NOT THE STATUS. The status string is replaced within a
+        // second by the live level readout, so asserting on it failed a run in which everything worked.
+        var throughRobot = earLog.Any(l => l.Contains("listening through the robot"));
+        var throughDevice = earLog.Any(l => l.Contains("listening through this device"));
+
+        if (!listenStatus.StartsWith("Listening", StringComparison.OrdinalIgnoreCase))
+            fails.Add($"listening never started: {listenStatus}");
+        else if (throughDevice && !throughRobot)
+            fails.Add("listening opened THIS DEVICE's microphone while a robot was connected - the "
+                    + "robot's ears were not used");
+        else if (!throughRobot)
+            fails.Add("listening started but never said which microphone it opened");
+        else if (micLines.Length == 0)
+            fails.Add("listening says it is using the robot, but no audio arrived from it at all");
+        else
+        {
+            Console.WriteLine($"[cdp] ROBOT EARS: {micLines.Length} mic report(s), last: {micLines[^1]}");
+            // A stream that delivers only digital silence is a connected-but-dead microphone, which is
+            // exactly what the SDK's outbound placeholder would look like if it were ever used by mistake.
+            var silent = micLines.All(l => l.Contains("raw peak=0.0000"));
+            if (silent)
+                fails.Add("the robot's audio arrived but every chunk was pure silence - the stream is "
+                        + "connected to something that is not a microphone");
+        }
 
         if (doSpeak)
         {

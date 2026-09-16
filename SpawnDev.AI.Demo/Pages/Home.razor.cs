@@ -617,6 +617,15 @@ public partial class Home : IDisposable
 
     MediaStreamCapture? _mic;
 
+    /// <summary>True while the audio being endpointed comes from the robot rather than this device.</summary>
+    /// <remarks>
+    /// Decided ONCE per listen, in <c>StartListeningAsync</c>. Swapping source mid-utterance would splice
+    /// two different microphones into one recording, and the endpointer answers in offsets counted from
+    /// its own clock over that single stream - so the spans would point at the wrong audio without ever
+    /// throwing.
+    /// </remarks>
+    bool _listeningThroughRobot;
+
     /// <summary>The canonical capture buffer: mono, 16 kHz, what the recogniser and the cloner both use.</summary>
     readonly List<float> _micSamples = new();
 
@@ -1805,15 +1814,50 @@ public partial class Home : IDisposable
             }
         }
 
-        if (!await _mic.StartMicrophoneAsync())
+        // IF THE ROBOT IS THERE, LISTEN THROUGH THE ROBOT. Captain: "Ideally, Reachy could be away
+        // from the PC running the AI demo and should be able to be fully capable." A robot in the next
+        // room that speaks through its own speaker but hears through the laptop's microphone is not in
+        // the room with anyone - you would have to stand at the PC to talk to it. Its four-mic array is
+        // also the better instrument: it is aimed at whoever is in front of the robot, and its XVF3800
+        // does echo cancellation in HARDWARE, so the robot does not transcribe its own speech.
+        //
+        // SAY WHICH EARS ARE IN USE. "It cannot hear me" has two completely different causes depending
+        // on which microphone is live, and nothing else on screen tells them apart.
+        var robotEars = Robot.Ears is { HasAudio: true, Stream: { } rs } ? rs : null;
+        var started = robotEars != null
+            ? await _mic.StartFromAudioStreamAsync(robotEars)
+            : await _mic.StartMicrophoneAsync();
+
+        if (!started && robotEars != null)
+        {
+            // A FAILING ROBOT MICROPHONE MUST NOT END THE CONVERSATION. Falling back to this device
+            // keeps hands-free alive, and the log says what happened rather than leaving the user to
+            // wonder why the robot stopped listening.
+            Console.WriteLine("[reachy-ears] robot audio capture failed, falling back to this device: "
+                + _mic.LastAudioError?.Message);
+            robotEars = null;
+            started = await _mic.StartMicrophoneAsync();
+        }
+
+        if (!started)
         {
             _status = $"Microphone unavailable. {_mic.LastAudioError?.Message}";
             StateHasChanged();
             return;
         }
+        _listeningThroughRobot = robotEars != null;
+        // A LOG LINE, not only the status string. The status is replaced within a second by the live
+        // level readout, so which microphone opened is unrecoverable from the UI a moment later - and it
+        // is the first thing anyone needs when the answer is "it cannot hear me".
+        Console.WriteLine(_listeningThroughRobot
+            ? "[reachy-ears] listening through the robot's microphones"
+            : "[reachy-ears] listening through this device's microphone");
 
         _listening = true;
-        _status = _handsFree ? "Listening \u2014 say something, and stop when you're done." : "Listening\u2026";
+        var ears = _listeningThroughRobot ? " through Reachy's microphones" : "";
+        _status = _handsFree
+            ? $"Listening{ears} \u2014 say something, and stop when you're done."
+            : $"Listening{ears}\u2026";
         StateHasChanged();
     }
 
