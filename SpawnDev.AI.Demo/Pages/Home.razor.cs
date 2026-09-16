@@ -1317,7 +1317,19 @@ public partial class Home : IDisposable
             // a token table and a 54 MB vocoder) showed the user a finished text answer and then nothing
             // whatsoever for minutes. Indistinguishable from "it just doesn't speak".
             _speaking = true;
-            _status = "Preparing the voice…";
+            // 🔴 IT SAYS WHAT IS ACTUALLY HAPPENING. This read "Preparing the voice…" and was WRONG every
+            // time: EnsureVoiceReadyAsync is awaited ABOVE, so by the time this runs the voice is already
+            // prepared - and a built-in voice (the default, Kokoro) has nothing to prepare at all and
+            // returns instantly. What the user was actually waiting through is the FIRST CHUNK BEING
+            // SYNTHESISED, which is ~9 s on WebGPU (MEASURED 2026-09-15: time-to-first-audio 9,818 ms for
+            // a 180-token chunk).
+            //
+            // TJ, on the GH Pages build: "there is always a roughly 9 second 'Preparing voice' before tts
+            // starts after the response finishes." Nine seconds is real and is being worked; telling him
+            // it was voice preparation sent him looking at the wrong thing, which is what a wrong label
+            // costs. A label that names the wrong stage is worse than no label - it misdirects whoever
+            // tries to fix it, including me.
+            _status = "Generating speech…";
             StateHasChanged();
 
             // ⚠️ A STATIC string held for minutes is the same defect as no string at all. The comment above
@@ -1333,8 +1345,10 @@ public partial class Home : IDisposable
             var speakStarted = DateTime.UtcNow;
             bool firstAudioPlayed = false;
             using var speakTicker = new CancellationTokenSource();
+            // Same correction as the status above - this counts up while the FIRST CHUNK RENDERS, not
+            // while a voice is prepared.
             var ticker = Task.Run(() => TrackProgressAsync(speakStarted, () => !firstAudioPlayed,
-                "Preparing the voice", speakTicker.Token));
+                "Generating speech", speakTicker.Token));
 
             // ── STREAM IT: say sentence N while sentence N+1 renders ────────────────────────────────────
             //
