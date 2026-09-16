@@ -311,7 +311,7 @@ public partial class Home : IDisposable
         _messages.Add(new Msg { Role = "user", Text = text });
         // Their own message always pulls the view down - they just pressed send, so wherever they were
         // reading, this is what they now want to see.
-        _ = ScrollToBottom(force: true);
+        _ = ScrollToBottom();
         _busy = true; _streaming = ""; ResetSpeculativeChunk();
         // 🔴 THE LONGEST SILENCE IN THE INTERACTION. The model is generating: there is no audio yet, and
         // whatever the screen is showing is in another room. A motionless robot here is indistinguishable
@@ -575,26 +575,10 @@ public partial class Home : IDisposable
     static string Sanitize(string s)
         => string.Concat((s.Length > 40 ? s[..40] : s).Select(c => char.IsLetterOrDigit(c) ? c : '_'));
 
-    /// <summary>
-    /// Keep the newest message in view.
-    /// </summary>
-    /// <param name="force">
-    /// True to jump to the bottom whatever the user was looking at - right for a message THEY just sent.
-    /// False (the default) sticks to the bottom only if they are already there.
-    /// </param>
-    /// <remarks>
-    /// 🔴 THE SCROLL CODE WAS NEVER THE BUG. It set ScrollTop correctly the whole time, on an element that
-    /// had no overflow to scroll: <c>.transcript</c> is <c>flex: 1; overflow-y: auto</c> and a flex child
-    /// defaults to <c>min-height: auto</c>, meaning "never shrink below my content" - so the box simply
-    /// grew with the conversation and pushed the composer off the screen. The fix is one CSS line
-    /// (<c>min-height: 0</c>); this method is what it makes work.
-    ///
-    /// ⚠️ STICKY, NOT FORCED. Now that it actually scrolls, scrolling unconditionally would introduce the
-    /// opposite complaint: reading back through a conversation while a reply streams would yank the view
-    /// to the bottom ten times a second. Anchoring only when the user is already at the end is what every
-    /// chat app does, and the threshold is generous because a half-rendered line should not count as
-    /// having scrolled away.
-    /// </remarks>
+    ResizeObserver? _growthWatcher;
+    ActionCallback? _growthCallback;
+    bool _scrollComplained;
+
     /// <summary>
     /// Put the newest content in view. Called after anything is added to the transcript.
     /// </summary>
@@ -612,11 +596,7 @@ public partial class Home : IDisposable
     /// EVENT - user intent from a user gesture - and not behind a measurement taken after the content
     /// already moved. Until someone asks, the div scrolls to the bottom when content is added.
     /// </remarks>
-    ResizeObserver? _growthWatcher;
-    ActionCallback? _growthCallback;
-    bool _scrollComplained;
-
-    Task ScrollToBottom(bool force = false)
+    Task ScrollToBottom()
     {
         try
         {
