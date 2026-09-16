@@ -341,8 +341,7 @@ try
             // "*tilts head slightly, then waves with both antennae*". Stage directions are correctly not
             // spoken, so there was no audio to find - and the gate reported that as a broken speaker path
             // for nine minutes at a time. The prompt has to make speech the only way to comply.
-            await app.FillAsync(Composer, "Reply with spoken words only, no actions or asterisks: "
-                                        + "say the sentence 'Hello, this is Reachy speaking.'");
+            await app.FillAsync(Composer, "Say the words: hello.");
             await app.Locator(Composer).PressAsync("Enter");
 
             // ⚠️ THE VOICE MODEL MAY BE COLD. Reloading the tab drops it, and the first chunk after that
@@ -395,12 +394,22 @@ try
             // it replied normally and the stage-direction splitter lifted the words out too. Those need
             // opposite fixes - one is the prompt, the other is SpokenText - and guessing between them
             // costs a full run each time.
+            // ⚠️ READ EVERY ROLE, NOT JUST THE ASSISTANT'S. When a turn fails, the app replaces the reply
+            // with a SYSTEM message - so ".msg.assistant" is simply absent and the locator times out
+            // pointing at nothing, while the message that explains the failure sits on screen unread.
             try
             {
-                var reply = (await app.Locator(".msg.assistant .text").Last.TextContentAsync() ?? "").Trim();
-                Console.WriteLine($"[reply] {(reply.Length > 400 ? reply[..400] + "…" : reply)}");
+                var msgs = app.Locator(".msg");
+                var n = await msgs.CountAsync();
+                for (var i = Math.Max(0, n - 3); i < n; i++)
+                {
+                    var who = (await msgs.Nth(i).Locator(".who").TextContentAsync() ?? "?").Trim();
+                    var text = (await msgs.Nth(i).Locator(".text").TextContentAsync() ?? "").Trim();
+                    Console.WriteLine($"[msg {who}] {(text.Length > 400 ? text[..400] + "…" : text)}");
+                }
+                if (n == 0) Console.WriteLine("[msg] the transcript is EMPTY - the turn left nothing behind");
             }
-            catch (Exception ex) { Console.WriteLine($"[reply] could not read the bubble: {ex.Message}"); }
+            catch (Exception ex) { Console.WriteLine($"[msg] could not read the transcript: {ex.Message}"); }
 
             string[] snapshot;
             lock (log) snapshot = log.ToArray();
