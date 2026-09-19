@@ -121,8 +121,14 @@ public sealed class GpuResidency
             }
 
             // Least-recently-used first, so the kind most likely to be wanted next survives longest.
+            //
+            // 🔴 NEVER EVICT "vad". The endpointer is 32 MB and must stay resident for the life of a
+            // hands-free conversation (AiVadEngine docs). Evicting it mid-listen - which happened when
+            // background speech/chat warm called EnsureRoomForAsync while VAD's LastUsedUtc was still
+            // DateTime.MinValue - disposed Silero under the microphone and left the speech bar frozen
+            // until reload. A budget fight is not worth a deaf endpointer.
             foreach (var victim in snapshot
-                .Where(k => k.Name != name && k.IsResident())
+                .Where(k => k.Name != name && k.Name != "vad" && k.IsResident())
                 .OrderBy(k => k.LastUsedUtc))
             {
                 if (ResidentOther() + incoming <= BudgetBytes) break;

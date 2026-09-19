@@ -64,6 +64,24 @@ public interface IAiWorkerApi
     Task<ArrayBuffer> SpeakPcmAsync(string bodyJson, Action<string> onMeta, CancellationToken ct = default);
 
     /// <summary>
+    /// Feed VAD with transferable float32 PCM. Meta JSON: <c>{ reset?, flush? }</c>.
+    /// Returns the same JSON shape as <c>POST /api/vad</c>.
+    /// </summary>
+    /// <remarks>
+    /// Continuous hands-free used to JSON-encode every mic batch as a number array. Transferring the
+    /// <see cref="ArrayBuffer"/> removes that tax; response spans stay tiny JSON.
+    /// </remarks>
+    Task<string> VadPcmAsync([WorkerTransfer] ArrayBuffer samples, string metaJson,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Transcribe transferable float32 PCM. Meta JSON: <c>{ sample_rate: int }</c>.
+    /// Returns the same JSON shape as <c>POST /api/transcribe</c>.
+    /// </summary>
+    Task<string> TranscribePcmAsync([WorkerTransfer] ArrayBuffer samples, string metaJson,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Time a fixed, pure-.NET workload inside the worker. Diagnostic only - no GPU, no interop.
     /// </summary>
     /// <remarks>
@@ -250,6 +268,126 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
         // directly, which is a change inside AiVoiceEngine rather than in the wire.
         using var typed = new Float32Array(result.Samples);
         return typed.Buffer;
+    }
+
+    /// <inheritdoc/>
+    public async Task<string> VadPcmAsync([WorkerTransfer] ArrayBuffer samples, string metaJson,
+        CancellationToken ct = default)
+    {
+        await EnsureInitializedAsync().ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(metaJson) ? "{}" : metaJson);
+        var body = doc.RootElement;
+        bool reset = body.TryGetProperty("reset", out var rEl) && rEl.ValueKind == JsonValueKind.True;
+        bool flush = body.TryGetProperty("flush", out var fEl) && fEl.ValueKind == JsonValueKind.True;
+
+        // Transferred buffer → Float32Array view (still JS). Engine AcceptAsync(Float32Array) crosses once
+        // for segment buffering; Silero itself can UploadToDevice when given aligned frames.
+        using var view = new Float32Array(samples);
+        if (_vad == null)
+            return JsonSerializer.Serialize(new { error = "vad engine not configured" });
+
+        try
+        {
+            if (reset)
+            {
+                await _vad.EnsureReadyAsync(ct).ConfigureAwait(false);
+                await _vad.ResetStreamAsync(ct).ConfigureAwait(false);
+            }
+
+            AiVadUpdate update;
+            if (view.Length > 0)
+                update = await _vad.AcceptAsync(view, ct).ConfigureAwait(false);
+            else
+                update = new AiVadUpdate(false, _vad.LastProbability, System.Array.Empty<AiSpeechSpan>(), 0);
+
+            // Keep vad at the front of the LRU so a later EnsureRoomForAsync("speech") cannot treat it as
+            // never-used (LastUsedUtc default) and dispose Silero under an open microphone.
+            _residency?.Touch("vad");
+
+            if (flush)
+            {
+                var tail = await _vad.FlushAsync(ct).ConfigureAwait(false);
+                if (tail.Spans.Count > 0)
+                    update = update with { Spans = update.Spans.Concat(tail.Spans).ToArray() };
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                speech_active = update.SpeechActive,
+                probability = update.Probability,
+                spans = update.Spans.Select(s => new { start = s.StartSample, length = s.Length }).ToArray(),
+                frame_ms = update.FrameMs,
+                mean_frame_ms = _vad.MeanFrameMs,
+                model = _vad.ModelName,
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = $"{ex.GetType().Name}: {ex.Message}",
+                detail = ex.ToString().Length > 2000 ? ex.ToString()[..2000] : ex.ToString(),
+            });
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<string> TranscribePcmAsync([WorkerTransfer] ArrayBuffer samples, string metaJson,
+        CancellationToken ct = default)
+    {
+        await EnsureInitializedAsync().ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(metaJson) ? "{}" : metaJson);
+        var body = doc.RootElement;
+        int sampleRate = body.TryGetProperty("sample_rate", out var srEl) && srEl.TryGetInt32(out var sr)
+            ? sr : 16000;
+
+        using var view = new Float32Array(samples);
+        if (view.Length == 0)
+            return JsonSerializer.Serialize(new { error = "'samples' was empty" });
+
+        if (_speech == null)
+            return JsonSerializer.Serialize(new { error = "speech engine not configured" });
+
+        try
+        {
+            var result = await _speech.TranscribeAsync(view, sampleRate, ct).ConfigureAwait(false);
+            return JsonSerializer.Serialize(new
+            {
+                text = result.Text,
+                model = result.Model,
+                inference_ms = result.InferenceMs,
+                timing = result.Split == null ? null : new
+                {
+                    graph_runs = result.Split.GraphRuns,
+                    executor_ms = result.Split.ExecutorMs,
+                    readback_count = result.Split.ReadbackCount,
+                    readback_ms = result.Split.ReadbackMs,
+                    drain_count = result.Split.DrainCount,
+                    drain_ms = result.Split.DrainMs,
+                    residual_ms = result.Split.ResidualMs,
+                    outside_executor_ms = result.Split.OutsideExecutorMs,
+                    mel_ms = result.Split.MelMs,
+                    encoder_capture = result.Split.EncoderCaptureStatus,
+                    encoder_ms = result.Split.EncoderMs,
+                    prefill_ms = result.Split.PrefillMs,
+                    decode_steps_ms = result.Split.DecodeStepsMs,
+                    decode_steps = result.Split.DecodeSteps,
+                    encoder_nodes = result.Split.EncoderNodeCount,
+                    decoder_nodes = result.Split.DecoderNodeCount,
+                    decode_setup_ms = result.Split.DecodeSetupMs,
+                    decode_graph_ms = result.Split.DecodeGraphMs,
+                    decode_argmax_ms = result.Split.DecodeArgmaxMs,
+                },
+            });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = $"{ex.GetType().Name}: {ex.Message}",
+                detail = ex.ToString().Length > 2000 ? ex.ToString()[..2000] : ex.ToString(),
+            });
+        }
     }
 
     public async Task HandleRequestAsync(string method, string path, string? bodyJson, Action<string> onFrame,

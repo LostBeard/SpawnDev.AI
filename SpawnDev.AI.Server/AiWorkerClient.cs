@@ -1,5 +1,7 @@
 using System.Text.Json;
 using SpawnDev.SpawnJS.WebWorkers;
+using ArrayBuffer = SpawnDev.SpawnJS.JSObjects.ArrayBuffer;
+using Float32Array = SpawnDev.SpawnJS.JSObjects.Float32Array;
 
 namespace SpawnDev.AI.Server;
 
@@ -209,10 +211,9 @@ public sealed class AiWorkerClient
     /// Transcribe mono PCM through the worker's speech engine.
     /// </summary>
     /// <remarks>
-    /// ⚠️ Sends the samples as a JSON number array, which matches <c>/api/transcribe</c>'s first cut and is
-    /// the WRONG shape for long audio: 30 s at 16 kHz is 480,000 numbers, and JSON-encoding that pulls bulk
-    /// audio through the .NET heap. Fine for an utterance; the follow-up is a transferred Float32Array over
-    /// the worker port. The signature does not change when that lands.
+    /// Prefer <see cref="TranscribeAsync(Float32Array, int)"/> / the transferable path when samples are
+    /// already JS-side. This overload wraps managed floats into a transferable buffer so the MessagePort
+    /// never JSON-encodes hundreds of thousands of numbers.
     /// </remarks>
     /// <param name="samples">Mono PCM in [-1, 1].</param>
     /// <param name="sampleRate">Sample rate of <paramref name="samples"/>.</param>
@@ -220,10 +221,28 @@ public sealed class AiWorkerClient
     public async Task<(string Text, string Model, double InferenceMs)> TranscribeAsync(
         float[] samples, int sampleRate)
     {
-        var body = JsonSerializer.Serialize(new { samples, sample_rate = sampleRate }, J);
-        var json = await RequestJsonAsync("POST", "/api/transcribe", body);
+        using var typed = new Float32Array(samples);
+        return await TranscribeAsync(typed, sampleRate).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Transcribe transferable float32 PCM — samples cross as an <see cref="ArrayBuffer"/>, not JSON.
+    /// At 16 kHz the worker uploads JS→GPU with no managed-heap crossing for the waveform.
+    /// </summary>
+    public async Task<(string Text, string Model, double InferenceMs)> TranscribeAsync(
+        Float32Array samples, int sampleRate)
+    {
+        if (_worker == null) await InitAsync();
+        ArgumentNullException.ThrowIfNull(samples);
+        var meta = JsonSerializer.Serialize(new { sample_rate = sampleRate }, J);
+        // Transfer neuters the buffer; wrap ownership for the call.
+        var buffer = samples.Buffer;
+        var json = await _worker!.Run<IAiWorkerApi, string>(
+            s => s.TranscribePcmAsync(buffer, meta));
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
+        if (root.TryGetProperty("error", out var err))
+            throw new Exception(err.GetString() ?? "transcribe failed");
 
         // ⚠️ Logged HERE, in the window scope, because this is where the page console is. The engine that
         // produced these numbers lives in a shared worker whose console nothing on the page can see - so
@@ -236,19 +255,13 @@ public sealed class AiWorkerClient
                 + $"readbacks {D("readback_count"):F0} ({D("readback_ms"):F0}ms) | "
                 + $"drains {D("drain_count"):F0} ({D("drain_ms"):F0}ms) | "
                 + $"residual {D("residual_ms"):F0}ms (dispatch+CPU+alloc) | "
-                + $"outside the executor {D("outside_executor_ms"):F0}ms, of which CPU mel STFT "
+                + $"outside the executor {D("outside_executor_ms"):F0}ms, of which GPU mel "
                 + $"{D("mel_ms"):F0}ms (padded to 30s before the STFT) | encoder capture: "
                 + (tm.TryGetProperty("encoder_capture", out var ec) ? ec.GetString() ?? "?" : "?"));
-            // The encoder/decoder split decides what is worth working on next and the totals above cannot
-            // give it: the encoder is one fixed-shape run that a recorded plan can serve forever, while
-            // each decode step's past-K/V is a position longer than the last.
             Console.WriteLine($"[transcribe] encoder {D("encoder_ms"):F0}ms | prefill {D("prefill_ms"):F0}ms "
                 + $"| COMPILED nodes enc {D("encoder_nodes"):F0} / dec {D("decoder_nodes"):F0} "
                 + $"| {D("decode_steps"):F0} decode steps {D("decode_steps_ms"):F0}ms "
                 + $"({(D("decode_steps") > 0 ? D("decode_steps_ms") / D("decode_steps") : 0):F0}ms each)");
-            // The decode step split. Three different fixes hide behind one per-step number: host setup (a
-            // GPU buffer allocated per token), the graph itself, and the argmax - which is one GPU-to-host
-            // round trip per token and cannot be avoided, only made cheap.
             double n = Math.Max(1, D("decode_steps"));
             Console.WriteLine($"[transcribe] per decode step: setup {D("decode_setup_ms") / n:F1}ms + "
                 + $"graph {D("decode_graph_ms") / n:F1}ms + argmax {D("decode_argmax_ms") / n:F1}ms");
@@ -257,7 +270,7 @@ public sealed class AiWorkerClient
         return (
             root.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "",
             root.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "",
-            root.TryGetProperty("inference_ms", out var ms) ? ms.GetDouble() : 0);
+            root.TryGetProperty("inference_ms", out var im) ? im.GetDouble() : 0);
     }
 
     /// <summary>
@@ -324,8 +337,22 @@ public sealed class AiWorkerClient
     public async Task<(bool SpeechActive, float Probability, (long Start, int Length)[] Spans,
         double MeanFrameMs)> VadAsync(float[] samples, bool reset = false, bool flush = false)
     {
-        var body = JsonSerializer.Serialize(new { samples, reset, flush }, J);
-        var json = await RequestJsonAsync("POST", "/api/vad", body);
+        using var typed = new Float32Array(samples ?? Array.Empty<float>());
+        return await VadAsync(typed, reset, flush).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// VAD over a transferable float32 batch — no JSON number array on the MessagePort.
+    /// </summary>
+    public async Task<(bool SpeechActive, float Probability, (long Start, int Length)[] Spans,
+        double MeanFrameMs)> VadAsync(Float32Array samples, bool reset = false, bool flush = false)
+    {
+        if (_worker == null) await InitAsync();
+        ArgumentNullException.ThrowIfNull(samples);
+        var meta = JsonSerializer.Serialize(new { reset, flush }, J);
+        var buffer = samples.Buffer;
+        var json = await _worker!.Run<IAiWorkerApi, string>(
+            s => s.VadPcmAsync(buffer, meta));
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         if (root.TryGetProperty("error", out var err))
@@ -369,10 +396,8 @@ public sealed class AiWorkerClient
     /// than copying it, and there is no serialisation on either side.
     /// </para>
     /// <para>
-    /// ⚠️ STILL ONE HOP SHORT of the ideal. The caller below reads the buffer into a <c>float[]</c>
-    /// because the player takes one. Removing that last copy means an overload on
-    /// <c>AudioPlayback</c> (in SpawnDev.ILGPU.ML) that accepts a <c>Float32Array</c>, at which
-    /// point the audio never touches .NET on the page at all.
+    /// Prefer <see cref="SpeakInVoicePcmJsAsync"/> for prepared-voice replies — that path returns a
+    /// <see cref="Float32Array"/> straight into <c>AudioPlayback.PlayAsync</c> with no managed lap.
     /// </para>
     /// </remarks>
     public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
@@ -394,23 +419,20 @@ public sealed class AiWorkerClient
         // ⚠️ A List.Add, not `metaJson = m`. Run takes an EXPRESSION TREE, and an expression tree may not
         // contain an assignment - a method call is the way to get a value out of the callback.
         var meta = new List<string>(1);
-        var buffer = await _worker!.Run<IAiWorkerApi, SpawnDev.SpawnJS.JSObjects.ArrayBuffer>(
+        var buffer = await _worker!.Run<IAiWorkerApi, ArrayBuffer>(
             s => s.SpeakPcmAsync(body, new Action<string>(meta.Add), ct));
         var metaJson = meta.Count > 0 ? meta[0] : null;
 
-        using (buffer)
-        {
-            using var view = new SpawnDev.SpawnJS.JSObjects.Float32Array(buffer);
-            var samples = view.ToArray();
-            if (metaJson == null) return (samples, 0, "", 0, "");
-            using var doc = JsonDocument.Parse(metaJson);
-            var r = doc.RootElement;
-            return (samples,
-                r.TryGetProperty("sample_rate", out var sr) ? sr.GetInt32() : 0,
-                r.TryGetProperty("model", out var md) ? md.GetString() ?? "" : "",
-                r.TryGetProperty("inference_ms", out var im) ? im.GetDouble() : 0,
-                r.TryGetProperty("spoken_text", out var st) ? st.GetString() ?? "" : "");
-        }
+        using var view = new Float32Array(buffer);
+        var samples = view.ToArray();
+        if (metaJson == null) return (samples, 0, "", 0, "");
+        using var doc = JsonDocument.Parse(metaJson);
+        var r = doc.RootElement;
+        return (samples,
+            r.TryGetProperty("sample_rate", out var sr) ? sr.GetInt32() : 0,
+            r.TryGetProperty("model", out var md) ? md.GetString() ?? "" : "",
+            r.TryGetProperty("inference_ms", out var im) ? im.GetDouble() : 0,
+            r.TryGetProperty("spoken_text", out var st) ? st.GetString() ?? "" : "");
     }
 
     public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
@@ -733,14 +755,11 @@ public sealed class AiWorkerClient
 
     /// <summary>
     /// Speak in a prepared voice, with the PCM crossing as a TRANSFERRED buffer rather than JSON.
+    /// Returns a JS <see cref="Float32Array"/> the caller owns and must dispose — no managed
+    /// <c>float[]</c> lap before playback.
     /// </summary>
-    /// <remarks>
-    /// This is the one the app speaks through, so it is the one that matters: see
-    /// <see cref="SpeakPcmAsync"/> for why the JSON shape was costing a serialise-and-parse of roughly
-    /// 1.4 MB of text per five-second chunk.
-    /// </remarks>
-    public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
-        SpeakInVoicePcmAsync(string text, string voiceId, int? maxSpokenCharacters = null,
+    public async Task<(Float32Array Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
+        SpeakInVoicePcmJsAsync(string text, string voiceId, int? maxSpokenCharacters = null,
         int? noiseSeed = null, CancellationToken ct = default)
     {
         if (_worker == null) await InitAsync();
@@ -753,21 +772,39 @@ public sealed class AiWorkerClient
         }, J);
 
         var meta = new List<string>(1);
-        var buffer = await _worker!.Run<IAiWorkerApi, SpawnDev.SpawnJS.JSObjects.ArrayBuffer>(
+        var buffer = await _worker!.Run<IAiWorkerApi, ArrayBuffer>(
             s => s.SpeakPcmAsync(body, new Action<string>(meta.Add), ct));
 
-        using (buffer)
+        var view = new Float32Array(buffer);
+        if (meta.Count == 0) return (view, 24000, "", 0, text);
+        using var doc = JsonDocument.Parse(meta[0]);
+        var r = doc.RootElement;
+        return (view,
+            r.TryGetProperty("sample_rate", out var sr) ? sr.GetInt32() : 24000,
+            r.TryGetProperty("model", out var md) ? md.GetString() ?? "" : "",
+            r.TryGetProperty("inference_ms", out var im) ? im.GetDouble() : 0,
+            r.TryGetProperty("spoken_text", out var st) ? st.GetString() ?? text : text);
+    }
+
+    /// <summary>
+    /// Speak in a prepared voice, with the PCM crossing as a TRANSFERRED buffer rather than JSON.
+    /// </summary>
+    /// <remarks>
+    /// This is the one the app speaks through, so it is the one that matters: see
+    /// <see cref="SpeakPcmAsync"/> for why the JSON shape was costing a serialise-and-parse of roughly
+    /// 1.4 MB of text per five-second chunk.
+    /// Prefer <see cref="SpeakInVoicePcmJsAsync"/> in the browser demo — this overload still
+    /// <c>ToArray</c>s for callers that need managed PCM (tests, robot speaker without a JS path).
+    /// </remarks>
+    public async Task<(float[] Samples, int SampleRate, string Model, double InferenceMs, string SpokenText)>
+        SpeakInVoicePcmAsync(string text, string voiceId, int? maxSpokenCharacters = null,
+        int? noiseSeed = null, CancellationToken ct = default)
+    {
+        var (js, rate, model, ms, spoken) = await SpeakInVoicePcmJsAsync(
+            text, voiceId, maxSpokenCharacters, noiseSeed, ct).ConfigureAwait(false);
+        using (js)
         {
-            using var view = new SpawnDev.SpawnJS.JSObjects.Float32Array(buffer);
-            var samples = view.ToArray();
-            if (meta.Count == 0) return (samples, 24000, "", 0, text);
-            using var doc = JsonDocument.Parse(meta[0]);
-            var r = doc.RootElement;
-            return (samples,
-                r.TryGetProperty("sample_rate", out var sr) ? sr.GetInt32() : 24000,
-                r.TryGetProperty("model", out var md) ? md.GetString() ?? "" : "",
-                r.TryGetProperty("inference_ms", out var im) ? im.GetDouble() : 0,
-                r.TryGetProperty("spoken_text", out var st) ? st.GetString() ?? text : text);
+            return (js.ToArray(), rate, model, ms, spoken);
         }
     }
 

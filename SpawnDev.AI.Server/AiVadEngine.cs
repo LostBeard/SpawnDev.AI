@@ -1,5 +1,7 @@
 using ILGPU.Runtime;
+using SpawnDev.ILGPU.ML.Graph;
 using SpawnDev.ILGPU.ML.Pipelines;
+using Float32Array = SpawnDev.SpawnJS.JSObjects.Float32Array;
 
 namespace SpawnDev.AI.Server;
 
@@ -102,9 +104,39 @@ public sealed class AiVadEngine : IDisposable
     /// </summary>
     /// <param name="samples">Mono PCM at 16 kHz, continuing the stream fed so far.</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <remarks>
+    /// ⚠️ IN A BROWSER, prefer <see cref="AcceptAsync(Float32Array, CancellationToken)"/> when the
+    /// batch is already a JS typed array (transferable VAD wire).
+    /// </remarks>
     public async Task<AiVadUpdate> AcceptAsync(float[] samples, CancellationToken ct = default)
     {
         if (samples == null) throw new ArgumentNullException(nameof(samples));
+        await EnsureLoadedAsync(ct).ConfigureAwait(false);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            _pending.Clear();
+            long framesBefore = _detector!.SamplesProcessed / SileroVad.WindowSize;
+            var started = DateTime.UtcNow;
+            await _detector.AcceptWaveformAsync(samples).ConfigureAwait(false);
+            var elapsed = (DateTime.UtcNow - started).TotalMilliseconds;
+
+            long framesRun = _detector.SamplesProcessed / SileroVad.WindowSize - framesBefore;
+            if (framesRun > 0) { _frames += framesRun; _frameMsTotal += elapsed; }
+
+            return new AiVadUpdate(_detector.IsSpeechActive, _detector.LastProbability,
+                _pending.ToArray(), framesRun > 0 ? elapsed / framesRun : 0);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// Browser path: accept a JS <see cref="Float32Array"/> batch (transferable VAD wire).
+    /// </summary>
+    public async Task<AiVadUpdate> AcceptAsync(Float32Array samples, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(samples);
         await EnsureLoadedAsync(ct).ConfigureAwait(false);
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
@@ -134,7 +166,7 @@ public sealed class AiVadEngine : IDisposable
     /// </remarks>
     public async Task<AiVadUpdate> FlushAsync(CancellationToken ct = default)
     {
-        if (_detector == null) return new AiVadUpdate(false, 0f, Array.Empty<AiSpeechSpan>(), 0);
+        if (_detector == null) return new AiVadUpdate(false, 0f, System.Array.Empty<AiSpeechSpan>(), 0);
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -169,12 +201,32 @@ public sealed class AiVadEngine : IDisposable
     /// average are both reset afterwards, so a warm frame can neither open a phantom utterance nor be
     /// mistaken for steady-state performance in the number the UI prints.
     /// </para>
+    /// <para>
+    /// 🔴 SINGLE-FLIGHT. This used to set <c>_warmed = true</c> BEFORE the 12-frame capture ran, so a second
+    /// caller (StartListening's <c>reset:true</c> path, overlapping <c>POST /api/warm</c>) returned
+    /// immediately and opened the microphone while the first caller still held <c>_gate</c> for ~20 s of
+    /// compile+capture. AcceptAsync then queued behind that gate: the input meter kept moving (client-side
+    /// RMS) while the speech bar froze at the last probability (~0.02) until warm finished. MEASURED live
+    /// on the hands-free tab: <c>vad batches</c> stuck at 2 with <c>4713 ms/frame</c> and peakP 0.028 while
+    /// 16k mic peaks hit 0.15; then <c>[AiVadEngine] warm: 12 frames in 20.8s</c> printed and hearing
+    /// resumed. Every waiter must await the SAME warm task; ready means capture is LIVE, not "started".
+    /// </para>
     /// </remarks>
-    public async Task EnsureReadyAsync(CancellationToken ct = default)
+    public Task EnsureReadyAsync(CancellationToken ct = default)
+    {
+        lock (_warmSync)
+        {
+            if (_warmed) return Task.CompletedTask;
+            // Single-flight: WarmAsync("vad") and StartListening's reset:true both land here; the second
+            // must await the first's capture, not treat "warm started" as "warm done".
+            return _ensureReadyTask ??= EnsureReadyCoreAsync(ct);
+        }
+    }
+
+    private async Task EnsureReadyCoreAsync(CancellationToken ct)
     {
         await EnsureLoadedAsync(ct).ConfigureAwait(false);
         if (_warmed) return;
-        _warmed = true;
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
         try
@@ -191,6 +243,7 @@ public sealed class AiVadEngine : IDisposable
                 _pending.Clear();
                 _frames = 0;
                 _frameMsTotal = 0;
+                _warmed = true;
             }
             finally { _gate.Release(); }
 
@@ -200,11 +253,15 @@ public sealed class AiVadEngine : IDisposable
         }
         catch (Exception ex)
         {
+            // Allow a later EnsureReadyAsync to retry - a failed warm must not permanently look "done".
+            lock (_warmSync) { _ensureReadyTask = null; }
             Console.WriteLine($"[AiVadEngine] warm failed ({ex.GetType().Name}: {ex.Message}); the first "
                             + "real frame will pay for compilation instead.");
         }
     }
 
+    private readonly object _warmSync = new();
+    private Task? _ensureReadyTask;
     private bool _warmed;
 
     /// <summary>
@@ -273,6 +330,8 @@ public sealed class AiVadEngine : IDisposable
         _detector = null;
         _vad?.Dispose();
         _vad = null;
+        _warmed = false;
+        _ensureReadyTask = null;
         return Task.CompletedTask;
     }
 

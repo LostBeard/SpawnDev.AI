@@ -1197,10 +1197,12 @@ public partial class Home : IDisposable
             StateHasChanged();
             await StartListeningAsync();
 
-            // The recogniser and the voice load WHILE the user speaks their first sentence. That is the
-            // whole point: the work is unavoidable, its position in the conversation is not. Transcription
-            // cannot begin until they stop talking anyway, so these seconds are otherwise dead.
-            _ = WarmInBackgroundAsync();
+            // 🔴 DO NOT warm speech/chat/voice on the shared worker while the microphone is open.
+            // MEASURED live: WarmInBackgroundAsync here queued Whisper/chat loads behind every VadAsync on
+            // the single worker thread, so the input meter kept moving (client RMS) while the speech bar
+            // froze at ~0.03 and vad batches stalled until the background warm finished (or forever if a
+            // load hung). Those models are needed AFTER the utterance closes - kick them off in
+            // StopListeningAsync instead.
         }
         else
         {
@@ -1212,7 +1214,7 @@ public partial class Home : IDisposable
     }
 
     /// <summary>
-    /// Load the recogniser and the voice while the user is talking.
+    /// Load the recogniser, chat model and voice after the microphone has closed.
     /// </summary>
     /// <remarks>
     /// ⚠️ Nothing may escape this method - it is fire-and-forget, and an unhandled exception on a runtime
@@ -1220,14 +1222,18 @@ public partial class Home : IDisposable
     /// otherwise ignored: the lazy path in each engine still works, so failing to PRELOAD must never end
     /// a conversation that has just started.
     /// </remarks>
+    /// <remarks>
+    /// 🔴 MUST NOT RUN WHILE LISTENING. The AI worker is one thread: a WarmAsync("speech") in flight
+    /// starves every VadPcmAsync behind it, which is exactly "input bar moves, speech bar frozen".
+    /// Call this from StopListeningAsync (mic already stopped), never from ToggleHandsFreeAsync.
+    /// </remarks>
     async Task WarmInBackgroundAsync()
     {
         try
         {
             // ⚠️ "chat" belongs here as much as the other two. It was missing, and the chat model
             // therefore loaded and compiled INSIDE the turn: MEASURED 22.9 s waiting for the first token,
-            // after the user had finished speaking. The recogniser and the voice were already being warmed
-            // during the seconds the user is talking; the model that answers was not.
+            // after the user had finished speaking.
             // ⚠️ THE ORDER IS THE POINT, not just the contents. The server warms these SEQUENTIALLY on one
             // GPU, so this list is a schedule: whatever is late in it may not be ready when the turn wants
             // it, and whatever is early delays everything after it.
@@ -1397,12 +1403,23 @@ public partial class Home : IDisposable
     // late artifact rewrite can change the text - in which case this is discarded and the chunk rendered
     // normally. Wrong audio is far worse than a slow start.
     string? _specChunkText;
-    Task<(float[] Samples, int Rate, double Ms)>? _specChunkTask;
+    Task<(Float32Array Samples, int Rate, double Ms)>? _specChunkTask;
 
     void ResetSpeculativeChunk()
     {
+        // Discarded speculation may have completed with a Float32Array the speak loop will never take.
+        // ⚠️ ONLY call this when the task is truly abandoned. SpeakAsync used to call this AFTER adopting
+        // the task into `pending` - and when the render had already finished, this disposed the same
+        // Float32Array pending was about to play. MEASURED as Arg_NullReferenceException on the SECOND
+        // hands-free reply (warm synthesis finishes during the LLM stream; cold turn 1 is still in flight
+        // so IsCompletedSuccessfully is false and the dispose is skipped - which is why turn 1 "worked").
+        var abandoned = _specChunkTask;
         _specChunkText = null;
         _specChunkTask = null;
+        if (abandoned != null && abandoned.IsCompletedSuccessfully)
+        {
+            try { abandoned.Result.Samples.Dispose(); } catch { }
+        }
     }
 
     /// <summary>Starts rendering chunk 0 if the stream has settled it and nothing is rendering yet.</summary>
@@ -1464,7 +1481,7 @@ public partial class Home : IDisposable
     /// Synthesise one chunk. <paramref name="voiceId"/> null falls back to the page's selected voice, so a
     /// room member speaks in ITS voice rather than whoever the page last picked.
     /// </summary>
-    async Task<(float[] Samples, int Rate, double Ms)> SynthesizeChunkAsync(string chunk, string? voiceId = null)
+    async Task<(Float32Array Samples, int Rate, double Ms)> SynthesizeChunkAsync(string chunk, string? voiceId = null)
     {
         // 🔴 ONE PATH. Captain: "nothing should ever mean 'clone me each turn' because that is just
         // asinine." He is right, and it was worse than a naming problem: an EMPTY id used to fall through
@@ -1474,10 +1491,7 @@ public partial class Home : IDisposable
         // voice; there is no mode in which it happens by itself.
         var useVoice = voiceId ?? _voiceId;
         if (string.IsNullOrEmpty(useVoice)) useVoice = BundledVoices.DefaultId;
-        // ⚠️ The Pcm overload, not SpeakInVoiceAsync. Same result, different WIRE SHAPE: the PCM comes back
-        // as a transferred ArrayBuffer instead of a JSON number array, which for a five-second chunk at
-        // 24 kHz was ~1.4 MB of decimal text serialised in the worker and parsed here - on the path whose
-        // entire job is to start talking quickly.
+        // ⚠️ SpeakInVoicePcmJsAsync: transferred ArrayBuffer → Float32Array, no managed ToArray before play.
         // 🔴 THE CALLER OWNS THE LENGTH, SO SAY SO. AiVoiceEngine.MaxSpokenCharacters is 320 by default and
         // trims at a sentence end - a PRODUCT choice for callers that hand it a whole reply. This page is
         // not one of them: it splits the reply into chunks and speaks them in order, so a second, hidden
@@ -1497,7 +1511,7 @@ public partial class Home : IDisposable
         // 🔴 THE REAL DEFECT IS UPSTREAM AND IS FIXED IN SpeakableChunks: a bulleted list has no sentence
         // terminators, so the splitter returned the whole reply as ONE piece. Chunks that are actually
         // chunked never reach either limit, and the cap goes back to being the backstop it was.
-        var (samples, rate, _, ms, spoken) = await Ai.SpeakInVoicePcmAsync(chunk, useVoice);
+        var (samples, rate, _, ms, spoken) = await Ai.SpeakInVoicePcmJsAsync(chunk, useVoice);
 
         // ⚠️ AND CHECK. The engine reports what it actually rendered precisely so a caller can tell; the
         // page was discarding it, which is why text disappeared silently instead of loudly.
@@ -1800,10 +1814,15 @@ public partial class Home : IDisposable
             // rewrite can change it - and speaking audio the reply does not say is the one failure a
             // listener cannot detect. On any mismatch the speculation is dropped and this renders
             // normally, which costs exactly what it cost before.
-            Task<(float[] Samples, int Rate, double Ms)> pending;
+            Task<(Float32Array Samples, int Rate, double Ms)> pending;
             if (_specChunkTask != null && _specChunkText == chunks[0])
             {
                 pending = _specChunkTask;
+                // Clear the speculation slot WITHOUT disposing - `pending` now owns those samples.
+                // ResetSpeculativeChunk would Dispose a completed render and leave PlayAsync holding a
+                // neutered Float32Array (Arg_NullReferenceException on the next hands-free turn).
+                _specChunkText = null;
+                _specChunkTask = null;
                 // ⚠️ "REUSED", not "without waiting". The task may still be running - whether it saved
                 // anything is the `waited` figure on the first-audio line below, not this message.
                 Console.WriteLine($"[HF-SPEAK] first chunk reusing the render started during generation "
@@ -1814,9 +1833,9 @@ public partial class Home : IDisposable
                 if (_specChunkTask != null)
                     Console.WriteLine("[HF-SPEAK] pre-rendered chunk DISCARDED - the finished reply's first "
                                     + "chunk differs from what was speculated; rendering it properly");
+                ResetSpeculativeChunk();
                 pending = SynthesizeChunkAsync(chunks[0], voice);
             }
-            ResetSpeculativeChunk();
             DateTime lastClipEndedAt = default;
             for (int i = 0; i < chunks.Count; i++)
             {
@@ -1870,7 +1889,11 @@ public partial class Home : IDisposable
                 // Kick the next synthesis BEFORE playing this one - that overlap is the whole point.
                 pending = i + 1 < chunks.Count ? SynthesizeChunkAsync(chunks[i + 1], voice) : null!;
 
-                if (_speakCts?.IsCancellationRequested ?? false) break;
+                if (_speakCts?.IsCancellationRequested ?? false)
+                {
+                    samples.Dispose();
+                    break;
+                }
                 if (i == 0)
                 {
                     firstAudioPlayed = true;
@@ -1901,10 +1924,25 @@ public partial class Home : IDisposable
                 // body means to whoever is listening - more than the gestures - and it is the difference
                 // between a voice coming from the desk and a voice coming from the thing in the room.
                 // Everyone else in the scene stays on the page's own output.
-                var robotSpeaker = SpeakingAgentDrivesRobot() ? Robot.Speaker : null;
-                var seconds = robotSpeaker != null
-                    ? await robotSpeaker.PlayAsync(samples, rate, _speakCts?.Token ?? default)
-                    : await _speaker.PlayAsync(samples, rate);
+                double seconds;
+                try
+                {
+                    var robotSpeaker = SpeakingAgentDrivesRobot() ? Robot.Speaker : null;
+                    if (robotSpeaker != null)
+                    {
+                        // Robot speaker still takes managed PCM.
+                        var host = samples.ToArray();
+                        seconds = await robotSpeaker.PlayAsync(host, rate, _speakCts?.Token ?? default);
+                    }
+                    else
+                    {
+                        seconds = await _speaker.PlayAsync(samples, rate);
+                    }
+                }
+                finally
+                {
+                    samples.Dispose();
+                }
                 if (i > 0)
                     Console.WriteLine($"[HF-SPEAK] chunk {i + 1}/{chunks.Count}: silence {silenceMs:F0} ms "
                         + $"(waited {waitedMs:F0} ms for synthesis, synth took {ms:F0} ms), plays {seconds:F1}s");
@@ -2251,6 +2289,20 @@ public partial class Home : IDisposable
         StateHasChanged();
         try
         {
+            // Mic is closed - worker is free for the recogniser. Warm SPEECH only (awaited): a fire-and-
+            // forget WarmInBackgroundAsync(speech+chat+voice) here would queue chat/voice ahead of
+            // TranscribeAsync on the same worker and delay the transcript by minutes. Chat/voice warm
+            // stays out of this turn's critical path; SendAsync loads them when it needs them.
+            if (_handsFree)
+            {
+                try { await Ai.WarmAsync("speech"); }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[HF] speech preload before transcribe failed ({ex.Message}); "
+                                    + "TranscribeAsync will load it.");
+                }
+            }
+
             // Already 16 kHz: the stream was converted on the way in, by a resampler whose output is
             // gated to equal a whole-buffer conversion exactly.
             var samples = captured;
@@ -2550,9 +2602,19 @@ public partial class Home : IDisposable
                 // reaches VadOptions.Threshold is a gain/threshold problem; a number pinned at zero is a
                 // dead capture path. Those two look identical if all you print is "Listening…".
                 if (_listening)
-                    _status = _speechActive
-                        ? $"Hearing you… (speech {_speechProbability:F2}, {_vadFrameMs:F1} ms/frame)"
-                        : $"Listening… (speech {_speechProbability:F2}, {_vadFrameMs:F1} ms/frame)";
+                {
+                    // ⚠️ INPUT BAR ≠ SPEECH. Typing, fan noise and desk thumps move the input meter and
+                    // leave Silero at ~0.02. Endpointing only fires when the SPEECH bar crosses ~0.50
+                    // ("Hearing you…"). Without this line, a lively input bar reads as "it can hear me"
+                    // while the turn runs forever - MEASURED on a 76 s listen with peakP stuck at 0.046.
+                    if (_speechActive)
+                        _status = $"Hearing you… (speech {_speechProbability:F2}, {_vadFrameMs:F1} ms/frame)";
+                    else if (MicLevelPercent >= 12 && _vadPeakProbability < 0.15f && _vadBatches >= 40)
+                        _status = $"Listening… input is busy but speech stays {_speechProbability:F2} "
+                                + $"(need ~0.50) — watch the speech bar, talk closer/louder";
+                    else
+                        _status = $"Listening… (speech {_speechProbability:F2}, {_vadFrameMs:F1} ms/frame)";
+                }
                 await InvokeAsync(StateHasChanged);
             }
         }

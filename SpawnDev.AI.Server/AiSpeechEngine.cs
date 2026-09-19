@@ -2,6 +2,7 @@ using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.ILGPU.ML.Pipelines;
+using Float32Array = SpawnDev.SpawnJS.JSObjects.Float32Array;
 
 namespace SpawnDev.AI.Server;
 
@@ -30,10 +31,10 @@ public sealed record AiTranscription(string Text, string Model, double Inference
 /// <param name="DrainMs">Wall time in those drains.</param>
 /// <param name="OutsideExecutorMs">Total minus executor time: mel, tokenizer, host glue.</param>
 /// <param name="MelMs">
-/// CPU log-mel STFT time. ⚠️ Broken out of <paramref name="OutsideExecutorMs"/> because it is a FIXED
-/// per-call cost: the audio is padded to a flat 30 s before the STFT runs, so a four-word turn pays exactly
-/// what a full half-minute does. That is precisely why endpointing shortened the recording without
-/// shortening the transcription.
+/// Log-mel preprocess wall time (<c>WhisperMelPreprocessor</c> on GPU for the 16 kHz path). ⚠️ Broken out
+/// of <paramref name="OutsideExecutorMs"/> because it is a FIXED per-call cost: the audio is padded to a
+/// flat 30 s before the STFT runs, so a four-word turn pays exactly what a full half-minute does. That is
+/// precisely why endpointing shortened the recording without shortening the transcription.
 /// </param>
 public sealed record AiInferenceSplit(int GraphRuns, double ExecutorMs, int ReadbackCount, double ReadbackMs,
     int DrainCount, double DrainMs, double OutsideExecutorMs, double MelMs)
@@ -153,14 +154,50 @@ public sealed class AiSpeechEngine : IDisposable
     /// <param name="sampleRate">Sample rate of <paramref name="samples"/>; resampled to 16 kHz internally.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The transcript.</returns>
-    public async Task<AiTranscription> TranscribeAsync(float[] samples, int sampleRate,
+    /// <remarks>
+    /// ⚠️ IN A BROWSER, prefer <see cref="TranscribeAsync(Float32Array, int, CancellationToken)"/> when
+    /// samples arrive as a transferable typed array — that path uploads JS→GPU with no managed-heap
+    /// crossing for the waveform (at 16 kHz).
+    /// </remarks>
+    public Task<AiTranscription> TranscribeAsync(float[] samples, int sampleRate,
         CancellationToken ct = default)
     {
-        if (samples == null || samples.Length == 0)
+        ArgumentNullException.ThrowIfNull(samples);
+        if (samples.Length == 0)
             throw new ArgumentException("no audio samples supplied", nameof(samples));
         if (sampleRate <= 0)
             throw new ArgumentOutOfRangeException(nameof(sampleRate), sampleRate, "sample rate must be positive");
 
+        return TranscribeCoreAsync(sampleRate, samples.Length,
+            () => _pipeline!.TranscribeAsync(samples, sampleRate), ct);
+    }
+
+    /// <summary>
+    /// Browser path: PCM as a JS <see cref="Float32Array"/> — uploaded to the device, mel stays on-GPU.
+    /// </summary>
+    /// <remarks>
+    /// No managed-heap crossing for the waveform at 16 kHz (<see cref="SpeechRecognitionPipeline.TranscribeAsync(Float32Array, int)"/>).
+    /// Prefer this over JSON-encoding the utterance on the wire, and over converting to <c>float[]</c> first.
+    /// </remarks>
+    public Task<AiTranscription> TranscribeAsync(Float32Array samples, int sampleRate,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(samples);
+        if (samples.Length == 0)
+            throw new ArgumentException("no audio samples supplied", nameof(samples));
+        if (sampleRate <= 0)
+            throw new ArgumentOutOfRangeException(nameof(sampleRate), sampleRate, "sample rate must be positive");
+
+        return TranscribeCoreAsync(sampleRate, (int)samples.Length,
+            () => _pipeline!.TranscribeAsync(samples, sampleRate), ct);
+    }
+
+    private async Task<AiTranscription> TranscribeCoreAsync(
+        int sampleRate,
+        int sampleCount,
+        Func<Task<SpawnDev.ILGPU.ML.Preprocessing.TranscriptionResult>> runPipeline,
+        CancellationToken ct)
+    {
         await EnsureLoadedAsync(ct).ConfigureAwait(false);
 
         // ⚠️ CUMULATIVE, not LastRun*. A transcription is ONE encoder pass plus N decoder steps, and every
@@ -177,7 +214,7 @@ public sealed class AiSpeechEngine : IDisposable
         {
             SpawnDev.ILGPU.ML.Graph.GraphExecutor.CumulativeReset();
             var started = DateTime.UtcNow;
-            result = await _pipeline!.TranscribeAsync(samples, sampleRate).ConfigureAwait(false);
+            result = await runPipeline().ConfigureAwait(false);
             inferenceMs = (DateTime.UtcNow - started).TotalMilliseconds;
         }
         finally { _inferGate.Release(); }
@@ -211,14 +248,14 @@ public sealed class AiSpeechEngine : IDisposable
                     DecodeArgmaxMs = result.DecodeArgmaxMs,
                 };
 
-            var seconds = samples.Length / (double)sampleRate;
+            var seconds = sampleCount / (double)sampleRate;
             Console.WriteLine($"[AiSpeechEngine] {seconds:F2}s of audio in {inferenceMs:F0}ms "
                 + $"({(seconds > 0 ? inferenceMs / 1000.0 / seconds : 0):F1}x realtime) | "
                 + $"{runs} graph runs, executor {execMs:F0}ms | "
                 + $"readbacks {rbN} ({rbMs:F0}ms) | drains {drainN} ({drainMs:F0}ms) | "
                 + $"residual {split.ResidualMs:F0}ms (dispatch+CPU+alloc) | "
-                + $"outside the executor {split.OutsideExecutorMs:F0}ms, of which CPU mel STFT "
-                + $"{split.MelMs:F0}ms (FIXED - the audio is padded to 30s before the STFT, so this costs "
+                + $"outside the executor {split.OutsideExecutorMs:F0}ms, of which GPU mel "
+                + $"{split.MelMs:F0}ms (FIXED - audio padded to 30s before the STFT, so this costs "
                 + "the same for four words as for half a minute)");
         }
         catch { /* a diagnostic must never fail a request */ }
