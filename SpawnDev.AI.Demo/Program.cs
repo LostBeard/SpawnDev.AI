@@ -7,7 +7,6 @@ using SpawnDev.AsyncFileSystem.BrowserWASM;
 using SpawnDev.SpawnJS;
 using SpawnDev.SpawnJS.RazorRenderer;
 using SpawnDev.SpawnJS.WebWorkers;
-using SpawnDev.WebTorrent;
 
 // Which build is actually running. First line in the console, on purpose - a stale build in a
 // browser explains more failures than any theory, and until now this app could not answer it.
@@ -27,8 +26,7 @@ builder.Services.AddSpawnJSRuntime();
 
 builder.Services.AddWebWorkerService();
 
-// WebTorrent for P2P model delivery, persisted to OPFS so reloads reuse downloaded pieces (bytes
-// stay JS-side end-to-end - the loader streams pieces straight to the GPU).
+// OPFS for prefs, voices, characters, and consent. Models use HubModelSource (below), not this FS.
 builder.Services.AddSingleton<IAsyncFS, AsyncFSFileSystemDirectoryHandle>();
 // Saved voices live in OPFS beside the model cache, on the same filesystem abstraction, so a voice a family
 // member trains survives a reload instead of being re-cloned from whatever was last said.
@@ -44,7 +42,7 @@ builder.Services.AddSingleton<SpawnDev.AI.Demo.ModelConsent>();
 // consent stays in ModelConsent, because what somebody agreed to is a fact, not a setting.
 builder.Services.AddSingleton<SpawnDev.AI.Demo.AppPreferences>();
 // ── MODEL DELIVERY ────────────────────────────────────────────────────────────────────────────────
-// Plain HTTP through the hub, cached in OPFS. No WebTorrent, no pieces, no chunk store.
+// Plain HTTP through the hub, cached in OPFS.
 // ⚠️ MUST be a singleton: the per-key gate that stops two callers racing the same download lives on the
 // shared downloader, and a cache UI asking "what is downloading" only gets a true answer from the shared
 // instance. Registered in EVERY scope - the same Program.cs runs in Window, Worker and SharedWorker, and
@@ -56,31 +54,6 @@ builder.Services.AddSingleton(sp => new SpawnDev.ILGPU.ML.Hub.HubModelSource(
 // download gate, which is exactly the bug the singleton exists to prevent.
 builder.Services.AddSingleton<SpawnDev.ILGPU.ML.Hub.IModelSource>(
     sp => sp.GetRequiredService<SpawnDev.ILGPU.ML.Hub.HubModelSource>());
-
-// ⚠️ WebTorrent is NO LONGER how models are delivered. It stays registered only because the OPFS
-// layout/contention PROBES reach an IAsyncFS through it, and because a HubModelStream can still be
-// swapped in as the IModelSource for P2P delivery. Nothing in the normal load path touches it.
-builder.Services.AddSingleton<WebTorrentClient>(sp =>
-{
-    var client = new WebTorrentClient(new WebTorrentClientOptions
-    {
-        AsyncFileSystem = sp.GetRequiredService<IAsyncFS>(),
-        // ── WHY THE CONTENT-FILE LAYOUT ───────────────────────────────────────────────────────────────
-        // 🔴 MODEL LOAD TIME IS ALMOST ENTIRELY FILE OPENS, measured rather than assumed. The piece
-        // layout stores every 4 MB piece as its own OPFS file, so a 2375 MB model is 681 of them and each
-        // read pays getFileHandle + createSyncAccessHandle + close. SpawnDev.WebTorrent's OpfsLayoutProbe
-        // (dedicated worker, warm) put that at 1733 ms against 66 ms for the same bytes in one file at 681
-        // entries - 26x - and the gap GROWS with model size (33x at 1362). The reads themselves are not the
-        // problem: 9.5 GB/s at the real piece size.
-        StorageLayout = TorrentStorageLayout.ContentFiles,
-    });
-    // ⚠️ InitStorageAsync, NOT a bare RestoreFromStorageAsync. It restores AND migrates, and - the part
-    // that matters - every later AddAsync waits for it. MEASURED 2026-09-09 with the fire-and-forget
-    // version: layout migration finished AFTER a model load had already completed, which is the window in
-    // which a cached model gets re-downloaded because restore had not put it in the list yet.
-    _ = client.InitStorageAsync();
-    return client;
-});
 
 // The in-browser AI server (lives in the shared worker) + the window-side client.
 builder.Services.AddSpawnDevAI(options =>

@@ -5,8 +5,6 @@ using ILGPU.Runtime;
 using SpawnDev.ILGPU;
 using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.Hub;
-using SpawnDev.WebTorrent;
-using SpawnDev.WebTorrent.Storage;
 
 namespace SpawnDev.AI.Server;
 
@@ -108,45 +106,6 @@ public interface IAiWorkerApi
     /// every dispatch this engine makes crosses to JS. This measures that crossing alone: no GPU, no await.
     /// </remarks>
     Task<double> BenchmarkInteropAsync(int iterations);
-
-    /// <summary>
-    /// Measure what SpawnDev.WebTorrent's piece-per-file OPFS layout costs versus the same bytes as one
-    /// file. Diagnostic only. Returns <see cref="OpfsLayoutProbe.LayoutMeasurement"/> records as JSON.
-    /// </summary>
-    /// <remarks>
-    /// 🔴 THE MODEL-LOAD BOTTLENECK, ISOLATED. Instrumenting a real qwen3:4b load (2375 MB, 681 pieces)
-    /// measured the reads themselves at 1051 ms for 1337 reads - about 2.2 GB/s, faster than the GPU
-    /// consumes them - while OPENING the 681 piece files cost 121,571 ms, 117,192 ms of it inside
-    /// <c>getFileHandle</c>. Caching the piece DIRECTORY handle (so the lookup is one call on an open
-    /// handle rather than a path walk) moved that to 117.2 s, which rules out path resolution and leaves
-    /// the per-file lookup itself.
-    /// <para>
-    /// ⚠️ IT MUST RUN HERE, IN THE WORKER. <c>createSyncAccessHandle()</c> throws in a window, so a
-    /// window-scope benchmark would silently measure the Blob fallback instead of the path production
-    /// takes - a different API with a different cost.
-    /// </para>
-    /// </remarks>
-    /// <param name="configsJson">JSON array of <c>{ entryCount, entryBytes, heldHandles }</c>. Empty or
-    /// null runs the default sweep.</param>
-    Task<string> BenchmarkOpfsLayoutAsync(string? configsJson, CancellationToken ct = default);
-
-    /// <summary>
-    /// Does a concurrent OPFS writer slow ranged reads on an already-open handle? Diagnostic.
-    /// </summary>
-    /// <remarks>
-    /// 🔴 THE LAST UNTESTED CANDIDATE FOR A REAL OBSERVATION. A model load measured 172 ms per file open
-    /// while its torrent was still downloading, against 0.39-0.46 ms for the same code path idle. Directory
-    /// size, held exclusive locks and entry size were each measured and cleared; concurrent writing was
-    /// what remained, and it had never been tested - so it stayed a guess and was recorded as one rather
-    /// than asserted.
-    /// <para>
-    /// ⚠️ It asks the version of the question that still matters. Under the content-file layout a load does
-    /// ONE open and then hundreds of ranged reads on that handle, so an inflated OPEN cost no longer
-    /// matters - an inflated READ cost does, because the demo loads a model while its remaining pieces are
-    /// still arriving.
-    /// </para>
-    /// </remarks>
-    Task<string> BenchmarkOpfsContentionAsync(CancellationToken ct = default);
 }
 
 /// <summary>Configuration for the in-browser (worker) AI server - register in DI in ALL scopes
@@ -169,9 +128,7 @@ public sealed class AiWorkerServerOptions
 /// </summary>
 public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
 {
-    private static readonly JsonSerializerOptions LayoutJson = new(JsonSerializerDefaults.Web);
     private readonly IModelSource _source;
-    private readonly WebTorrentClient? _webTorrent;
     private readonly HttpClient _http;
     private readonly AiWorkerServerOptions _options;
     private readonly SemaphoreSlim _initGate = new(1, 1);
@@ -197,20 +154,12 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     private AiToolRegistry? _tools;
     private AiProgressTracker? _progress;
 
-    /// <param name="source">
-    /// Model delivery - plain HTTP through the hub, cached in OPFS. No WebTorrent.
-    /// </param>
-    /// <param name="webTorrent">
-    /// OPTIONAL, and NOT used to deliver models any more. It survives only so the OPFS layout/contention
-    /// PROBES (<see cref="BenchmarkOpfsLayoutAsync"/>, <see cref="BenchmarkOpfsContentionAsync"/>) can reach
-    /// an <c>IAsyncFS</c>; they are diagnostics for the storage shape, not part of serving. Null simply
-    /// disables them.
-    /// </param>
-    public AiWorkerServer(IModelSource source, HttpClient http, AiWorkerServerOptions options,
-        WebTorrentClient? webTorrent = null)
+    /// <param name="source">Model delivery - plain HTTP through the hub, cached in OPFS.</param>
+    /// <param name="http">Shared HTTP client for engines that need it.</param>
+    /// <param name="options">Worker catalogue and context caps.</param>
+    public AiWorkerServer(IModelSource source, HttpClient http, AiWorkerServerOptions options)
     {
         _source = source;
-        _webTorrent = webTorrent;
         _http = http;
         _options = options;
     }
@@ -232,70 +181,6 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     /// <summary>Runs <see cref="ManagedBenchmark.Interop"/> in the worker. See IAiWorkerApi for why.</summary>
     public Task<double> BenchmarkInteropAsync(int iterations) =>
         Task.FromResult(ManagedBenchmark.Interop(iterations));
-
-    /// <summary>
-    /// The default layout sweep. Entry COUNT varies at a fixed size to test whether directory size is
-    /// what makes a lookup expensive; the last pair varies SIZE at a fixed count to rule size out.
-    /// </summary>
-    /// <remarks>
-    /// ⚠️ The counts bracket the two real observations - ~150 piece files cost ~0.9 ms per open and 681
-    /// cost ~172 ms - so a sweep that stopped below 681 could report "no problem" for a layout that
-    /// demonstrably has one. 1362 is included because a 190x jump for 4.5x the files is superlinear, and
-    /// only a point past the observed one can show that.
-    /// </remarks>
-    private static readonly (int EntryCount, int EntryBytes, int HeldHandles)[] DefaultLayoutSweep =
-    {
-        (128,  65_536,    8),
-        (341,  65_536,    8),
-        (681,  65_536,    8),
-        (1362, 65_536,    8),
-        (681,  65_536,    0),   // same as row 3 with no exclusive locks held - isolates lock contention
-        (64,   4_194_304, 8),   // real piece size at a small count - isolates entry SIZE from entry COUNT
-        (64,   65_536,    8),   // the size control for the row above
-    };
-
-    /// <summary>Runs <see cref="OpfsLayoutProbe"/> in the worker. See IAiWorkerApi for why.</summary>
-    public async Task<string> BenchmarkOpfsLayoutAsync(string? configsJson, CancellationToken ct = default)
-    {
-        var fs = _webTorrent?.AsyncFileSystem
-            ?? throw new InvalidOperationException(
-                "the WebTorrent client has no AsyncFileSystem, so there is no OPFS layout to measure");
-
-        var configs = DefaultLayoutSweep.AsEnumerable();
-        if (!string.IsNullOrWhiteSpace(configsJson))
-        {
-            var parsed = JsonSerializer.Deserialize<List<LayoutConfigDto>>(configsJson, LayoutJson);
-            if (parsed is { Count: > 0 })
-                configs = parsed.Select(c => (c.EntryCount, c.EntryBytes, c.HeldHandles));
-        }
-
-        var results = await OpfsLayoutProbe.MeasureAsync(fs, configs.ToList(), Console.WriteLine, ct)
-            .ConfigureAwait(false);
-        foreach (var m in results)
-            foreach (var line in OpfsLayoutProbe.Describe(m))
-                Console.WriteLine(line);
-        return JsonSerializer.Serialize(results, LayoutJson);
-    }
-
-    private sealed record LayoutConfigDto(int EntryCount, int EntryBytes, int HeldHandles);
-
-    /// <summary>Runs <see cref="OpfsLayoutProbe.MeasureWriteContentionAsync"/> here. See IAiWorkerApi.</summary>
-    public async Task<string> BenchmarkOpfsContentionAsync(CancellationToken ct = default)
-    {
-        var fs = _webTorrent?.AsyncFileSystem
-            ?? throw new InvalidOperationException(
-                "the WebTorrent client has no AsyncFileSystem, so there is no OPFS to measure");
-
-        // 310 x 2 MB is the shape a real qwen2.5:0.5b load actually performs (310 ranged reads of
-        // 638.5 MB), so the result describes the load rather than an invented access pattern.
-        var m = await OpfsLayoutProbe.MeasureWriteContentionAsync(fs, reads: 310, readBytes: 2 * 1024 * 1024,
-            writeBytes: 4 * 1024 * 1024, log: Console.WriteLine, ct: ct).ConfigureAwait(false);
-        Console.WriteLine($"[contend] {m.Reads} x {m.ReadBytes} B reads, sync "
-            + (m.SyncAvailable ? "available" : "UNAVAILABLE")
-            + $": idle {m.IdleReadMs:F0} ms, under write load {m.LoadedReadMs:F0} ms "
-            + $"({m.Ratio:F2}x) while {m.WritesCompleted} write(s) completed");
-        return JsonSerializer.Serialize(m, LayoutJson);
-    }
 
     /// <inheritdoc/>
     [return: WorkerTransfer(true)]

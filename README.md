@@ -50,9 +50,16 @@ var router = new AiApiRouter(engine);
 
 ## The demo: a room of characters
 
-The [live demo](https://lostbeard.github.io/SpawnDev.AI/) is a group chat. You make **characters** -
-name, persona, model, voice, body and how animated they are - and they talk to each other and to you.
-Everything persists in OPFS, so a cast survives a reload.
+Two hosted builds of the same Blazor WASM app:
+
+| Where | URL | Reachy Mini |
+|---|---|---|
+| **Hugging Face Space** (preferred for the robot) | [huggingface.co/spaces/LostBeard/spawndev-ai](https://huggingface.co/spaces/LostBeard/spawndev-ai) | Works: WebRTC through Hugging Face's signalling server. Requires a Hugging Face login. |
+| **GitHub Pages** | [lostbeard.github.io/SpawnDev.AI](https://lostbeard.github.io/SpawnDev.AI/) | Does **not** work. The page cannot use the HF signalling / OAuth path that reaches your robot. |
+
+Both run the group chat entirely in your browser on WebGPU. You make **characters** - name, persona,
+model, voice, body and how animated they are - and they talk to each other and to you. Everything
+persists in OPFS, so a cast survives a reload.
 
 - **A scene** belongs to the room, not to a character, and every member is handed it verbatim. A
   persona is who someone IS; a scene is where everybody is right now.
@@ -61,23 +68,33 @@ Everything persists in OPFS, so a cast survives a reload.
 - **A voice per character**, streamed sentence-by-sentence so it starts talking after the first
   sentence rather than the whole reply, with a stop button.
 - **A body.** Physical actions written in asterisks (`*tilts head*`) drive an on-screen Reachy-shaped
-  avatar - or the real [Reachy Mini](https://github.com/LostBeard/SpawnDev.Reachy) when one is on your
-  LAN. Both perform the same `Gesture` vocabulary, so a scene reads the same either way. There is one
+  avatar - or your real [Reachy Mini](https://github.com/LostBeard/SpawnDev.Reachy) when connected.
+  Both perform the same `Gesture` vocabulary, so a scene reads the same either way. There is one
   robot, so if two characters ask for it the first keeps it and the rest are drawn.
 - **Models are opt-in.** Every model states its size and what it is for, and nothing large downloads
   until you press the button that says so. Eight are offered, from a 369 MB starter to gemma4:12b.
 
-⚠️ Driving the physical robot needs the page served over plain HTTP (`http://localhost`): the robot's
-daemon speaks HTTP on the LAN, so an HTTPS page is blocked as mixed content. The demo says so rather
-than failing opaquely.
+### Connecting a Reachy Mini
+
+On the Hugging Face Space, open **Group chat**, then under **Reachy Mini** press **Connect my Reachy**.
+That signs you into Hugging Face (if needed) and reaches **your** wireless robot through HF's
+signalling server - the one registered to the account you signed in with. The layout around that
+control is still rough; the path itself is the one that works.
+
+⚠️ The GitHub Pages build has no working Reachy connect: it is fine for chat, voice, and the on-screen
+avatar, but not for driving the physical robot.
+
+⚠️ A local `http://localhost` run can still talk to a robot's LAN daemon directly. An HTTPS page cannot
+(mixed content) - that is why the hosted path uses WebRTC signalling instead.
 
 ## Status
 
 Preview. Extracted from the proven `SpawnDev.ILGPU.ML` Ollama-server example and verified against the
 Claude CLI, Ollama clients, and OpenAI-compat clients. The desktop HTTP host, the browser shared-worker
-host (LLM chat + SD-Turbo image generation on WebGPU), the agentic tool loop, MCP, and the
-[live demo](https://lostbeard.github.io/SpawnDev.AI/) all ship today; the Blazor component library is
-being fleshed out.
+host (LLM chat + SD-Turbo image generation on WebGPU), the agentic tool loop, MCP, and the live demos
+([Hugging Face Space](https://huggingface.co/spaces/LostBeard/spawndev-ai) for Reachy,
+[GitHub Pages](https://lostbeard.github.io/SpawnDev.AI/) for everything else) all ship today; the Blazor
+component library is being fleshed out.
 
 ## The SpawnDev Crew
 

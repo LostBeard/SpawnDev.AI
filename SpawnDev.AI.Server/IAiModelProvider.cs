@@ -5,7 +5,7 @@ namespace SpawnDev.AI.Server;
 /// <summary>
 /// Where models come from. Desktop: <see cref="OllamaCacheModelProvider"/> reads Ollama's on-disk
 /// content-addressed cache (zero-copy blob paths). Browser: <see cref="HubModelProvider"/> streams
-/// GGUF weights from the SpawnDev hub (WebTorrent/HuggingFace) straight to the GPU. The
+/// GGUF weights from the SpawnDev hub (HTTP / HuggingFace) straight to the GPU. The
 /// <see cref="ModelRegistry"/>'s gate/resident-swap logic is provider-independent.
 /// </summary>
 public interface IAiModelProvider

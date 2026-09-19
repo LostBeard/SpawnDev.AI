@@ -6,7 +6,7 @@ Read `D:\users\tj\Projects\CLAUDE.md` first (global rules).
 ## Layering (strict, no upward references)
 
 ```
-SpawnDev.BlazorJS → SpawnDev.ILGPU / SpawnDev.WebTorrent → SpawnDev.ILGPU.ML → SpawnDev.AI → Demo
+SpawnDev.BlazorJS → SpawnDev.ILGPU → SpawnDev.ILGPU.ML → SpawnDev.AI → Demo
 ```
 
 - `SpawnDev.AI` - contracts only (chat, tools/`IAiTool`, transports, wire frames).

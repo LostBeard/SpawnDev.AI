@@ -43,9 +43,9 @@ public sealed class AiWorkerClient
     /// <para>
     /// 🔴 THE DIAGNOSIS WAS WRONG, and it is worth naming precisely. The reasoning was: a shared worker has
     /// no <c>createSyncAccessHandle</c> (dedicated-worker only), so storage falls back to
-    /// <c>createWritable</c>/Blob, so it is slow. The second step does not follow. Model delivery ran
-    /// through WebTorrent's chunk store, which reads in PIECES - and it is the READ SIZE that costs, not
-    /// the absence of sync handles. MEASURED 2026-09-14 on the Blob path (window scope, where
+    /// <c>createWritable</c>/Blob, so it is slow. The second step does not follow. Model delivery once ran
+    /// through a piece-based chunk store - and it is the READ SIZE that costs, not the absence of sync
+    /// handles. MEASURED 2026-09-14 on the Blob path (window scope, where
     /// <c>createSyncAccessHandle</c> is equally unavailable): <b>75-87 MB/s at 64 KiB reads and
     /// 1559-1986 MB/s at 16 MiB</b>. The async path was never the problem.
     /// </para>
@@ -147,33 +147,6 @@ public sealed class AiWorkerClient
                             + $"worker {wrkY / yields * 1000:F1} us/yield | "
                             + $"worker/window {(winY > 0 ? wrkY / winY : 0):F2}x");
         }
-    }
-
-    /// <summary>
-    /// Run the OPFS layout probe IN THE WORKER and return its measurements as JSON. Diagnostic.
-    /// </summary>
-    /// <remarks>
-    /// ⚠️ It has to run over there. <c>createSyncAccessHandle()</c> - the API the model loader's read path
-    /// takes - throws outside a worker, so measuring from this side would time the Blob fallback and
-    /// report a cost production does not pay. See <see cref="IAiWorkerApi.BenchmarkOpfsLayoutAsync"/>.
-    /// </remarks>
-    /// <param name="configsJson">JSON array of <c>{ entryCount, entryBytes, heldHandles }</c>, or null
-    /// for the default sweep.</param>
-    /// <param name="ct">Cancellation - passed as a real parameter so the dispatcher can marshal it.</param>
-    public async Task<string> BenchmarkOpfsLayoutAsync(string? configsJson = null, CancellationToken ct = default)
-    {
-        if (_worker == null) await InitAsync();
-        return await _worker!.Run<IAiWorkerApi, string>(s => s.BenchmarkOpfsLayoutAsync(configsJson, ct));
-    }
-
-    /// <summary>
-    /// Measure whether a concurrent OPFS writer slows ranged reads, in the worker. Diagnostic.
-    /// </summary>
-    /// <remarks>See <see cref="IAiWorkerApi.BenchmarkOpfsContentionAsync"/> for why it runs over there.</remarks>
-    public async Task<string> BenchmarkOpfsContentionAsync(CancellationToken ct = default)
-    {
-        if (_worker == null) await InitAsync();
-        return await _worker!.Run<IAiWorkerApi, string>(s => s.BenchmarkOpfsContentionAsync(ct));
     }
 
     /// <summary>

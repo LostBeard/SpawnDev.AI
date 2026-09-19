@@ -2,7 +2,6 @@ using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.ILGPU.ML.Pipelines;
-using SpawnDev.WebTorrent;
 
 namespace SpawnDev.AI.Server;
 
@@ -116,9 +115,8 @@ public sealed class AiSpeechEngine : IDisposable
     private string? _residentModel;
 
     /// <summary>New instance.</summary>
-    /// <param name="webTorrent">Delivers models as LAZY-HASH torrents through the hub - see
-    /// <see cref="OpenModelStreamAsync"/> for why that and not a plain range stream.</param>
-    /// <param name="http">Used by <c>HubModelStream</c> for its size probe and web-seed fetches.</param>
+    /// <param name="source">Model delivery - plain HTTP through the hub, cached in OPFS.</param>
+    /// <param name="http">Shared HTTP client (unused by the HTTP OPFS path; kept for host symmetry).</param>
     /// <param name="accelerator">The shared accelerator.</param>
     public AiSpeechEngine(IModelSource source, HttpClient http, Accelerator accelerator)
     {
@@ -346,32 +344,18 @@ public sealed class AiSpeechEngine : IDisposable
     }
 
     /// <summary>
-    /// Open a repo file as a seekable stream via the hub, as a LAZY-HASH torrent.
+    /// Open a repo file as a seekable stream via the hub.
     /// </summary>
     /// <remarks>
-    /// ⚠️ This deliberately goes through <see cref="HubModelStream.OpenAsync"/> rather than
-    /// <c>ModelHub.OpenStreamAsync</c> or a bare <see cref="HttpRangeStream"/>. Lazy-hash exists precisely so
-    /// that anything reachable by URL is STREAMABLE WITH RANDOM ACCESS: the model becomes a persistent
-    /// torrent from the first byte, downloads on demand from the hub web seed, computes its infohash as it
-    /// goes, caches pieces to OPFS under a stable URL-derived key, RESTORES on reload with zero re-download,
-    /// and seeds to peers. `HubModelStream.OpenAsync`'s own remarks record that it "replaces the old
-    /// non-persistent HttpRangeStream fallback, which made NO torrent ... so every page refresh
-    /// re-downloaded the whole file".
-    /// <para>
-    /// The first cut of this engine used exactly that superseded path. It worked, and it re-downloaded
-    /// Whisper on every reload - which is the whole thing lazy-hash was built to stop.
-    /// </para>
-    /// <para>
-    /// A seekable stream is not a nicety here either: <c>CreateFromOnnxStreamAsync</c> SEEKS to each weight,
-    /// so random access is a hard requirement of the loader, not just an optimisation.
-    /// </para>
+    /// Plain HTTP into OPFS through <see cref="IModelSource"/>. Seekable is a hard requirement:
+    /// <c>CreateFromOnnxStreamAsync</c> seeks to each weight.
     /// </remarks>
     /// <param name="filename">Path within the repo, e.g. <c>onnx/encoder_model.onnx</c>.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>A seekable stream over the model file.</returns>
     private async Task<Stream> OpenModelStreamAsync(string filename, CancellationToken ct)
     {
-        // Plain HTTP into OPFS - no WebTorrent. Seekable, resumable, cached across reloads.
+        // Plain HTTP into OPFS. Seekable, resumable, cached across reloads.
         var stream = await _source.OpenAsync(ModelRepo, filename, ct).ConfigureAwait(false);
         if (stream.Length <= 0)
             throw new Exception($"hub returned a zero-length stream for {ModelRepo}/{filename}");

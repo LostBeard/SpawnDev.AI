@@ -3,7 +3,6 @@ using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.ILGPU.ML.Pipelines;
-using SpawnDev.WebTorrent;
 
 namespace SpawnDev.AI.Server;
 

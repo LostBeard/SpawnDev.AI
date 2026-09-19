@@ -8,18 +8,12 @@ namespace SpawnDev.AI.Demo;
 /// </summary>
 /// <remarks>
 /// <para>
-/// 🔴 THIS TRACKS CONSENT, NOT CACHE STATE, and the distinction is the whole design. Nothing available to
-/// the app can reliably answer "is this model already on this device": the hub streams weights over an
-/// HTTP-range path as well as over WebTorrent, and the first leaves the bytes in the browser's own cache
-/// with no torrent to enumerate. An earlier attempt to read cache state from the torrent client reported
-/// "not downloaded" for the model the demo had been running on all session, and the download guard then
-/// refused to use it - caught by the browser gate blocking its own default model.
-/// </para>
-/// <para>
-/// Consent, on the other hand, is a fact the app owns. Asking once per model and remembering the answer
-/// is both achievable and what "large downloads are opt-in" actually means. If the browser later evicts a
-/// model, re-fetching it happens under an approval the user already gave, which is correct - they agreed
-/// to run that model, not to one particular copy of its bytes.
+/// 🔴 THIS TRACKS CONSENT, NOT CACHE STATE, and the distinction is the whole design. Cache progress is
+/// available from the model source, but whether the user AGREED to download is a fact the app owns.
+/// Asking once per model and remembering the answer is both achievable and what "large downloads are
+/// opt-in" actually means. If the browser later evicts a model, re-fetching it happens under an approval
+/// the user already gave, which is correct - they agreed to run that model, not to one particular copy
+/// of its bytes.
 /// </para>
 /// </remarks>
 public sealed class ModelConsent

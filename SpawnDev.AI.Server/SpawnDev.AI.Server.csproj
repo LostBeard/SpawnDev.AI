@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
@@ -19,8 +19,8 @@
 		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
 		<PackageTags>AI;LLM;Ollama;DotNetWebAssembly;WebGPU;GGUF;ToolCalling</PackageTags>
 		<Title>SpawnDev.AI.Server</Title>
-		<Version>1.1.0-preview.1</Version>
-		<PackageReleaseNotes>v1.1.0-preview.1 - Voice: speech in (Whisper + /api/transcribe), speech out (ZipVoice), and hands-free turns with a real endpointer. Stop now cancels a generation inside the browser worker. Engine: SpawnDev.ILGPU.ML 5.2.12. Full history: CHANGELOG.md</PackageReleaseNotes>
+		<Version>1.1.0-preview.2</Version>
+		<PackageReleaseNotes>v1.1.0-preview.2 - Removed SpawnDev.WebTorrent dependency. Full history: CHANGELOG.md</PackageReleaseNotes>
 		<Description>Ollama/OpenAI-compatible model server on the SpawnDev.ILGPU.ML inference engine (GGUF, KV-cache decode, WebGPU dispatch-plan capture/replay). One handler core, two transports: HTTP on desktop (drop-in for Ollama clients on :11434), MessagePort in the browser (shared/dedicated worker) - the same request/response shapes either way.</Description>
 	</PropertyGroup>
 
@@ -36,9 +36,6 @@
 
 	<ItemGroup>
 		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.2.18" />
-		<!-- DIRECT, not transitive: this project names WebTorrentClient and OpfsLayoutProbe itself, so
-		     it must pin the version it compiles against rather than inherit whatever ILGPU.ML pins. -->
-		<PackageReference Include="SpawnDev.WebTorrent" Version="4.2.8" />
 		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.18" />
 	</ItemGroup>
 

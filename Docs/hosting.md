@@ -13,7 +13,7 @@ Ollama's on-disk cache (content-addressed blobs, zero-copy) via `OllamaCacheMode
 var store = new OllamaModelStore();                     // ~/.ollama/models (or OLLAMA_MODELS)
 var registry = new ModelRegistry(new OllamaCacheModelProvider(store), accelerator);
 var engine = new AiChatEngine(registry);
-using var images = new AiImageEngine(webTorrent, http, accelerator);
+using var images = new AiImageEngine(source, http, accelerator);
 var tools = new AiToolRegistry();
 tools.Register(new GenerateImageTool(images, tools));
 tools.Register(new GitHubTool(http));
@@ -29,7 +29,7 @@ Point any Ollama / OpenAI / Anthropic client at `http://localhost:11434`.
 `AiWorkerServer` runs the identical router inside a (shared) web worker, owning the WebGPU accelerator
 and the model registry; window-side code talks to it through `AiWorkerClient`, which speaks the same
 protocol surface over marshalled callback frames instead of sockets. Models stream from the SpawnDev
-hub (WebTorrent + HuggingFace CDN) straight onto the GPU and cache in OPFS via `HubModelProvider`. One
+hub (HTTP + HuggingFace CDN) straight onto the GPU and cache in OPFS via `HubModelProvider`. One
 large GPU model is resident per device: the LLM and SD-Turbo evict each other before loading, so they
 never co-reside (co-residence exceeded the WebGPU device budget).
 

@@ -4,7 +4,6 @@ using SpawnDev.ILGPU.ML.GGUF;
 using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.ILGPU.ML.Pipelines;
 using SpawnDev.ILGPU.ML.Preprocessing;
-using SpawnDev.WebTorrent;
 
 namespace SpawnDev.AI.Server;
 
@@ -70,9 +69,7 @@ public sealed class HubModelProvider : IAiModelProvider
     public TimeSpan PrepareTimeout { get; set; } = TimeSpan.FromMinutes(8);
 
     /// <param name="source">
-    /// Model delivery. <see cref="HubModelSource"/> is plain HTTP through the hub cached in OPFS - no
-    /// WebTorrent. Pass a <c>HubModelStream</c> (SpawnDev.ILGPU.ML.WebTorrent) instead for torrent delivery;
-    /// it implements the same <see cref="IModelSource"/>.
+    /// Model delivery. <see cref="HubModelSource"/> is plain HTTP through the hub cached in OPFS.
     /// </param>
     public HubModelProvider(IModelSource source, HttpClient http, IEnumerable<HubModelOption> models)
     {
@@ -100,53 +97,12 @@ public sealed class HubModelProvider : IAiModelProvider
         => Task.FromResult(Find(name)?.Name);
 
     /// <summary>
-    /// Is this model's file already complete on this device?
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// 🔴 ASKS THE FILE, NOT THE TORRENT. Every model arrives through the WebTorrent client - that is what
-    /// gives lazy-hash torrents for URL-backed files and random-access streams, and it is why a 7 GB model
-    /// can load in a browser tab at all (the bytes stay JS-side over IJSReadStream and never touch the
-    /// small WASM managed heap). But the loader opens with <c>deselect: true</c> so only the pieces the
-    /// weight stream reads are fetched, which means <c>Torrent.Progress</c> NEVER reaches 1.0 for a
-    /// multi-file repo, by design.
-    /// </para>
-    /// <para>
-    /// ⚠️ An earlier version checked <c>Torrent.Progress >= 0.999</c> and therefore reported "not
-    /// downloaded" for the model the demo had been running on all session - the browser gate caught it
-    /// blocking its own default model. <c>TorrentFileInfo.Done</c> is the per-file answer and is the right
-    /// question: the file this model needs, complete or not.
-    /// </para>
-    /// </remarks>
-    /// <summary>
     /// How much of this model is cached on this device, 0..1 - or null when nothing has fetched it.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// ⚠️ PROGRESS ONLY. This deliberately does NOT answer "is it fully downloaded", because for the
-    /// lazy-hash torrents the hub hands out that question currently has no reliable answer. MEASURED, on a
-    /// model that had just loaded and generated a reply:
-    /// <c>torrent 'qwen2.5-0.5b-instruct-q8_0.gguf' progress=27.9% bitfield=162 pieces=162,
-    /// file '' len=675710816 downloaded=188743680 done=False</c>.
-    /// </para>
-    /// <para>
-    /// <c>TorrentFileInfo.Name</c> is EMPTY there - the name lives on the torrent for a single-file
-    /// torrent, so matching on the file name never matches anything. Match on <c>Torrent.Name</c>.
-    /// </para>
-    /// <para>
-    /// ⚠️ I PREVIOUSLY WROTE, IN THIS COMMENT, THAT THE REPORTED <c>Length</c> WAS PIECE-ALIGNED AND
-    /// OVERSTATED THE FILE. That was wrong, and it is retracted. The hub's own cache holds
-    /// <c>qwen2.5-0.5b-instruct-q8_0.gguf</c> at exactly 675,710,816 bytes - the same figure the torrent
-    /// reports - so <c>Length</c> is the true size. What was actually wrong was the hand-entered
-    /// <c>ApproxSizeBytes</c> in the demo (531,067,136), and the sizes there now come from the hub cache.
-    /// </para>
-    /// <para>
-    /// 🔴 THE GUARD IS STILL BUILT ON CONSENT, NOT ON THIS - but for a narrower reason than I first gave.
-    /// <c>Done</c> read false on a model that had loaded and answered, at 27.9%, and I do not yet know why
-    /// (lazy-hash piece verification lagging behind cached data is the likeliest explanation, since a
-    /// lazy-hash torrent computes its hashes as it goes). Until that is understood, whether the user
-    /// AGREED is the fact the app can actually answer. This value is fine for showing progress.
-    /// </para>
+    /// Reports progress from <see cref="ICachingModelSource"/> (active downloads and the resumable store).
+    /// Consent - whether the user agreed to download - remains the guard for starting a fetch; this value
+    /// is for showing progress only.
     /// </remarks>
     public async Task<double?> CachedFractionAsync(string name, CancellationToken ct = default)
     {
@@ -217,10 +173,7 @@ public sealed class HubModelProvider : IAiModelProvider
         // download - MEASURED 44.4 s for 1.83 GB - and a stage announced only on the way out would leave
         // exactly that stretch unreported, which is the stretch the user is staring at.
         OnLoadProgress?.Invoke("fetch", 0);
-        // Plain HTTP into OPFS. The old torrent path needed deselect:true here, because deselect:false let
-        // WebTorrent background-download EVERY file in the repo (all quants, 10-15 GB - Captain caught it
-        // live 2026-07-04) behind the working stream. HTTP has no such trap: a range request fetches only
-        // what is read, so there is nothing to opt out of.
+        // Plain HTTP into OPFS. A range request fetches only what is read.
         // Ollama addressing (model:tag/layer) is deliberately outside IModelSource - it is not repo/path, and
         // pretending otherwise would force every implementer to honour a shape it does not have. So it is a
         // capability test, with a message that names the actual limitation rather than a cast failure.

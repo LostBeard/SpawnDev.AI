@@ -13,7 +13,7 @@ namespace SpawnDev.AI.Demo.Tests;
 /// somebody to spend 6.87 GB on a code path nobody has ever run.
 /// </para>
 /// <para>
-/// ⚠️ The ollama path is genuinely DIFFERENT code: <c>HubModelStream.OpenOllamaAsync(model, tag,
+/// ⚠️ The ollama path is genuinely DIFFERENT code: <c>HubModelSource.OpenOllamaAsync(model, tag,
 /// "model")</c> rather than <c>OpenAsync(repo, file)</c>, reached through <c>HubModelOption.IsOllama</c>.
 /// Everything downstream - GGUF parse, tokenizer, session, generator - is then the same generic path the
 /// Hugging Face models use, and whether gemma4 survives it text-only is exactly the open question.

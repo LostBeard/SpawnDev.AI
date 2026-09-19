@@ -1,7 +1,6 @@
 using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.ILGPU.ML.Pipelines;
-using SpawnDev.WebTorrent;
 
 namespace SpawnDev.AI.Server;
 
@@ -15,7 +14,7 @@ public sealed record AiGeneratedImage(byte[] Rgba, int Width, int Height, int Se
 /// The image-generation engine: its OWN residency slot (an image model lives alongside the LLM -
 /// per-kind residency, one resident image pipeline, swap on demand) and its own generation gate.
 /// Serves the /v1/images/generations endpoint, the generate_image tool, and the MCP surface.
-/// Weights stream from the hub (WebTorrent + HF CDN) on both desktop and browser.
+/// Weights stream from the hub (HTTP into OPFS via <see cref="IModelSource"/>) on both desktop and browser.
 /// </summary>
 public sealed class AiImageEngine : IDisposable
 {
@@ -82,8 +81,7 @@ public sealed class AiImageEngine : IDisposable
             {
                 _resident?.Dispose();
                 _resident = null;
-                // HubModelSource: plain HTTP into OPFS, no WebTorrent. ImageGenerationPipeline takes
-                // IModelSource, so a HubModelStream can be swapped in here for torrent delivery.
+                // Plain HTTP into OPFS via HubModelSource / IModelSource.
                 try
                 {
                     _resident = await ImageGenerationPipeline.CreateAsync(_accelerator, _source, opt.RepoId,

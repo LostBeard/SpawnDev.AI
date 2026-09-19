@@ -24,6 +24,9 @@
 		<!-- Required in the exe project (this one) -->
 		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.18" />
 
+		<!-- DIRECT: demo libs (voices, characters, prefs, consent) use IAsyncFS / OPFS. Previously
+		     arrived only transitively via SpawnDev.WebTorrent, which this app no longer references. -->
+		<PackageReference Include="SpawnDev.AsyncFileSystem" Version="2.2.0" />
 
 		<ProjectReference Include="..\SpawnDev.AI.Server\SpawnDev.AI.Server.csproj" />
 	</ItemGroup>
