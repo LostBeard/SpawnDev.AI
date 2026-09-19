@@ -8,7 +8,7 @@
 		<PackageReleaseNotes>v1.1.0-preview.2 - Dependency update. Full history: CHANGELOG.md</PackageReleaseNotes>
 		<Title>SpawnDev.AI</Title>
 		<Authors>LostBeard</Authors>
-		<Description>Core contracts for the SpawnDev AI stack: chat sessions, Ollama/OpenAI-compatible API shapes, and tool-calling contracts. Shared by SpawnDev.AI.Server (desktop HTTP + browser-worker model server) and SpawnDev.AI.Blazor (chat UI components).</Description>
+		<Description>Core contracts for the SpawnDev AI stack: chat sessions, Ollama/OpenAI-compatible API shapes, and tool-calling contracts. Shared by SpawnDev.AI.Server (desktop HTTP + browser-worker model server) and the browser demo.</Description>
 		<PackageProjectUrl>https://github.com/LostBeard/SpawnDev.AI</PackageProjectUrl>
 		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>

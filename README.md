@@ -11,7 +11,6 @@ SD-Turbo text-to-image both run in-browser on WebGPU, no server or native instal
 |---|---|
 | **SpawnDev.AI** | Core contracts: chat messages/options/results, tool-calling types, the `IAiChatService` surface, and the `IAiServerTransport` abstraction. |
 | **SpawnDev.AI.Server** | An **Ollama-compatible model server as a library**: OpenAI (`/v1/chat/completions` SSE), Ollama native (`/api/chat`, `/api/generate`, `/api/tags`, `/api/show`), Anthropic Messages (`/v1/messages` SSE - works with Claude CLI), OpenAI image generation (`/v1/images/generations`, SD-Turbo), and an MCP surface (`/mcp`). One protocol router, transport-free: host it over HTTP on desktop (drop-in on `:11434`) or over a MessagePort in a browser shared worker - the same code path serves both. Includes a server-side **agentic tool loop** with two built-in tools (image generation + GitHub library/crew lookup) and small-model reliability aids. Reads desktop models from Ollama's on-disk cache; streams browser models from the SpawnDev hub onto WebGPU. |
-| **SpawnDev.AI.Blazor** | Blazor components for on-device AI chat (streaming bubble, model picker) - built for WebGPU LLMs served in-browser. |
 
 ## Why
 
@@ -93,8 +92,7 @@ Preview. Extracted from the proven `SpawnDev.ILGPU.ML` Ollama-server example and
 Claude CLI, Ollama clients, and OpenAI-compat clients. The desktop HTTP host, the browser shared-worker
 host (LLM chat + SD-Turbo image generation on WebGPU), the agentic tool loop, MCP, and the live demos
 ([Hugging Face Space](https://huggingface.co/spaces/LostBeard/spawndev-ai) for Reachy,
-[GitHub Pages](https://lostbeard.github.io/SpawnDev.AI/) for everything else) all ship today; the Blazor
-component library is being fleshed out.
+[GitHub Pages](https://lostbeard.github.io/SpawnDev.AI/) for everything else) all ship today.
 
 ## The SpawnDev Crew
 
