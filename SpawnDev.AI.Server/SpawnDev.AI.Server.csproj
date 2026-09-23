@@ -36,6 +36,9 @@
 
 	<ItemGroup>
 		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.2.19" />
+		<!-- Direct reference: ML 5.2.19 only asks for SpawnDev.ILGPU >= 5.2.12, and NuGet resolves the lowest
+		     satisfying version, so without this the server and the demo would stay on 5.2.12. -->
+		<PackageReference Include="SpawnDev.ILGPU" Version="5.2.16" />
 		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.18" />
 	</ItemGroup>
 
