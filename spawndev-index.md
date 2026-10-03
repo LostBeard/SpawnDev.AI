@@ -108,7 +108,7 @@ Repo: https://github.com/LostBeard/Anaglyphohol - full README + CHANGELOG availa
 ## AubsCraft
 Blazor WASM admin panel for Minecraft Paper servers - real-time dashboard, RCON, player management, plugin browser, VR detection
 
-A real-time Minecraft server admin panel and **GPU-accelerated 3D world viewer** built with **Blazor WebAssembly**, **SpawnDev.ILGPU** (WebGPU), and **ASP.NET Core**. Browser-based server management with a live, interactive 3D map - no plugins required on the Minecraft side.  Built by [Todd Tanner (@LostBeard)](https://github.com/LostBeard) for his daughter Aubriella's Minecraft server (mc.spawndev.com).  **Powered by the [SpawnDev](https://github.com/LostBeard) ecosystem:** - [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.BlazorJS) - Full JS interop for Blazor WASM - [SpawnDev.ILGP...
+A real-time Minecraft server admin panel and **GPU-accelerated 3D world viewer** built with **Blazor WebAssembly**, **SpawnDev.ILGPU** (WebGPU), and **ASP.NET Core**. Browser-based server management with a live, interactive 3D map - no plugins required on the Minecraft side.  Built by [Todd Tanner (@LostBeard)](https://github.com/LostBeard) for his daughter Aubriella's Minecraft server (mc.spawndev.com).  **Powered by the [SpawnDev](https://github.com/LostBeard) ecosystem:** - [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS) - Full JS interop for .NET in the browser - [SpawnDe...
 
 Repo: https://github.com/LostBeard/AubsCraft - full README + CHANGELOG available via github_lookup.
 
