@@ -50,7 +50,6 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.ILGPU.WebGPU** (LostBeard/SpawnDev.ILGPU.WebGPU) - WebGPU backend for ILGPU, enabling GPU compute in Blazor WebAssembly.
 - **SpawnDev.MatrixLEDDisplay** (LostBeard/SpawnDev.MatrixLEDDisplay) - Wirelessly control the Matrix LED Display from Merkury Innovations with Blazor WebAssembly and the Web Bluetooth API.
 - **SpawnDev.MultiMedia** (LostBeard/SpawnDev.MultiMedia) - Cross-platform media capture and playback for .NET - camera, microphone, speakers, video display. One API, every platform.
-- **SpawnDev.PatchStreams** (LostBeard/SpawnDev.PatchStreams) - Create streams with partial views, multiple streams, or read-only sources. Delete, insert, overwrite with full support for undo/redo and restore-points.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -72,6 +71,7 @@ Real applications that use the SpawnDev libraries (and show off what they can do
 - **Gemineachy** (LostBeard/Gemineachy) - A .NET WebAssembly browser extension that supercharges Gemini with client-side tools, virtual filesystems, interactive games, and Reachy Mini robotics integration.
 - **lostbeard.github.io** (LostBeard/lostbeard.github.io)
 - **LostSpawns** (LostBeard/LostSpawns) - Lost Spawns is a post-apocalyptic survival voxel game inspired by DayZ. It runs entirely client-side in your web browser using WebGPU for hardware-accelerated 3D rendering and GPU compute — no plugins, no native code, just C# and Blazor.
+- **MiniRover** (LostBeard/MiniRover) - Open-source C# software for the Freenove FNK0053 4WD car: nanoFramework firmware + .NET WebAssembly client (WebRTC video, gamepad/touch/VR driving, browser ML)
 - **NanoFrameTest1** (LostBeard/NanoFrameTest1) - Blazor WebAssembly and nanoFramework fun with Freenove ESP32-S3-WROOM Camera Dev Board
 - **NugetWatch** (LostBeard/NugetWatch) - Tracks Nuget package stats over time using Nuget Web APIs.
 - **rendusa** (LostBeard/rendusa) - A WebGL based 3D image and video media player supporting 2D+Z input with on the fly conversion to anaglyph, stereo, 9 view lenticular, and more.
@@ -197,6 +197,13 @@ Lost Spawns is a post-apocalyptic survival voxel game inspired by DayZ. It runs 
 A voxel-based 3D survival game built entirely in **Blazor WebAssembly** - showcasing the power of [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS) and [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) for GPU-accelerated rendering and compute in the browser.   A **WIP**, Lost Spawns is a post-apocalyptic survival game inspired by DayZ. It runs entirely client-side in your web browser using WebGPU for hardware-accelerated 3D rendering and GPU compute - no plugins, no native code, just C# and Blazor.  The scope is intentionally ambitious: a full DayZ-scale persistent...
 
 Repo: https://github.com/LostBeard/LostSpawns - full README + CHANGELOG available via github_lookup.
+
+## MiniRover
+Open-source C# software for the Freenove FNK0053 4WD car: nanoFramework firmware + .NET WebAssembly client (WebRTC video, gamepad/touch/VR driving, browser ML)
+
+**Open-source software for the [Freenove 4WD Car Kit (FNK0053)](https://github.com/Freenove/Freenove_4WD_Car_Kit_for_ESP32)** - C# firmware on the car's ESP32 with [.NET nanoFramework](https://www.nanoframework.net/), and a browser app written in C# that runs on .NET WebAssembly.  Drive the car from any modern browser with a gamepad, a touchscreen, a keyboard or (later) a VR headset. Watch live video, read every sensor, control the lights and buzzer, keep an eye on the battery, and switch on machine-learning modes like face tracking and follow-me that run on your own GPU in the browser.  > **S...
+
+Repo: https://github.com/LostBeard/MiniRover - full README + CHANGELOG available via github_lookup.
 
 ## NanoFrameTest1
 Blazor WebAssembly and nanoFramework fun with Freenove ESP32-S3-WROOM Camera Dev Board
@@ -545,11 +552,4 @@ Cross-platform media capture and playback for .NET - camera, microphone, speaker
 Cross-platform media capture and playback for .NET — camera, microphone, speakers, video display. One API, browser and desktop.   ```xml ```  Or:  ```bash dotnet add package SpawnDev.MultiMedia --prerelease ```   - **Cross-platform** — Browser (Blazor WASM) full, Windows full, Linux device enumeration today + capture in progress (see [Docs/linux.md](Docs/linux.md)), macOS planned for Phase 5. - **Camera capture** — Webcams and virtual cameras (OBS, ManyCam, Quest) with resolution / framerate constraints. - **Microphone capture** — Audio input with sample-rate / channel-count controls. - **Audi...
 
 Repo: https://github.com/LostBeard/SpawnDev.MultiMedia - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.PatchStreams
-Create streams with partial views, multiple streams, or read-only sources. Delete, insert, overwrite with full support for undo/redo and restore-points.
-
-A patch-based `Stream` for non-destructive editing. Writes never touch the source bytes — they compose a virtual view of one or more underlying streams (or byte ranges within them) that callers can read as if it were a single stream. Every edit becomes a patch: cheap to record, cheap to undo, cheap to redo.  Targets: `net10.0`, `net9.0`, `net8.0`.   Some workloads need to edit a stream but can't afford to copy it — a large file, a parsed media container (e.g. WebM), or a stream whose source data is effectively read-only. Traditional stream editing means buffering and rewriting. PatchStreams st...
-
-Repo: https://github.com/LostBeard/SpawnDev.PatchStreams - full README + CHANGELOG available via github_lookup.
 
