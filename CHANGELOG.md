@@ -8,7 +8,7 @@ Dependency update, plus three defects found doing it. `SpawnDev.AI` (contracts) 
 1.1.0-preview.2: it has no dependencies and no code change since.
 
 ### Changed - dependencies
-- **SpawnDev.ILGPU.ML 5.2.19 -> 5.3.4, SpawnDev.ILGPU 5.2.16 -> 5.3.5, SpawnDev.SpawnJS.WebWorkers 2.1.18 -> 2.2.2**,
+- **SpawnDev.ILGPU.ML 5.2.19 -> 5.3.4, SpawnDev.ILGPU 5.2.16 -> 5.3.5, SpawnDev.SpawnJS.WebWorkers 2.1.18 -> 2.2.4**,
   which puts the server on SpawnDev.SpawnJS 3 (one .NET/JS crossing per call). The direct ILGPU reference stays:
   NuGet resolves the LOWEST version satisfying ML's floor, so an ILGPU fix released after ML only arrives through it.
 - Demo: SpawnDev.SpawnJS.RazorRenderer 2.2.2, SpawnDev.AsyncFileSystem 2.3.0, SpawnDev.Reachy 0.1.0-preview.4,
@@ -20,17 +20,19 @@ Dependency update, plus three defects found doing it. `SpawnDev.AI` (contracts) 
 - **`AiWorkerClient.InitAsync` threw a NullReferenceException instead of falling back to a dedicated worker.**
   `GetSharedWebWorker` returns null when it cannot make a shared worker; the result went straight into `_worker`
   and the first `Run` dereferenced it. It now falls back to a dedicated worker, as the method's summary says.
-- **The demo published no `main.classic.js` on WebWorkers 2.2.x.** Since 2.1.19 the WebWorkers build targets read
-  the Blazor WASM SDK as "this app boots through the Blazor JS runtime" and skip the classic bundle. This app uses the
-  Blazor SDK only to compile `.razor` and boots from `main.classic.js`, so the page died on
-  `SyntaxError: Unexpected token '<'` (the 404 fell back to index.html). The demo now sets
-  `SpawnJSWebWorkersBlazor=false`.
+- **The demo published no `main.classic.js` on WebWorkers 2.1.19 - 2.2.2.** Those versions read the Blazor WASM SDK
+  as "this app boots through the Blazor JS runtime" and skipped the classic bundle. This app uses the Blazor SDK only
+  to compile `.razor` and boots from `main.classic.js`, so the page died on `SyntaxError: Unexpected token '<'` (the
+  404 fell back to index.html). Fixed in the library: WebWorkers 2.2.3 keys on the Blazor runtime itself
+  (`blazor.webassembly.js`), not the SDK, so the demo needs no flag.
 - `AiVoiceEngine.SpeakAsync`'s docs had split in two, with the summary and first five params sitting on
   `VerboseLogging`; plus ambiguous or dead `cref`s (`ResetStream` -> `ResetStreamAsync`) and a stale duplicate
   summary on `AiWorkerClient.GetArtifactAsync`. A null-flow warning in the demo's save-voice path.
 
 ### Verified
-- Fast suite 50/0 (23 heavy skipped), against a published build.
+- Against a published build: fast suite 50/0 (23 heavy skipped) on WebWorkers 2.2.4; heavy suite 73/0/0 on 2.2.2
+  (2.2.3 and 2.2.4 change only build targets, no runtime code). ABI drift gate: every reference across 34
+  assembly pairs in the demo output resolves.
 
 ## Shipped in 1.1.0-preview.3 (2026-09-19) - built-in voices, and speech that finishes before it finishes playing
 
