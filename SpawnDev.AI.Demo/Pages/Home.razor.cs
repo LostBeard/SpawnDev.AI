@@ -1104,7 +1104,10 @@ public partial class Home : IDisposable
             // Persist FIRST, then prepare. A voice that is prepared but not saved would work until the next
             // reload and then vanish with no way to get it back - the clip is only in memory for this turn.
             await Voices.SaveAsync(id, displayName, _lastHeardText, _lastHeardSamples, WhisperRate);
-            (string VoiceId, string DisplayName, int PromptFrames, double ReferenceSeconds) prepared = default;
+            // Seeded with what was asked for, not `default`: a default tuple holds a null VoiceId, which the
+            // compiler cannot see the lambda below overwrite (WithProgressAsync rethrows, so it always has).
+            (string VoiceId, string DisplayName, int PromptFrames, double ReferenceSeconds) prepared =
+                (id, displayName, 0, 0);
             await WithProgressAsync($"Preparing “{displayName}”", async () =>
                 prepared = await Ai.PrepareVoiceAsync(id, displayName, _lastHeardText,
                     _lastHeardSamples, WhisperRate));

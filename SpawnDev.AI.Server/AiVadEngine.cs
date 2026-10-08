@@ -10,7 +10,7 @@ namespace SpawnDev.AI.Server;
 /// <param name="Length">Length of the utterance in samples.</param>
 public sealed record AiSpeechSpan(long StartSample, int Length);
 
-/// <summary>What one <see cref="AiVadEngine.AcceptAsync"/> call observed.</summary>
+/// <summary>What one <see cref="AiVadEngine.AcceptAsync(float[], CancellationToken)"/> call observed.</summary>
 /// <param name="SpeechActive">Whether speech is open right now - for a live meter.</param>
 /// <param name="Probability">The last frame's speech probability.</param>
 /// <param name="Spans">Utterances that CLOSED during this call. Usually empty.</param>
@@ -34,7 +34,7 @@ public sealed record AiVadUpdate(bool SpeechActive, float Probability, IReadOnly
 /// stream, never as samples. The window already holds every sample it fed us; shipping a 20 s utterance
 /// BACK across the worker boundary as a JSON number array would put 320,000 numbers on the WASM heap to
 /// tell the caller something it can express in two integers. The offsets are absolute sample counts from
-/// the first sample handed to <see cref="AcceptAsync"/> after a <see cref="ResetStream"/>, so the caller
+/// the first sample handed to <see cref="AcceptAsync(float[], CancellationToken)"/> after a <see cref="ResetStreamAsync"/>, so the caller
 /// slices its own buffer.
 /// </para>
 /// <para>
@@ -84,7 +84,7 @@ public sealed class AiVadEngine : IDisposable
     /// <summary>Friendly name reported back to callers.</summary>
     public string ModelName { get; set; } = "silero-vad";
 
-    /// <summary>Endpointing behaviour. Changing this takes effect on the next <see cref="ResetStream"/>.</summary>
+    /// <summary>Endpointing behaviour. Changing this takes effect on the next <see cref="ResetStreamAsync"/>.</summary>
     public VadOptions Options { get; set; } = new();
 
     /// <summary>Called before this engine takes GPU memory, so the host can make room.</summary>

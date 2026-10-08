@@ -64,7 +64,7 @@ public sealed record AiSpeech(float[] Samples, int SampleRate, string Model, dou
     /// rendered every word it was given, verbatim.
     ///
     /// A caller reconstructing this by re-applying the cap itself would be a second copy of
-    /// <see cref="AiVoiceEngine.TrimToSpeakableLength"/> that can drift from the one that ran. The engine
+    /// <see cref="AiVoiceEngine.TrimToSpeakableLength(string, int?)"/> that can drift from the one that ran. The engine
     /// knows what it spoke; it returns it.
     /// </remarks>
     public string SpokenText { get; init; } = "";
@@ -177,23 +177,6 @@ public sealed partial class AiVoiceEngine : IDisposable
     public bool IsLoaded => _pipeline != null || _kokoro != null;
 
     /// <summary>
-    /// Speak <paramref name="text"/> in the voice of <paramref name="referenceSamples"/>.
-    /// </summary>
-    /// <param name="text">What to say.</param>
-    /// <param name="referenceText">
-    /// The transcript of the reference clip. ⚠️ Must be accurate: anything present in the reference audio
-    /// and missing here bleeds into the start of the generated line, so a sloppy transcript degrades the
-    /// clone in a way that is invisible in the text and audible in the output.
-    /// </param>
-    /// <param name="referenceSamples">Mono PCM of the voice to clone.</param>
-    /// <param name="referenceSampleRate">Sample rate of the reference.</param>
-    /// <param name="maxSpokenCharacters">
-    /// Optional per-call override of <see cref="MaxSpokenCharacters"/>. The default cap is a PRODUCT choice
-    /// (a spoken reply should be brief), not an engine limit, so a caller that genuinely wants a long
-    /// read-out can ask for one. Null or non-positive keeps the default.
-    /// </param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <summary>
     /// Log the per-synthesis shape diagnostics (decoder <c>If</c> branch census, Slice compile-time
     /// fallback count). Default off - this is debugging instrumentation, not operational logging.
     /// </summary>
@@ -215,6 +198,23 @@ public sealed partial class AiVoiceEngine : IDisposable
     /// </remarks>
     public bool VerifyByReadBack { get; set; }
 
+    /// <summary>
+    /// Speak <paramref name="text"/> in the voice of <paramref name="referenceSamples"/>.
+    /// </summary>
+    /// <param name="text">What to say.</param>
+    /// <param name="referenceText">
+    /// The transcript of the reference clip. ⚠️ Must be accurate: anything present in the reference audio
+    /// and missing here bleeds into the start of the generated line, so a sloppy transcript degrades the
+    /// clone in a way that is invisible in the text and audible in the output.
+    /// </param>
+    /// <param name="referenceSamples">Mono PCM of the voice to clone.</param>
+    /// <param name="referenceSampleRate">Sample rate of the reference.</param>
+    /// <param name="maxSpokenCharacters">
+    /// Optional per-call override of <see cref="MaxSpokenCharacters"/>. The default cap is a PRODUCT choice
+    /// (a spoken reply should be brief), not an engine limit, so a caller that genuinely wants a long
+    /// read-out can ask for one. Null or non-positive keeps the default.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
     /// <param name="transcribe">
     /// 🔴 A RECOGNISER, AND WHY SPEAKING NEEDS ONE. ZipVoice is a flow-matching model that starts from
     /// fresh noise, and on some draws it produces confident, well-formed speech that is NOT the sentence

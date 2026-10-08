@@ -2,7 +2,37 @@
 
 Notable changes per release. Preview - APIs will change.
 
-## Unreleased - built-in voices, and speech that finishes before it finishes playing
+## SpawnDev.AI.Server 1.1.0-preview.4 - 2026-10-08 - the SpawnJS 3 line
+
+Dependency update, plus three defects found doing it. `SpawnDev.AI` (contracts) is unchanged and stays
+1.1.0-preview.2: it has no dependencies and no code change since.
+
+### Changed - dependencies
+- **SpawnDev.ILGPU.ML 5.2.19 -> 5.3.4, SpawnDev.ILGPU 5.2.16 -> 5.3.5, SpawnDev.SpawnJS.WebWorkers 2.1.18 -> 2.2.2**,
+  which puts the server on SpawnDev.SpawnJS 3 (one .NET/JS crossing per call). The direct ILGPU reference stays:
+  NuGet resolves the LOWEST version satisfying ML's floor, so an ILGPU fix released after ML only arrives through it.
+- Demo: SpawnDev.SpawnJS.RazorRenderer 2.2.2, SpawnDev.AsyncFileSystem 2.3.0, SpawnDev.Reachy 0.1.0-preview.4,
+  SpawnDev.Reachy.Browser 0.1.0-preview.5. Reachy and AsyncFileSystem were released alongside this so the whole
+  graph is on SpawnJS 3: Reachy preview.3 asked for SpawnDev.RTC >= 2.2.3 and dragged in RTC 2.2.3's SpawnJS 2 set.
+- ServerHost: SpawnDev.ILGPU 5.3.5.
+
+### Fixed
+- **`AiWorkerClient.InitAsync` threw a NullReferenceException instead of falling back to a dedicated worker.**
+  `GetSharedWebWorker` returns null when it cannot make a shared worker; the result went straight into `_worker`
+  and the first `Run` dereferenced it. It now falls back to a dedicated worker, as the method's summary says.
+- **The demo published no `main.classic.js` on WebWorkers 2.2.x.** Since 2.1.19 the WebWorkers build targets read
+  the Blazor WASM SDK as "this app boots through the Blazor JS runtime" and skip the classic bundle. This app uses the
+  Blazor SDK only to compile `.razor` and boots from `main.classic.js`, so the page died on
+  `SyntaxError: Unexpected token '<'` (the 404 fell back to index.html). The demo now sets
+  `SpawnJSWebWorkersBlazor=false`.
+- `AiVoiceEngine.SpeakAsync`'s docs had split in two, with the summary and first five params sitting on
+  `VerboseLogging`; plus ambiguous or dead `cref`s (`ResetStream` -> `ResetStreamAsync`) and a stale duplicate
+  summary on `AiWorkerClient.GetArtifactAsync`. A null-flow warning in the demo's save-voice path.
+
+### Verified
+- Fast suite 50/0 (23 heavy skipped), against a published build.
+
+## Shipped in 1.1.0-preview.3 (2026-09-19) - built-in voices, and speech that finishes before it finishes playing
 
 ### Changed - engine to SpawnDev.ILGPU.ML 5.2.15: models load faster and the download bar works
 
@@ -63,7 +93,7 @@ every kernel compiles on its first execution - 8.1 s cold against 1.8 s warm on 
 
 Requires SpawnDev.ILGPU.ML 5.2.14.
 
-## Unreleased - the shared-worker fixes, and two instruments for a path no gate could see
+## Shipped in 1.1.0-preview.3 (2026-09-19) - the shared-worker fixes, and two instruments for a path no gate could see
 ### Changed - the demo defaults to a DEDICATED worker
 
 🔴 Captain's call, 2026-09-10: *"we'll default to dedicated for now. this load time is bullshit and there
@@ -108,7 +138,7 @@ readable - nobody had asked. `tap-shared-worker.cs` streams the console and exce
 ⚠️ Cancelling a `ReceiveAsync` ABORTS a WebSocket rather than timing it out, so a per-read timeout kills
 the tap on the first quiet moment - exactly when watching a stalled worker matters. One token per session.
 
-## Unreleased - the demo meets you on a model that can hold a character
+## Shipped in 1.1.0-preview.3 (2026-09-19) - the demo meets you on a model that can hold a character
 
 ### Removed - `qwen2.5:0.5b-instruct-q8_0`, which had been the default
 
@@ -160,7 +190,7 @@ the screen of a window this gate had opened, and it appeared in no log the gate 
 renders as a `.msg.system` bubble, never a console line. The gate hooked only `page.Console`, so it was
 blind to exactly the failures the page took the trouble to explain, and reported PASS throughout.
 
-## Unreleased - the model cache stores files AS files
+## Shipped in 1.1.0-preview.3 (2026-09-19) - the model cache stores files AS files
 
 ### Changed - the demo caches models in SpawnDev.WebTorrent's content-file layout
 
@@ -204,7 +234,7 @@ which is why it exists - two tabs each loading their own model would exceed the 
 `GetReadStream` - which reads the ENTIRE file into memory - so it could never have measured the cost being
 investigated.
 
-## Unreleased - reasoning models, model-driven tools, and an opt-in model catalogue
+## Shipped in 1.1.0-preview.3 (2026-09-19) - reasoning models, model-driven tools, and an opt-in model catalogue
 
 Library changes since 1.1.0-preview.1. Not published yet.
 

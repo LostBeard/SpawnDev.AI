@@ -19,8 +19,8 @@
 		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
 		<PackageTags>AI;LLM;Ollama;DotNetWebAssembly;WebGPU;GGUF;ToolCalling</PackageTags>
 		<Title>SpawnDev.AI.Server</Title>
-		<Version>1.1.0-preview.3</Version>
-		<PackageReleaseNotes>v1.1.0-preview.3 - Dependency update. Full history: CHANGELOG.md</PackageReleaseNotes>
+		<Version>1.1.0-preview.4</Version>
+		<PackageReleaseNotes>v1.1.0-preview.4 - Dependency update to the SpawnDev.SpawnJS 3 line: SpawnDev.ILGPU.ML 5.3.4, SpawnDev.ILGPU 5.3.5, SpawnDev.SpawnJS.WebWorkers 2.2.2. Full history: CHANGELOG.md</PackageReleaseNotes>
 		<Description>Ollama/OpenAI-compatible model server on the SpawnDev.ILGPU.ML inference engine (GGUF, KV-cache decode, WebGPU dispatch-plan capture/replay). One handler core, two transports: HTTP on desktop (drop-in for Ollama clients on :11434), MessagePort in the browser (shared/dedicated worker) - the same request/response shapes either way.</Description>
 	</PropertyGroup>
 
@@ -35,11 +35,12 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.2.19" />
-		<!-- Direct reference: ML 5.2.19 only asks for SpawnDev.ILGPU >= 5.2.12, and NuGet resolves the lowest
-		     satisfying version, so without this the server and the demo would stay on 5.2.12. -->
-		<PackageReference Include="SpawnDev.ILGPU" Version="5.2.16" />
-		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.1.18" />
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.3.4" />
+		<!-- Direct reference: NuGet resolves the LOWEST version satisfying ML's floor (5.3.4 asks for
+		     SpawnDev.ILGPU >= 5.3.5), so an ILGPU fix released after the ML package reaches the server and the
+		     demo only through this line. Keep it at the newest ILGPU. -->
+		<PackageReference Include="SpawnDev.ILGPU" Version="5.3.5" />
+		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.2.2" />
 	</ItemGroup>
 
 </Project>

@@ -79,15 +79,13 @@ public sealed class AiWorkerClient
             {
                 if (PreferSharedWorker && _workers.SharedWebWorkerSupported)
                 {
-                    var shared = await _workers.GetSharedWebWorker(SharedWorkerName);
-                    _worker = shared;
+                    // ⚠️ Returns null when a shared worker cannot be made. That used to fall through to an
+                    // NRE on the first Run below instead of the dedicated fallback this method promises.
+                    _worker = await _workers.GetSharedWebWorker(SharedWorkerName);
+                    if (_worker == null) Console.WriteLine("[worker] shared worker unavailable, using a dedicated one");
                 }
-                else
-                {
-                    var dedicated = await _workers.GetWebWorker()
-                        ?? throw new NotSupportedException("Web workers are not available in this browser.");
-                    _worker = dedicated;
-                }
+                _worker ??= await _workers.GetWebWorker()
+                    ?? throw new NotSupportedException("Web workers are not available in this browser.");
             }
             Status = await _worker.Run<IAiWorkerApi, string>(s => s.GetStatusAsync());
             // ⚠️ Which ADAPTER the worker actually got. A worker can be handed a different (or software)
@@ -181,11 +179,6 @@ public sealed class AiWorkerClient
         return result ?? "";
     }
 
-    /// <summary>
-    /// Chat with streaming deltas over the Ollama-native surface (/api/chat NDJSON): builds the
-    /// request, streams <c>message.content</c> deltas to <paramref name="onDelta"/>, returns the
-    /// final done_reason ("stop" | "length").
-    /// </summary>
     /// <summary>Fetch a tool artifact (generated image) by id: (mimeType, bytes, label).</summary>
     public async Task<(string Mime, byte[] Data, string? Label)> GetArtifactAsync(string id)
     {
@@ -378,7 +371,7 @@ public sealed class AiWorkerClient
     /// ⚠️ <paramref name="referenceSamples"/> is required - this voice is CLONED, so in a conversation the
     /// reference is the turn the user just spoke and the assistant answers in their own voice. There is no
     /// stock voice to fall back to.
-    /// ⚠️ Same first-cut shape as <see cref="TranscribeAsync"/>: PCM crosses as a JSON number array, which
+    /// ⚠️ Same first-cut shape as <see cref="TranscribeAsync(float[], int)"/>: PCM crosses as a JSON number array, which
     /// is what works over both transports today and is the wrong shape for audio. A transferred
     /// Float32Array is the follow-up; this signature does not change when it lands.
     /// </remarks>
