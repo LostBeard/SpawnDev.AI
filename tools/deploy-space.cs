@@ -74,6 +74,14 @@ async Task<int> Run()
 
     // ── 2. Get the Space repo ───────────────────────────────────────────────────────────────────────
     var work = Path.Combine(Path.GetTempPath(), "spawndev-ai-space-repo");
+    // ⚠️ A .git FOLDER IS NOT A REPO. This clone lives in %TEMP%, and a temp cleaner deleted its FILES but
+    // not its folders (2026-09-24): .git kept hooks/objects/refs with no HEAD or config, so the fetch below
+    // died with "not a git repository" and the deploy failed after the slow publish. Ask git instead.
+    if (Directory.Exists(Path.Combine(work, ".git")) && !IsGitRepo(work))
+    {
+        Console.WriteLine("[2/5] the cached Space clone is damaged (temp cleanup?) - discarding it");
+        DeleteTree(work);
+    }
     if (Directory.Exists(Path.Combine(work, ".git")))
     {
         Console.WriteLine("[2/5] refreshing the Space clone...");
@@ -82,7 +90,7 @@ async Task<int> Run()
     }
     else
     {
-        if (Directory.Exists(work)) Directory.Delete(work, true);
+        if (Directory.Exists(work)) DeleteTree(work);
         Console.WriteLine("[2/5] cloning the Space...");
         Sh("git", $"clone --quiet {SpaceGit} \"{work}\"", Path.GetTempPath());
     }
@@ -295,6 +303,37 @@ static string HuggingFaceToken()
             if (t.Length > 0) return t;
         }
     return "";
+}
+
+/// <summary>
+/// Delete a directory tree that may hold a git clone. Git writes its object files READ-ONLY, and
+/// Directory.Delete refuses those ("Access to the path ... is denied"), so clear the attribute first.
+/// </summary>
+static void DeleteTree(string dir)
+{
+    foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+        File.SetAttributes(f, FileAttributes.Normal);
+    Directory.Delete(dir, true);
+}
+
+/// <summary>
+/// Whether <paramref name="dir"/> is a working git repo of its OWN. "--git-dir" must come back as ".git":
+/// in a damaged clone git walks UP looking for a repo, and any parent repo would otherwise answer for it.
+/// </summary>
+static bool IsGitRepo(string dir)
+{
+    var psi = new ProcessStartInfo("git", "rev-parse --git-dir")
+    {
+        WorkingDirectory = dir,
+        UseShellExecute = false,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+    };
+    using var p = Process.Start(psi) ?? throw new Exception("Could not start git.");
+    var stdout = p.StandardOutput.ReadToEnd().Trim();
+    p.StandardError.ReadToEnd();
+    p.WaitForExit();
+    return p.ExitCode == 0 && stdout == ".git";
 }
 
 static string ShOut(string exe, string cmdArgs, string cwd)
