@@ -97,7 +97,10 @@ try
 
     Console.WriteLine($"[gate] connecting to {robotIp}");
     await page.FillAsync(".settings.room input.voice-name", robotIp);
-    await page.ClickAsync(".settings.room button.chip:has-text(\"Connect\")", new() { Timeout = 15000 });
+    // ⚠️ "Connect on LAN", by its full text. Since the WebRTC path (2026-09-16) the panel also has
+    // "🤗 Connect my Reachy", and a bare :has-text("Connect") matched THAT one first: this gate then ran the
+    // Hugging Face path on localhost and timed out waiting for "Park & disconnect" with the motors never on.
+    await page.ClickAsync(".settings.room button.chip:has-text(\"Connect on LAN\")", new() { Timeout = 15000 });
     // Connect enables the motors and plays the daemon's wake_up move, which takes a moment.
     await page.WaitForSelectorAsync(".settings.room button.chip:has-text(\"Park & disconnect\")",
         new() { Timeout = 60000 });

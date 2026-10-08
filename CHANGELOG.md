@@ -25,6 +25,14 @@ Dependency update, plus three defects found doing it. `SpawnDev.AI` (contracts) 
   to compile `.razor` and boots from `main.classic.js`, so the page died on `SyntaxError: Unexpected token '<'` (the
   404 fell back to index.html). Fixed in the library: WebWorkers 2.2.3 keys on the Blazor runtime itself
   (`blazor.webassembly.js`), not the SDK, so the demo needs no flag.
+- **"🤗 Connect my Reachy" threw an opaque `TypeError` on every page except the Hugging Face Space.** It read
+  `huggingface.variables.OAUTH_CLIENT_ID` as a strict path, and `window.huggingface` exists only inside the Space,
+  so localhost and GitHub Pages got "Cannot read properties of undefined (reading 'variables')". It now reads the
+  path null-safely and says the button needs the Space page and to use Connect on LAN. Not a SpawnJS 3 change:
+  2.1.17 and 3.0.2 walk dotted paths identically.
+- **`tools/drive-ai-reachy.cs` had been clicking the wrong button since 2026-09-16.** Its `:has-text("Connect")`
+  matched "🤗 Connect my Reachy" before "Connect on LAN", so it ran the WebRTC path on localhost and timed out with
+  the motors never on. It now clicks "Connect on LAN".
 - `AiVoiceEngine.SpeakAsync`'s docs had split in two, with the summary and first five params sitting on
   `VerboseLogging`; plus ambiguous or dead `cref`s (`ResetStream` -> `ResetStreamAsync`) and a stale duplicate
   summary on `AiWorkerClient.GetArtifactAsync`. A null-flow warning in the demo's save-voice path.
@@ -33,6 +41,8 @@ Dependency update, plus three defects found doing it. `SpawnDev.AI` (contracts) 
 - Against a published build: fast suite 50/0 (23 heavy skipped) on WebWorkers 2.2.4; heavy suite 73/0/0 on 2.2.2
   (2.2.3 and 2.2.4 change only build targets, no runtime code). ABI drift gate: every reference across 34
   assembly pairs in the demo output resolves.
+- Real Reachy Mini (`tools/drive-ai-reachy.cs`): PASS - motors disabled -> enabled -> disabled, the character's
+  "*tilts head*" classified as `Tilt`, peak head movement 0.438 rad from the awake baseline, parked at pitch 0.485.
 
 ## Shipped in 1.1.0-preview.3 (2026-09-19) - built-in voices, and speech that finishes before it finishes playing
 

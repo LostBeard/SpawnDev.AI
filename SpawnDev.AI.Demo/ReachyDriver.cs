@@ -122,7 +122,16 @@ public sealed class ReachyDriver : IAsyncDisposable
             // window.huggingface.variables.OAUTH_CLIENT_ID. Passing an arbitrary string instead means the
             // SDK has no registered client, and the failure reads as
             // "Not authenticated - call login() or pass a token" rather than as a bad client id.
-            var clientId = js.Get<string?>("huggingface.variables.OAUTH_CLIENT_ID");
+            // ⚠️ NULL-SAFE PATH: window.huggingface exists only inside the Space. A strict dotted path threw
+            // "Cannot read properties of undefined (reading 'variables')" on every other page (localhost,
+            // GitHub Pages), which told the user nothing about why the button cannot work there.
+            var clientId = js.Get<string?>("huggingface?.variables?.OAUTH_CLIENT_ID");
+            if (string.IsNullOrEmpty(clientId))
+            {
+                Status = "🤗 Connect my Reachy signs in through the Hugging Face Space, so it only works on the "
+                       + "Space's page. Here, use Connect on LAN with the robot's address.";
+                return false;
+            }
             var sdk = await ReachyMiniJs.CreateAsync(js, AppName, clientId).ConfigureAwait(false);
 
             // 🔴 EARS BEFORE CONNECT, NOT AFTER. The SDK emits its media track exactly once, during the
