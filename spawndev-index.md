@@ -49,13 +49,13 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.ILGPU.ML** (LostBeard/SpawnDev.ILGPU.ML) - Hardware-agnostic machine learning infrastructure for .NET. Implements high-performance neural network layers in C# that are transpiled to run on WebGPU, CUDA, OpenCL, WebGL, CPU, and Wasm via SpawnDev.ILGPU. Optimized for Blazor WebAssembly and native GPU execution.
 - **SpawnDev.ILGPU.WebGPU** (LostBeard/SpawnDev.ILGPU.WebGPU) - WebGPU backend for ILGPU, enabling GPU compute in Blazor WebAssembly.
 - **SpawnDev.MatrixLEDDisplay** (LostBeard/SpawnDev.MatrixLEDDisplay) - Wirelessly control the Matrix LED Display from Merkury Innovations with Blazor WebAssembly and the Web Bluetooth API.
-- **SpawnDev.MultiMedia** (LostBeard/SpawnDev.MultiMedia) - Cross-platform media capture and playback for .NET - camera, microphone, speakers, video display. One API, every platform.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
 
 - **ai-code-quality-journal** (LostBeard/ai-code-quality-journal) - Real-world observations on AI coding tool quality — concrete data, not opinions
 - **Anaglyphohol** (LostBeard/Anaglyphohol) - A free web browser extension that converts 2D website images into 3D anaglyph images using Blazor WASM and Transformer.js
+- **AnaglyphoholV2** (LostBeard/AnaglyphoholV2) - Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the videos and images on web pages into 3D as you browse. Put on a pair of red/cyan 3D glasses, open a video or an image search, and the picture gains depth.
 - **AubsCraft** (LostBeard/AubsCraft) - Blazor WASM admin panel for Minecraft Paper servers - real-time dashboard, RCON, player management, plugin browser, VR detection
 - **blazorjs-docs** (LostBeard/blazorjs-docs)
 - **BlazorShadowRoot** (LostBeard/BlazorShadowRoot) - Tests running Blazor WASM components in a ShadowRoot
@@ -104,6 +104,13 @@ A free web browser extension that converts 2D website images into 3D anaglyph im
 Anaglyphohol is a web browser extension that lets you view images on the web in anaglyph 3D. It supports green magenta, and red cyan glasses. View image search results in 3D on google.com, bing.com, and yahoo.com. Use Anaglyphohol on on almost any website.   Anaglyphohol is developed using Blazor WebAssembly, [SpawnDev.BlazorJS.BrowserExtension](https://github.com/LostBeard/SpawnDev.BlazorJS.BrowserExtension), [SpawnDev.BlazorJS.TransformersJS](https://github.com/LostBeard/SpawnDev.BlazorJS.TransformersJS), and the amazing monocular depth estimation machine learning model [Depth Anything](http...
 
 Repo: https://github.com/LostBeard/Anaglyphohol - full README + CHANGELOG available via github_lookup.
+
+## AnaglyphoholV2
+Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the videos and images on web pages into 3D as you browse. Put on a pair of red/cyan 3D glasses, open a video or an image search, and the picture gains depth.
+
+Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the videos and images on web pages into 3D as you browse. Put on a pair of red/cyan 3D glasses, open a video or an image search, and the picture gains depth.  A depth estimation AI works out how far away everything in each picture is, and Anaglyphohol builds a 3D view from that, frame by frame. Everything runs on your own graphics card through WebGPU. Nothing you watch is uploaded anywhere, there is no account, and nothing is tracked. Anaglyphohol is free on every website, with no subscription and no time limit.  - Chr...
+
+Repo: https://github.com/LostBeard/AnaglyphoholV2 - full README + CHANGELOG available via github_lookup.
 
 ## AubsCraft
 Blazor WASM admin panel for Minecraft Paper servers - real-time dashboard, RCON, player management, plugin browser, VR detection
@@ -545,11 +552,4 @@ Wirelessly control the Matrix LED Display from Merkury Innovations with Blazor W
 Blazor WebAssembly code and demo app for communicating with the "Matrix LED Display" by Merkury Innovations, aka "MI Matrix Display".   - [MI Matrix Display Web App](https://lostbeard.github.io/SpawnDev.MatrixLEDDisplay/)   - Display `.jpg`, `.png`, or `.gif` images on your 16x16 LED display using your web browser and Bluetooth. - Animated `.gif` images are supported (limited to 8 frames.) - No graffiti mode at this time. - Media library for easy image management   This neat 178mm (7 inch) square USB powered display features a 16x16 multi-color LED grid and can be found at places like Walmart ...
 
 Repo: https://github.com/LostBeard/SpawnDev.MatrixLEDDisplay - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.MultiMedia
-Cross-platform media capture and playback for .NET - camera, microphone, speakers, video display. One API, every platform.
-
-Cross-platform media capture and playback for .NET — camera, microphone, speakers, video display. One API, browser and desktop.   ```xml ```  Or:  ```bash dotnet add package SpawnDev.MultiMedia --prerelease ```   - **Cross-platform** — Browser (Blazor WASM) full, Windows full, Linux device enumeration today + capture in progress (see [Docs/linux.md](Docs/linux.md)), macOS planned for Phase 5. - **Camera capture** — Webcams and virtual cameras (OBS, ManyCam, Quest) with resolution / framerate constraints. - **Microphone capture** — Audio input with sample-rate / channel-count controls. - **Audi...
-
-Repo: https://github.com/LostBeard/SpawnDev.MultiMedia - full README + CHANGELOG available via github_lookup.
 
