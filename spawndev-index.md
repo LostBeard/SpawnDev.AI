@@ -507,7 +507,7 @@ Repo: https://github.com/LostBeard/SpawnDev.EBML - full README + CHANGELOG avail
 ## SpawnDev.GameUI
 GPU-rendered game UI library for Blazor WebAssembly. PC, VR, AR, mobile. Mouse, keyboard, gamepad, VR controllers, hand tracking.
 
-GPU-rendered game UI library for Blazor WebAssembly. All UI rendered by WebGPU - no HTML overlays on the canvas. Supports PC, VR, AR, and mobile with unified input handling.   > **Status:** `0.1.0-rc.1` - first release candidate. API is functional and consumed by Lost Spawns; expect iteration during the RC cycle.   - **40+ UI elements** - Panels, labels, buttons, sliders, toggles, text input, scroll views, lists, dropdowns, radial menus, tooltips, color pickers, key-bind displays, debug overlays - plus game-specific HUD widgets (hotbar, status bars, minimap, compass, crosshair, interaction pro...
+GPU-rendered game UI library for Blazor WebAssembly. All UI rendered by WebGPU - no HTML overlays on the canvas. Supports PC, VR, AR, and mobile with unified input handling.   > **Status:** `1.0.0` - stable. Used in production by SpawnScene and Lost Spawns.   - **40+ UI elements** - Panels, labels, buttons, sliders, toggles, text input, scroll views, lists, dropdowns, radial menus, tooltips, color pickers, key-bind displays, debug overlays - plus game-specific HUD widgets (hotbar, status bars, minimap, compass, crosshair, interaction prompts, equipment, crafting, status effects) - **Click rout...
 
 Repo: https://github.com/LostBeard/SpawnDev.GameUI - full README + CHANGELOG available via github_lookup.
 
