@@ -2,6 +2,14 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.1.1 - 2026-10-11 - Llama pythonic tool calls
+
+- **A pythonic tool call is a tool call.** llama3.1:8b sometimes answers with `come_here(player='Aubri')` as plain
+  text instead of the instructed `<tool_call>` JSON. SpawnDev.ILGPU.ML 5.3.6's `ParseToolCalls` now reads it, so
+  `AiChatEngine` executes it, and `TextWithoutToolCalls` is empty for a reply that was nothing but such calls (before,
+  the call text came back as the answer: Vertex spoke it aloud and did nothing).
+- SpawnDev.ILGPU.ML 5.3.5 -> 5.3.6. SpawnDev.AI stays 1.1.0 (no change).
+
 ## SpawnDev.AI 1.1.0 + SpawnDev.AI.Server 1.1.0 - 2026-10-11 - first stable release
 
 - **SpawnDev.AI 1.1.0**: the contracts of 1.1.0-preview.2, unchanged, as a stable release.

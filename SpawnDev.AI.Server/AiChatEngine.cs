@@ -314,7 +314,10 @@ public sealed class AiChatEngine : IAiChatService
 
         return new AiChatResult(visible, res.PromptTokens, res.GeneratedTokens, ToStopKind(res.Stop), calls)
         {
-            TextWithoutToolCalls = calls.Count > 0 ? StripToolCalls(visible).Trim() : visible,
+            // A reply that was nothing but Llama's pythonic calls has no words left to show or speak.
+            TextWithoutToolCalls = calls.Count == 0 ? visible
+                : ChatTemplates.IsOnlyPythonicCalls(visible) ? ""
+                : StripToolCalls(visible).Trim(),
         };
     }
 
