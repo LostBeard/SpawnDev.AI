@@ -1,6 +1,15 @@
-# SpawnDev.AI Changelog
+﻿# SpawnDev.AI Changelog
 
-Notable changes per release. Preview - APIs will change.
+Notable changes per release. Stable from 1.1.0.
+
+## SpawnDev.AI 1.1.0 + SpawnDev.AI.Server 1.1.0 - 2026-10-11 - first stable release
+
+- **SpawnDev.AI 1.1.0**: the contracts of 1.1.0-preview.2, unchanged, as a stable release.
+- **SpawnDev.AI.Server 1.1.0**: SpawnDev.ILGPU.ML 5.3.4 -> **5.3.5**. That release fixes the attention fusion for
+  BERT-family models (a real attention mask was fused away, BERT's K transpose was fed with heads and sequence
+  swapped, FusedScaledMatMul could skip its scale): sentence embeddings (all-MiniLM-L6-v2) now match onnxruntime.
+  Found by Vertex (LostBeard/Vertex), which consumes this package for chat with tools, speech-to-text and voices.
+  No API change from 1.1.0-preview.4.
 
 ## SpawnDev.AI.Server 1.1.0-preview.4 - 2026-10-08 - the SpawnJS 3 line
 

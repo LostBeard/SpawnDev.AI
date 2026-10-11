@@ -1,4 +1,4 @@
-# SpawnDev.AI
+﻿# SpawnDev.AI
 
 > 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.AI saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.
 
@@ -88,7 +88,7 @@ avatar, but not for driving the physical robot.
 
 ## Status
 
-Preview. Extracted from the proven `SpawnDev.ILGPU.ML` Ollama-server example and verified against the
+Stable since 1.1.0. Extracted from the proven `SpawnDev.ILGPU.ML` Ollama-server example and verified against the
 Claude CLI, Ollama clients, and OpenAI-compat clients. The desktop HTTP host, the browser shared-worker
 host (LLM chat + SD-Turbo image generation on WebGPU), the agentic tool loop, MCP, and the live demos
 ([Hugging Face Space](https://huggingface.co/spaces/LostBeard/spawndev-ai) for Reachy,
