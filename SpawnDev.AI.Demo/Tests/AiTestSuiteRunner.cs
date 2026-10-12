@@ -38,6 +38,7 @@ public static class AiTestSuiteRunner
         typeof(AvatarActionTests),
         typeof(ModelCatalogueTests),
         typeof(ToolPlumbingTests),
+        typeof(ToolDefinitionTests),
         typeof(OllamaSourcedModelTests),
         typeof(AgentRoomEchoTests),
         typeof(SpeakChunkingTests),

@@ -25,6 +25,35 @@ public sealed class AiChatEngine : IAiChatService
     /// <summary>Optional perf-log sink: one line per generation (prompt/reused/prefill/decode split).</summary>
     public Action<string>? PerfLog { get; set; }
 
+    /// <summary>
+    /// The OpenAI-style function definition of <paramref name="tool"/> as the MODEL reads it in its prompt:
+    /// <c>{"type":"function","function":{"name","description","parameters"}}</c>, with quotes, apostrophes and any
+    /// non-ASCII text written as themselves.
+    /// </summary>
+    /// <remarks>
+    /// The default <c>JsonSerializer</c> escapes every <c>'</c> as <c>'</c>, <c>"</c> inside a string as
+    /// <c>"</c>, and every non-ASCII character as <c>\uXXXX</c>. Valid JSON, but the model reads it as text and
+    /// imitates it in its own tool calls, badly. MEASURED 2026-10-12 (Vertex, llama3.1:8b, 31 apostrophes in its tool
+    /// descriptions): <c>remember({"fact": "¢Aubri loves pink axolotls¢", "about": "\u27me\u27"})</c> and
+    /// <c>set_goal({"goal": "âcollect 5 dirtâ", "player": "§me§"})</c> - mangled quote escapes the
+    /// tools then stored as part of the text, and a goal "for e". Relaxed escaping is still valid JSON; it only stops
+    /// showing the model escapes it was never meant to write.
+    /// </remarks>
+    public static string ToolDefinitionJson(IAiTool tool)
+    {
+        using var schema = System.Text.Json.JsonDocument.Parse(tool.ParametersJsonSchema);
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "function",
+            function = new { name = tool.Name, description = tool.Description, parameters = schema.RootElement.Clone() },
+        }, PromptJson);
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions PromptJson = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     public AiChatEngine(ModelRegistry registry) => _registry = registry;
 
     /// <summary>The registry (model listing for protocol adapters).</summary>
@@ -153,15 +182,7 @@ public sealed class AiChatEngine : IAiChatService
                 // answering "what is a chicken?". Symmetric to the grounding exclusion above; images still work.
                 && !(ForceImageToolOnIntent && string.Equals(t.Name, ImageToolName, StringComparison.OrdinalIgnoreCase))
             ).ToList();
-            toolsJson = callable.Count > 0 ? callable.Select(t =>
-            {
-                using var schema = System.Text.Json.JsonDocument.Parse(t.ParametersJsonSchema);
-                return System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    type = "function",
-                    function = new { name = t.Name, description = t.Description, parameters = schema.RootElement.Clone() },
-                });
-            }).ToList() : null;
+            toolsJson = callable.Count > 0 ? callable.Select(ToolDefinitionJson).ToList() : null;
         }
 
         // Pre-emptive image-tool forcing: when the latest user turn clearly asks to CREATE a visual and the
