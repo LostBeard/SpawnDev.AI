@@ -31,13 +31,14 @@ public sealed class AiChatEngine : IAiChatService
     /// non-ASCII text written as themselves.
     /// </summary>
     /// <remarks>
-    /// The default <c>JsonSerializer</c> escapes every <c>'</c> as <c>'</c>, <c>"</c> inside a string as
-    /// <c>"</c>, and every non-ASCII character as <c>\uXXXX</c>. Valid JSON, but the model reads it as text and
-    /// imitates it in its own tool calls, badly. MEASURED 2026-10-12 (Vertex, llama3.1:8b, 31 apostrophes in its tool
-    /// descriptions): <c>remember({"fact": "¢Aubri loves pink axolotls¢", "about": "\u27me\u27"})</c> and
-    /// <c>set_goal({"goal": "âcollect 5 dirtâ", "player": "§me§"})</c> - mangled quote escapes the
-    /// tools then stored as part of the text, and a goal "for e". Relaxed escaping is still valid JSON; it only stops
-    /// showing the model escapes it was never meant to write.
+    /// The default <c>JsonSerializer</c> writes every apostrophe as the six-character escape U+0027 (backslash, u, 0027),
+    /// every double quote inside a string as U+0022, and every non-ASCII character as its U+XXXX escape. Valid JSON, but
+    /// the model reads it as text and imitates it in its own tool calls, badly. MEASURED 2026-10-12 (Vertex,
+    /// llama3.1:8b, 31 apostrophes in its tool descriptions): a remember call whose fact was wrapped in the escape for
+    /// U+00A2 ('cent sign') on both sides and whose "about" was the escape for U+27 around 'me'; and a set_goal call
+    /// with U+00E2 around the goal and U+00A7 around 'me' - mangled quote escapes the tools then stored as part of
+    /// the text, and a goal "for e". Relaxed escaping is still valid JSON; it only stops showing the model escapes
+    /// it was never meant to write.
     /// </remarks>
     public static string ToolDefinitionJson(IAiTool tool)
     {

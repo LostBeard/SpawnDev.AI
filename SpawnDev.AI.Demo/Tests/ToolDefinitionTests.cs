@@ -4,11 +4,11 @@ namespace SpawnDev.AI.Demo.Tests;
 
 /// <summary>
 /// The tool definitions a model reads in its prompt (<see cref="AiChatEngine.ToolDefinitionJson"/>) show quotes,
-/// apostrophes and non-ASCII text as themselves, not as <c>'</c>-style escapes.
+/// apostrophes and non-ASCII text as themselves, not as U+0027-style escape sequences.
 /// </summary>
 /// <remarks>
 /// The default serializer escaped them. A model reads the prompt as text and copied the escapes into its own tool
-/// calls, mangled: Vertex (llama3.1:8b, 2026-10-12) stored "¢Aubri loves pink axolotls¢" as a fact and set a
+/// calls, mangled: Vertex (llama3.1:8b, 2026-10-12) stored a fact wrapped in the escape for U+00A2 and set a
 /// goal "for e". No model needed to check the cause: the definition text itself.
 /// </remarks>
 public sealed class ToolDefinitionTests
