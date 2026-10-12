@@ -4,8 +4,8 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>1.1.0</Version>
-		<PackageReleaseNotes>v1.1.0 - first stable release. Same contracts as 1.1.0-preview.2 (no code change). Full history: CHANGELOG.md</PackageReleaseNotes>
+		<Version>1.1.1</Version>
+		<PackageReleaseNotes>v1.1.1 - AiToolRegistry.Unregister: an app whose abilities come and go can take a tool away. Full history: CHANGELOG.md</PackageReleaseNotes>
 		<Title>SpawnDev.AI</Title>
 		<Authors>LostBeard</Authors>
 		<Description>Core contracts for the SpawnDev AI stack: chat sessions, Ollama/OpenAI-compatible API shapes, and tool-calling contracts. Shared by SpawnDev.AI.Server (desktop HTTP + browser-worker model server) and the browser demo.</Description>

@@ -72,6 +72,14 @@ public sealed class AiToolRegistry
     public void Register(IAiTool tool)
     { lock (_lock) _tools[tool.Name] = tool; }
 
+    /// <summary>
+    /// Removes a tool. An app whose abilities come and go (a game it joins and leaves, a robot it connects to) must
+    /// take a tool away when the ability goes, or the model keeps calling it.
+    /// </summary>
+    /// <returns>Whether a tool by that name was registered.</returns>
+    public bool Unregister(string name)
+    { lock (_lock) return _tools.Remove(name); }
+
     public IReadOnlyList<IAiTool> List()
     { lock (_lock) return _tools.Values.ToList(); }
 

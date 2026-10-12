@@ -39,4 +39,26 @@ public sealed class ToolDefinitionTests
             throw new Exception("the schema text did not survive the round trip: " + json);
         return Task.CompletedTask;
     }
+
+    /// <summary>A tool taken away is gone from the list the model is offered, and only that one (any letter case).</summary>
+    [AiTest(Timeout = 10_000)]
+    public Task UnregisteredToolLeavesTheList()
+    {
+        var registry = new AiToolRegistry();
+        registry.Register(new QuotedTool());
+        registry.Register(new OtherTool());
+        if (!registry.Unregister("REMEMBER")) throw new Exception("Unregister did not find a registered tool");
+        if (registry.Get("remember") != null) throw new Exception("the tool is still registered");
+        if (registry.List().Select(t => t.Name).SingleOrDefault() != "wave") throw new Exception("the other tool went too");
+        if (registry.Unregister("remember")) throw new Exception("Unregister reported a tool that was already gone");
+        return Task.CompletedTask;
+    }
+
+    private sealed class OtherTool : IAiTool
+    {
+        public string Name => "wave";
+        public string Description => "Wave.";
+        public string ParametersJsonSchema => "{\"type\":\"object\",\"properties\":{}}";
+        public Task<AiToolExecutionResult> ExecuteAsync(string argumentsJson, CancellationToken ct = default) => Task.FromResult(new AiToolExecutionResult("ok"));
+    }
 }

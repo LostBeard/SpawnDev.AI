@@ -2,6 +2,21 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI 1.1.1 + SpawnDev.AI.Server 1.1.2 - 2026-10-12 - tool definitions without escapes; Unregister; ML 5.3.7
+
+- **Tool definitions reach the model as plain text.** They were serialized with the default JSON encoder, which writes
+  every apostrophe and every quote inside a string as a U+0027 / U+0022 escape and every non-ASCII character as its
+  U+XXXX escape. The model reads its prompt as text and copied those escapes, mangled, into its own tool calls.
+  MEASURED in Vertex (llama3.1:8b, 31 apostrophes in its tool descriptions): a remembered fact wrapped in the escape
+  for U+00A2, a goal set "for e". `AiChatEngine.ToolDefinitionJson(IAiTool)` uses relaxed escaping (still valid JSON).
+  Test `ToolDefinitionTests.ToolDefinitionsShowQuotesAsTheModelShouldWriteThem` (red-checked).
+- **On SpawnDev.ILGPU.ML 5.3.7 + SpawnDev.ILGPU 5.3.6**: several models in one process stay inside GPU memory (idle
+  buffers reclaimed before the driver spills), decode loops no longer leak their outputs, and a cancelled or aborted
+  generation no longer poisons the KV-prefix cache (every reply after an interrupted one had been token soup).
+- **SpawnDev.AI 1.1.1: `AiToolRegistry.Unregister(name)`.** An app whose abilities come and go (Vertex joins and
+  leaves a Minecraft world while its robot body stays connected) must take a tool away when the ability goes, or the
+  model keeps being offered it. Test `ToolDefinitionTests.UnregisteredToolLeavesTheList`.
+
 ## SpawnDev.AI.Server 1.1.1 - 2026-10-11 - Llama pythonic tool calls
 
 - **A pythonic tool call is a tool call.** llama3.1:8b sometimes answers with `come_here(player='Aubri')` as plain
