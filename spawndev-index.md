@@ -48,13 +48,13 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.ILGPU** (LostBeard/SpawnDev.ILGPU) - .Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
 - **SpawnDev.ILGPU.ML** (LostBeard/SpawnDev.ILGPU.ML) - Hardware-agnostic machine learning infrastructure for .NET. Implements high-performance neural network layers in C# that are transpiled to run on WebGPU, CUDA, OpenCL, WebGL, CPU, and Wasm via SpawnDev.ILGPU. Optimized for Blazor WebAssembly and native GPU execution.
 - **SpawnDev.ILGPU.WebGPU** (LostBeard/SpawnDev.ILGPU.WebGPU) - WebGPU backend for ILGPU, enabling GPU compute in Blazor WebAssembly.
-- **SpawnDev.MatrixLEDDisplay** (LostBeard/SpawnDev.MatrixLEDDisplay) - Wirelessly control the Matrix LED Display from Merkury Innovations with Blazor WebAssembly and the Web Bluetooth API.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
 
 - **ai-code-quality-journal** (LostBeard/ai-code-quality-journal) - Real-world observations on AI coding tool quality — concrete data, not opinions
 - **Anaglyphohol** (LostBeard/Anaglyphohol) - A free web browser extension that converts 2D website images into 3D anaglyph images using Blazor WASM and Transformer.js
+- **anaglyphohol-chrome-web-store** (LostBeard/anaglyphohol-chrome-web-store) - A documented record of a Chrome Web Store review dispute over Anaglyphohol, a free open source WebAssembly extension. Resolved October 14, 2026: Google reinstated it. Install steps and every email.
 - **AnaglyphoholV2** (LostBeard/AnaglyphoholV2) - Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the videos and images on web pages into 3D as you browse. Put on a pair of red/cyan 3D glasses, open a video or an image search, and the picture gains depth.
 - **AubsCraft** (LostBeard/AubsCraft) - Blazor WASM admin panel for Minecraft Paper servers - real-time dashboard, RCON, player management, plugin browser, VR detection
 - **blazorjs-docs** (LostBeard/blazorjs-docs)
@@ -105,10 +105,17 @@ Anaglyphohol is a web browser extension that lets you view images on the web in 
 
 Repo: https://github.com/LostBeard/Anaglyphohol - full README + CHANGELOG available via github_lookup.
 
+## anaglyphohol-chrome-web-store
+A documented record of a Chrome Web Store review dispute over Anaglyphohol, a free open source WebAssembly extension. Resolved October 14, 2026: Google reinstated it. Install steps and every email.
+
+A documented record of a Chrome Web Store review dispute over a free, open source WebAssembly browser extension. **Resolved October 14, 2026: Google reinstated Anaglyphohol 4.0.0 and it is live on the store.**  [Anaglyphohol](https://github.com/LostBeard/AnaglyphoholV2) turns the videos and images on web pages into 3D as you browse. It is free on every site, has no account, no ads, no tracking, and sends nothing anywhere: the depth AI runs on your own graphics card. The full source is public.  Version 4.0.0 was submitted to the Chrome Web Store in October 2026. It was rejected twice and two ap...
+
+Repo: https://github.com/LostBeard/anaglyphohol-chrome-web-store - full README + CHANGELOG available via github_lookup.
+
 ## AnaglyphoholV2
 Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the videos and images on web pages into 3D as you browse. Put on a pair of red/cyan 3D glasses, open a video or an image search, and the picture gains depth.
 
-Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the videos and images on web pages into 3D as you browse. Put on a pair of red/cyan 3D glasses, open a video or an image search, and the picture gains depth.  A depth estimation AI works out how far away everything in each picture is, and Anaglyphohol builds a 3D view from that, frame by frame. Everything runs on your own graphics card through WebGPU. Nothing you watch is uploaded anywhere, there is no account, and nothing is tracked. Anaglyphohol is free on every website, with no subscription and no time limit.  **Dow...
+Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the videos and images on web pages into 3D as you browse. Put on a pair of red/cyan 3D glasses, open a video or an image search, and the picture gains depth.  A depth estimation AI works out how far away everything in each picture is, and Anaglyphohol builds a 3D view from that, frame by frame. Everything runs on your own graphics card through WebGPU. Nothing you watch is uploaded anywhere, there is no account, and nothing is tracked. Anaglyphohol is free on every website, with no subscription and no time limit.  **Ins...
 
 Repo: https://github.com/LostBeard/AnaglyphoholV2 - full README + CHANGELOG available via github_lookup.
 
@@ -545,11 +552,4 @@ WebGPU backend for ILGPU, enabling GPU compute in Blazor WebAssembly.
 > ⚠️ **DEPRECATED — This repository is archived and no longer maintained.** > > This project has been superseded by **[SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU)**, which includes everything this project does and more. Please migrate to SpawnDev.ILGPU for continued support and new features.   **Run [ILGPU](https://github.com/m4rs-mt/ILGPU) kernels directly in the browser using WebGPU!**   Write GPU compute shaders in C# and compile them to WGSL automatically.   - **ILGPU-compatible** - Use familiar ILGPU APIs (`ArrayView`, `Index1D/2D/3D`, math intrinsics, etc.) - **WGSL tran...
 
 Repo: https://github.com/LostBeard/SpawnDev.ILGPU.WebGPU - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.MatrixLEDDisplay
-Wirelessly control the Matrix LED Display from Merkury Innovations with Blazor WebAssembly and the Web Bluetooth API.
-
-Blazor WebAssembly code and demo app for communicating with the "Matrix LED Display" by Merkury Innovations, aka "MI Matrix Display".   - [MI Matrix Display Web App](https://lostbeard.github.io/SpawnDev.MatrixLEDDisplay/)   - Display `.jpg`, `.png`, or `.gif` images on your 16x16 LED display using your web browser and Bluetooth. - Animated `.gif` images are supported (limited to 8 frames.) - No graffiti mode at this time. - Media library for easy image management   This neat 178mm (7 inch) square USB powered display features a 16x16 multi-color LED grid and can be found at places like Walmart ...
-
-Repo: https://github.com/LostBeard/SpawnDev.MatrixLEDDisplay - full README + CHANGELOG available via github_lookup.
 
