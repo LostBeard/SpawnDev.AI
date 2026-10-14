@@ -110,9 +110,11 @@ public sealed class AiSpeechEngine : IDisposable
     private readonly SemaphoreSlim _inferGate = new(1, 1);
 
     private SpeechRecognitionPipeline? _pipeline;
+    private ParakeetTdtPipeline? _parakeet;
     private InferenceSession? _encoder;
     private InferenceSession? _decoder;
     private InferenceSession? _decoderWithPast;
+    private InferenceSession? _pre;
     private string? _residentModel;
 
     /// <summary>New instance.</summary>
@@ -132,6 +134,28 @@ public sealed class AiSpeechEngine : IDisposable
     /// <summary>Friendly name reported back to callers.</summary>
     public string ModelName { get; set; } = "whisper-tiny";
 
+    /// <summary>
+    /// Which family of speech model <see cref="ModelRepo"/> is. Detected from the repo name unless set: a repo with
+    /// "parakeet" in it is a Parakeet TDT export (files at the repo root: <c>nemo128.onnx</c>, <c>encoder-model.onnx</c>
+    /// with its <c>.onnx.data</c>, <c>decoder_joint-model.onnx</c>, <c>vocab.txt</c>), anything else is Whisper.
+    /// </summary>
+    /// <remarks>
+    /// MEASURED on LibriSpeech test-clean (60 utterances, RTX 4070, idle): Parakeet TDT 0.6B v3 3.75% WER at 168 ms median,
+    /// Whisper tiny 11.53% at 177 ms, base.en 7.51% at 260 ms, small.en 7.51% at 633 ms. Parakeet also prints punctuation
+    /// and capitals, and does not pad to 30 s: a short turn costs a short time.
+    /// </remarks>
+    public SpeechModelFamily? Family { get; set; }
+
+    /// <summary>The family in use: <see cref="Family"/>, or detected from <see cref="ModelRepo"/>.</summary>
+    public SpeechModelFamily EffectiveFamily => Family
+        ?? (ModelRepo.Contains("parakeet", StringComparison.OrdinalIgnoreCase) ? SpeechModelFamily.ParakeetTdt : SpeechModelFamily.Whisper);
+
+    /// <summary>
+    /// Keep a Parakeet encoder's weights as fp16 on the device (half the memory and weight bandwidth, compute stays fp32).
+    /// Off by default until its accuracy has been measured against fp32 on the same audio.
+    /// </summary>
+    public bool HalfWeights { get; set; }
+
     /// <summary>Reports load progress as (stage, percent).</summary>
     public Action<string, int>? OnLoadProgress { get; set; }
 
@@ -142,7 +166,7 @@ public sealed class AiSpeechEngine : IDisposable
     public Func<Task>? EvictOtherKind { get; set; }
 
     /// <summary>Whether a speech model is currently resident.</summary>
-    public bool IsLoaded => _pipeline != null;
+    public bool IsLoaded => _pipeline != null || _parakeet != null;
 
     /// <summary>Whether the loaded pipeline uses the O(n) with-past decode path.</summary>
     public bool UsesKVCache => _pipeline?.UsesKVCache ?? false;
@@ -169,7 +193,7 @@ public sealed class AiSpeechEngine : IDisposable
             throw new ArgumentOutOfRangeException(nameof(sampleRate), sampleRate, "sample rate must be positive");
 
         return TranscribeCoreAsync(sampleRate, samples.Length,
-            () => _pipeline!.TranscribeAsync(samples, sampleRate), ct);
+            () => _parakeet != null ? _parakeet.TranscribeAsync(samples, sampleRate) : _pipeline!.TranscribeAsync(samples, sampleRate), ct);
     }
 
     /// <summary>
@@ -189,7 +213,7 @@ public sealed class AiSpeechEngine : IDisposable
             throw new ArgumentOutOfRangeException(nameof(sampleRate), sampleRate, "sample rate must be positive");
 
         return TranscribeCoreAsync(sampleRate, (int)samples.Length,
-            () => _pipeline!.TranscribeAsync(samples, sampleRate), ct);
+            () => _parakeet != null ? _parakeet.TranscribeAsync(samples, sampleRate) : _pipeline!.TranscribeAsync(samples, sampleRate), ct);
     }
 
     private async Task<AiTranscription> TranscribeCoreAsync(
@@ -300,7 +324,10 @@ public sealed class AiSpeechEngine : IDisposable
             await _inferGate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                await _pipeline!.TranscribeAsync(new float[16000], 16000).ConfigureAwait(false);
+                // Silence: enough to compile every kernel. Parakeet sizes its encoder to the audio, so each NEW length
+                // still costs a shape recompile (a millisecond or so), not a kernel compile.
+                if (_parakeet != null) await _parakeet.TranscribeAsync(new float[16000], 16000).ConfigureAwait(false);
+                else await _pipeline!.TranscribeAsync(new float[16000], 16000).ConfigureAwait(false);
             }
             finally { _inferGate.Release(); }
             Console.WriteLine($"[AiSpeechEngine] warm forward pass: {clock.Elapsed.TotalSeconds:F1}s "
@@ -319,13 +346,19 @@ public sealed class AiSpeechEngine : IDisposable
 
     private async Task EnsureLoadedAsync(CancellationToken ct)
     {
-        if (_pipeline != null && _residentModel == ModelRepo) return;
+        if (IsLoaded && _residentModel == ModelRepo) return;
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_pipeline != null && _residentModel == ModelRepo) return;
+            if (IsLoaded && _residentModel == ModelRepo) return;
             if (EvictOtherKind != null) await EvictOtherKind().ConfigureAwait(false);
             DisposeSessions();
+
+            if (EffectiveFamily == SpeechModelFamily.ParakeetTdt)
+            {
+                await LoadParakeetAsync(ct).ConfigureAwait(false);
+                return;
+            }
 
             OnLoadProgress?.Invoke("encoder", 10);
             _encoder = await LoadSessionAsync("onnx/encoder_model.onnx", ct).ConfigureAwait(false);
@@ -367,6 +400,34 @@ public sealed class AiSpeechEngine : IDisposable
             OnLoadProgress?.Invoke("idle", 100);
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Loads a Parakeet TDT export: the log-mel preprocessor, the FastConformer encoder (graph + external weights) and the
+    /// transducer's prediction/joint network, then the vocabulary.
+    /// </summary>
+    private async Task LoadParakeetAsync(CancellationToken ct)
+    {
+        OnLoadProgress?.Invoke("preprocessor", 5);
+        _pre = await LoadSessionAsync("nemo128.onnx", ct).ConfigureAwait(false);
+
+        OnLoadProgress?.Invoke("encoder", 15);
+        // The encoder's weights live beside the graph in encoder-model.onnx.data (2.4 GB fp32): a SEEKABLE second stream.
+        await using (var graph = await OpenModelStreamAsync("encoder-model.onnx", ct).ConfigureAwait(false))
+        await using (var weights = await OpenModelStreamAsync("encoder-model.onnx.data", ct).ConfigureAwait(false))
+            _encoder = await InferenceSession.CreateFromOnnxStreamAsync(_accelerator, graph, externalDataStream: weights, ct: ct,
+                weightStorage: HalfWeights ? WeightStorage.Half : WeightStorage.Source).ConfigureAwait(false);
+
+        OnLoadProgress?.Invoke("decoder", 85);
+        _decoder = await LoadSessionAsync("decoder_joint-model.onnx", ct).ConfigureAwait(false);
+
+        OnLoadProgress?.Invoke("vocabulary", 95);
+        var vocabulary = ParakeetTdtPipeline.ParseVocabulary(await LoadTextAsync("vocab.txt", ct).ConfigureAwait(false));
+
+        _parakeet = new ParakeetTdtPipeline(_pre!, _encoder!, _decoder!, _accelerator, vocabulary);
+        _residentModel = ModelRepo;
+        OnLoadProgress?.Invoke("ready", 100);
+        Console.WriteLine($"[AiSpeechEngine] {ModelName} (Parakeet TDT, {(HalfWeights ? "fp16" : "fp32")} weights) ready on {_accelerator.AcceleratorType}");
     }
 
     /// <summary>
@@ -426,6 +487,9 @@ public sealed class AiSpeechEngine : IDisposable
     {
         _pipeline?.Dispose();
         _pipeline = null;
+        _parakeet?.Dispose();    // owns its three sessions
+        _parakeet = null;
+        _pre = null;
         _encoder?.Dispose(); _encoder = null;
         _decoder?.Dispose(); _decoder = null;
         _decoderWithPast?.Dispose(); _decoderWithPast = null;
@@ -438,4 +502,13 @@ public sealed class AiSpeechEngine : IDisposable
         DisposeSessions();
         _gate.Dispose();
     }
+}
+
+/// <summary>The kind of speech-to-text model <see cref="AiSpeechEngine"/> runs.</summary>
+public enum SpeechModelFamily
+{
+    /// <summary>OpenAI Whisper (encoder + autoregressive decoder, 30 s window).</summary>
+    Whisper,
+    /// <summary>NVIDIA Parakeet TDT (FastConformer encoder + token-and-duration transducer).</summary>
+    ParakeetTdt,
 }
