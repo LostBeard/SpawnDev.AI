@@ -2,6 +2,21 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI 1.2.0 + SpawnDev.AI.Server 1.2.0 - 2026-10-14 - speech: who is talking, and has the speaker finished?
+
+- **`AiSpeechEngine` runs Parakeet TDT 0.6B v3** (`SpeechModelFamily.ParakeetTdt`, the `istupakov/parakeet-tdt-0.6b-v3-onnx` export; `HalfWeights` stores the 2.4 GB encoder as fp16, 2,012 MiB loaded).
+  MEASURED on LibriSpeech test-clean, 60 utterances, RTX 4070: 3.75% word error rate at a 168 ms median, against Whisper tiny's 11.53% at 177 ms. Whisper stays available.
+- **`AiSpeakerEngine` + `SpeakerRegistry`: speaker identification.** ReDimNet2-B6 voice embeddings (64 ms each), a registry of the voices that have been introduced, provisional "Guest N"
+  voices for strangers (filed only from `MinGuestSeconds` of speech), `Observe` / `Identify` / `Enroll` / `Rename` / `Forget`, and JSON persistence. MEASURED (40 speakers, 240 clips):
+  closed-set identification 99.2%, EER 1.33%, and at a threshold that lets 1% of strangers in, 98.9% of enrolled speakers recognised and none named as someone else. The runner-up
+  margin (`MinMargin` 0.10) comes from a measured sweep.
+- **`AiTurnEngine`: end-of-turn detection.** Smart Turn v3.2 (pipecat-ai, BSD-2) on the shared accelerator: `TurnCompleteAsync(pcm)` is the probability that the speaker has finished.
+  6 ms per decision. MEASURED on a live robot session, last spoken sample to transcript: median 490 ms with a fixed half-second silence rule, 162 ms with it.
+- On SpawnDev.ILGPU.ML 5.3.9 and SpawnDev.ILGPU 5.3.7.
+- **Gate (2026-10-14):** `SpawnDev.AI.TestRunner --heavy` (a published demo in a real browser, the model-backed chat, speech and voice tests): 80 passed, 0 failed, 0 skipped, including 5
+  speaker-registry tests on real embeddings. The end-of-turn engine is exercised end to end by Vertex's GPU tests on a desktop accelerator (model within 3e-5 of onnxruntime; the browser
+  backends have not been measured for it yet).
+
 ## SpawnDev.AI 1.1.1 + SpawnDev.AI.Server 1.1.2 - 2026-10-12 - tool definitions without escapes; Unregister; ML 5.3.7
 
 - **Tool definitions reach the model as plain text.** They were serialized with the default JSON encoder, which writes
