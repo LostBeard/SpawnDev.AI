@@ -19,7 +19,7 @@
 		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
 		<PackageTags>AI;LLM;Ollama;DotNetWebAssembly;WebGPU;GGUF;ToolCalling</PackageTags>
 		<Title>SpawnDev.AI.Server</Title>
-		<Version>1.2.0-local.2</Version>
+		<Version>1.2.0-local.3</Version>
 		<PackageReleaseNotes>v1.1.2 - Tool definitions reach the model without JSON unicode escapes (it copied them, mangled, into its own tool arguments). AiChatEngine.ToolDefinitionJson. On SpawnDev.ILGPU.ML 5.3.7 (several models in one process stay inside GPU memory; a cancelled reply no longer poisons the next) and SpawnDev.ILGPU 5.3.6. Full history: CHANGELOG.md</PackageReleaseNotes>
 		<Description>Ollama/OpenAI-compatible model server on the SpawnDev.ILGPU.ML inference engine (GGUF, KV-cache decode, WebGPU dispatch-plan capture/replay). One handler core, two transports: HTTP on desktop (drop-in for Ollama clients on :11434), MessagePort in the browser (shared/dedicated worker) - the same request/response shapes either way.</Description>
 	</PropertyGroup>
@@ -35,7 +35,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.3.9-local.1" />
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.3.9-local.2" />
 		<!-- Direct reference: NuGet resolves the LOWEST version satisfying ML's floor (5.3.4 asks for
 		     SpawnDev.ILGPU >= 5.3.5), so an ILGPU fix released after the ML package reaches the server and the
 		     demo only through this line. Keep it at the newest ILGPU. -->

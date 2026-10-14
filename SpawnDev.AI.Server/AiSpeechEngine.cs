@@ -151,7 +151,9 @@ public sealed class AiSpeechEngine : IDisposable
         ?? (ModelRepo.Contains("parakeet", StringComparison.OrdinalIgnoreCase) ? SpeechModelFamily.ParakeetTdt : SpeechModelFamily.Whisper);
 
     /// <summary>
-    /// Keep a Parakeet encoder's weights as fp16 on the device (half the memory and weight bandwidth, compute stays fp32).
+    /// Keep a Parakeet encoder's weights as fp16 on the device (compute stays fp32). MEASURED (RTX 4070, 60 LibriSpeech utterances): the same
+    /// 3.75% WER, 2,012 MiB loaded instead of 3,012 MiB, 197 ms instead of 163 ms median (the low-precision linear decodes its weights on load).
+    /// Honoured for external-data models only from SpawnDev.ILGPU.ML 5.3.9-local.2; before that the setting changed nothing.
     /// Off by default until its accuracy has been measured against fp32 on the same audio.
     /// </summary>
     public bool HalfWeights { get; set; }
