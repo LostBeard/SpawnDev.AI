@@ -12,7 +12,8 @@ namespace SpawnDev.AI.Server;
 /// <param name="Seconds">How much speech it was.</param>
 /// <param name="Reliable">False when the clip was too short to trust an embedding (under <see cref="SpeakerEmbeddingPipeline.MinReliableSeconds"/>).</param>
 /// <param name="EmbedMs">Time to compute the embedding.</param>
-public sealed record AiSpeakerResult(SpeakerMatch Match, SpeakerProfile? Guest, double Seconds, bool Reliable, double EmbedMs)
+/// <param name="Embedding">The voice embedding itself (192 floats), so a caller can enrol it ("this is Nikki") without computing it again.</param>
+public sealed record AiSpeakerResult(SpeakerMatch Match, SpeakerProfile? Guest, double Seconds, bool Reliable, double EmbedMs, float[] Embedding)
 {
     /// <summary>The name to use for this voice: the matched person, the guest, or null.</summary>
     public string? Name => Match.Known ? Match.Name : Guest?.Name;
@@ -113,7 +114,7 @@ public sealed class AiSpeakerEngine : IDisposable
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var embedding = await EmbedAsync(samples, sampleRate, ct).ConfigureAwait(false);
         var ms = clock.Elapsed.TotalMilliseconds;
-        return new AiSpeakerResult(Registry.Identify(embedding), null, seconds, seconds >= SpeakerEmbeddingPipeline.MinReliableSeconds, ms);
+        return new AiSpeakerResult(Registry.Identify(embedding), null, seconds, seconds >= SpeakerEmbeddingPipeline.MinReliableSeconds, ms, embedding);
     }
 
     /// <summary>
@@ -128,9 +129,9 @@ public sealed class AiSpeakerEngine : IDisposable
         var ms = clock.Elapsed.TotalMilliseconds;
         var reliable = seconds >= SpeakerEmbeddingPipeline.MinReliableSeconds;
         if (seconds < MinGuestSeconds)
-            return new AiSpeakerResult(Registry.Identify(embedding), null, seconds, reliable, ms);
+            return new AiSpeakerResult(Registry.Identify(embedding), null, seconds, reliable, ms, embedding);
         var match = Registry.Observe(embedding, seconds, out var guest);
-        return new AiSpeakerResult(match, guest, seconds, reliable, ms);
+        return new AiSpeakerResult(match, guest, seconds, reliable, ms, embedding);
     }
 
     /// <summary>Adds this speech to a person's voice (creating them if new). "Vertex, this is Nikki."</summary>
