@@ -149,9 +149,59 @@ public sealed class SpeakerRegistry
             else if (s > secondScore) { second = p; secondScore = s; }
         }
         if (best == null) return SpeakerMatch.Nobody;
+
+        // A NAMED person outranks a guest. A guest is only a provisional file for someone nobody has named, and it is often the same person as a named profile (a new angle of a face, a
+        // cold voice) that failed the threshold once and was then filed separately: the two profiles then score almost the same, the margin rule says "not sure", and a person the system
+        // knows is called a stranger for as long as the duplicate exists (seen live 2026-10-15: Todd's own face was "Visitor 2", 580 s of looks, 0.84 like Todd). So: the best NAMED
+        // profile is the answer if it passes the threshold and leads the other NAMED profiles by the margin, whatever the guests score.
+        SpeakerProfile? bestNamed = null, secondNamed = null;
+        float bestNamedScore = float.NegativeInfinity, secondNamedScore = float.NegativeInfinity;
+        foreach (var p in _profiles)
+        {
+            if (p.IsGuest || p.Centroid == null) continue;
+            var s = Cosine(embedding, p.Centroid);
+            if (s > bestNamedScore) { secondNamed = bestNamed; secondNamedScore = bestNamedScore; bestNamed = p; bestNamedScore = s; }
+            else if (s > secondNamedScore) { secondNamed = p; secondNamedScore = s; }
+        }
+        if (bestNamed != null && bestNamedScore >= AcceptThreshold && (secondNamed == null || bestNamedScore - secondNamedScore >= MinMargin))
+        {
+            var other = ReferenceEquals(best, bestNamed) ? second : best;
+            return new SpeakerMatch(bestNamed.Name, bestNamedScore, other?.Name, other == null ? 0f : (ReferenceEquals(best, bestNamed) ? secondScore : bestScore), true);
+        }
+
         var runner = second == null ? 0f : secondScore;
         var known = bestScore >= AcceptThreshold && (second == null || bestScore - runner >= MinMargin);
         return new SpeakerMatch(known ? best.Name : null, bestScore, second?.Name, runner, known);
+    }
+
+    /// <summary>
+    /// Merges every guest that is plainly a named person into that person: a guest whose centre is at least <paramref name="threshold"/> like a named profile's is that person under another
+    /// name (same face at another angle, same voice with a cold). Its embeddings join the named profile (the newest win, up to <see cref="MaxEmbeddingsPerProfile"/>) and the guest is removed.
+    /// Returns the names of the guests that were merged.
+    /// </summary>
+    public IReadOnlyList<string> AbsorbDuplicateGuests(float threshold = 0.65f)
+    {
+        lock (_lock)
+        {
+            var merged = new List<string>();
+            foreach (var guest in _profiles.Where(p => p.IsGuest && p.Centroid != null).ToList())
+            {
+                SpeakerProfile? into = null; var score = threshold;
+                foreach (var named in _profiles)
+                {
+                    if (named.IsGuest || named.Centroid == null) continue;
+                    var s = Cosine(guest.Centroid!, named.Centroid);
+                    if (s >= score) { into = named; score = s; }
+                }
+                if (into == null) continue;
+                foreach (var e in guest.Embeddings) AddLocked(into, e, 0);
+                into.Seconds += guest.Seconds;
+                into.LastHeardTicks = Math.Max(into.LastHeardTicks, guest.LastHeardTicks);
+                _profiles.Remove(guest);
+                merged.Add(guest.Name);
+            }
+            return merged;
+        }
     }
 
     /// <summary>Adds a person, or adds to one: the embedding joins that name's profile (a guest becomes named).</summary>
