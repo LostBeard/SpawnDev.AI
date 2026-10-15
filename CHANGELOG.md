@@ -2,6 +2,18 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.3.0 - 2026-10-15 - live words: speech to text as it is spoken
+
+- **`AiStreamingSpeechEngine`**: NVIDIA Nemotron Speech Streaming 0.6B (cache-aware FastConformer + RNN-T, the sherpa-onnx 160 ms export from the hub) on the shared accelerator.
+  `BeginAsync()` returns an `AiSpeechStream`; feed it 16 kHz audio in any piece size and it returns the words recognised so far (`StreamingUpdate`), `FinishAsync()` flushes the tail. One stream at a time
+  (the model keeps the speaker's context in device buffers); weights are held in half precision by default (same transcripts, ~1.2 GB instead of 2.4 GB). MEASURED on LibriSpeech test-clean,
+  60 utterances, RTX 4070: 5.63% WER, a 160 ms chunk in a median 72 ms (half weights), first word after a median 900 ms of audio. It is the FAST pass; `AiSpeechEngine` (Parakeet, 3.75%) is still the
+  accurate one for the finished utterance.
+- On SpawnDev.ILGPU.ML 5.3.10: `Sub`, `Min` and `Max` of operands with the same element count but different shapes (`[N,1]` and `[1,N]`) were silently wrong; the streaming encoder's attention mask
+  was one of them.
+- **Gate (2026-10-15):** `SpawnDev.AI.TestRunner --heavy`: 80 passed, 0 failed, 0 skipped. The streaming engine is exercised end to end by Vertex's GPU tests on CUDA (live words typed along a spoken
+  sentence, the first words 1.5 s into a 6.7 s recording; the long-conversation memory test with the model resident).
+
 ## SpawnDev.AI 1.2.0 + SpawnDev.AI.Server 1.2.0 - 2026-10-14 - speech: who is talking, and has the speaker finished?
 
 - **`AiSpeechEngine` runs Parakeet TDT 0.6B v3** (`SpeechModelFamily.ParakeetTdt`, the `istupakov/parakeet-tdt-0.6b-v3-onnx` export; `HalfWeights` stores the 2.4 GB encoder as fp16, 2,012 MiB loaded).
