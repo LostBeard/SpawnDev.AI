@@ -47,7 +47,6 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.Identification** (LostBeard/SpawnDev.Identification) - Identity verification using ECDSA signatures for browser and non-browser platforms.
 - **SpawnDev.ILGPU** (LostBeard/SpawnDev.ILGPU) - .Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
 - **SpawnDev.ILGPU.ML** (LostBeard/SpawnDev.ILGPU.ML) - Hardware-agnostic machine learning infrastructure for .NET. Implements high-performance neural network layers in C# that are transpiled to run on WebGPU, CUDA, OpenCL, WebGL, CPU, and Wasm via SpawnDev.ILGPU. Optimized for Blazor WebAssembly and native GPU execution.
-- **SpawnDev.ILGPU.WebGPU** (LostBeard/SpawnDev.ILGPU.WebGPU) - WebGPU backend for ILGPU, enabling GPU compute in Blazor WebAssembly.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -69,6 +68,7 @@ Real applications that use the SpawnDev libraries (and show off what they can do
 - **DayZServerRunner** (LostBeard/DayZServerRunner) - DayZ server manager for Windows and Linux
 - **free-your-data** (LostBeard/free-your-data) - Tools and articles for escaping Google Photos, Drive, and other cloud data hostage situations
 - **Gemineachy** (LostBeard/Gemineachy) - A .NET WebAssembly browser extension that supercharges Gemini with client-side tools, virtual filesystems, interactive games, and Reachy Mini robotics integration.
+- **Lenticulous** (LostBeard/Lenticulous) - Recovers the pixel pattern of a lenticular (glasses-free 3D) display with a camera, in the browser. .NET 10 Blazor WebAssembly + SpawnJS.
 - **lostbeard.github.io** (LostBeard/lostbeard.github.io)
 - **LostSpawns** (LostBeard/LostSpawns) - Lost Spawns is a post-apocalyptic survival voxel game inspired by DayZ. It runs entirely client-side in your web browser using WebGPU for hardware-accelerated 3D rendering and GPU compute — no plugins, no native code, just C# and Blazor.
 - **MiniRover** (LostBeard/MiniRover) - Open-source C# software for the Freenove FNK0053 4WD car: nanoFramework firmware + .NET WebAssembly client (WebRTC video, gamepad/touch/VR driving, browser ML)
@@ -200,6 +200,13 @@ A .NET WebAssembly browser extension that supercharges Gemini with client-side t
 A .NET WebAssembly browser extension that supercharges Gemini with client-side tools, virtual filesystems, interactive games, and Reachy Mini robotics integration.  - Checkers - Chess - Virtual file system with OPFS and external folder support  - Reachy Mini control  - Animated agent avatar(s) - Local LLM and ML tools via [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) - Multi-agent gaming and collaboration
 
 Repo: https://github.com/LostBeard/Gemineachy - full README + CHANGELOG available via github_lookup.
+
+## Lenticulous
+Recovers the pixel pattern of a lenticular (glasses-free 3D) display with a camera, in the browser. .NET 10 Blazor WebAssembly + SpawnJS.
+
+Recovers the **pixel pattern** of a lenticular (glasses-free 3D) display by scanning it with a camera, entirely in the browser. A .NET 10 Blazor WebAssembly app built on [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS).  > **Status: early.** The pieces below marked done work on real hardware; the scan itself is not built yet. See > [PLAN.md](PLAN.md) for the full plan, measurements and open questions.   A lenticular display puts a lens sheet over the panel, so each sub-pixel (the red, green or blue third of a pixel) is only visible from one viewing angle. The pixel pattern say...
+
+Repo: https://github.com/LostBeard/Lenticulous - full README + CHANGELOG available via github_lookup.
 
 ## lostbeard.github.io
 
@@ -545,11 +552,4 @@ Hardware-agnostic machine learning infrastructure for .NET. Implements high-perf
 [**Live Demo**](https://lostbeard.github.io/SpawnDev.ILGPU.ML/) — interactive GPU demos: classification, style transfer, depth estimation, object detection, pose estimation, text generation, background removal, zero-shot CLIP, and more — running on your GPU in your browser, no server. ([Which are verified vs WIP →](Docs/DEMO_AND_MODEL_STATUS.md))  **Hardware-agnostic neural network inference + training for .NET — C# compute kernels that run on WebGPU, CUDA, OpenCL, WebGL, Wasm, and CPU via [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU).**  SpawnDev.ILGPU.ML implements neural net...
 
 Repo: https://github.com/LostBeard/SpawnDev.ILGPU.ML - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.ILGPU.WebGPU
-WebGPU backend for ILGPU, enabling GPU compute in Blazor WebAssembly.
-
-> ⚠️ **DEPRECATED — This repository is archived and no longer maintained.** > > This project has been superseded by **[SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU)**, which includes everything this project does and more. Please migrate to SpawnDev.ILGPU for continued support and new features.   **Run [ILGPU](https://github.com/m4rs-mt/ILGPU) kernels directly in the browser using WebGPU!**   Write GPU compute shaders in C# and compile them to WGSL automatically.   - **ILGPU-compatible** - Use familiar ILGPU APIs (`ArrayView`, `Index1D/2D/3D`, math intrinsics, etc.) - **WGSL tran...
-
-Repo: https://github.com/LostBeard/SpawnDev.ILGPU.WebGPU - full README + CHANGELOG available via github_lookup.
 
