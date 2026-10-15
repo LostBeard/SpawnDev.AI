@@ -19,7 +19,7 @@
 		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
 		<PackageTags>AI;LLM;Ollama;DotNetWebAssembly;WebGPU;GGUF;ToolCalling</PackageTags>
 		<Title>SpawnDev.AI.Server</Title>
-		<Version>1.3.0</Version>
+		<Version>1.4.0-local.1</Version>
 		<PackageReleaseNotes>v1.3.0 - Live words: AiStreamingSpeechEngine (Nemotron Speech Streaming 0.6B, words as they are spoken, 5.63% WER on 60 LibriSpeech clips, a 160 ms chunk in ~70 ms); on SpawnDev.ILGPU.ML 5.3.10 (fixes Sub/Min/Max of equal-size operands with different shapes). v1.2.0 - Speech: Parakeet TDT speech to text (AiSpeechEngine model family), speaker identification (AiSpeakerEngine, SpeakerRegistry: who is talking, introductions, guests), end-of-turn detection (AiTurnEngine, Smart Turn v3.2: has the speaker finished?). On SpawnDev.ILGPU.ML 5.3.9 (periodic-Hann Whisper mel, ConvInteger, fp16 external-data weights, ten library fixes). Full history: CHANGELOG.md</PackageReleaseNotes>
 		<Description>Ollama/OpenAI-compatible model server on the SpawnDev.ILGPU.ML inference engine (GGUF, KV-cache decode, WebGPU dispatch-plan capture/replay). One handler core, two transports: HTTP on desktop (drop-in for Ollama clients on :11434), MessagePort in the browser (shared/dedicated worker) - the same request/response shapes either way.</Description>
 	</PropertyGroup>
@@ -35,7 +35,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.3.10" />
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.3.11-local.1" />
 		<!-- Direct reference: NuGet resolves the LOWEST version satisfying ML's floor (5.3.4 asks for
 		     SpawnDev.ILGPU >= 5.3.5), so an ILGPU fix released after the ML package reaches the server and the
 		     demo only through this line. Keep it at the newest ILGPU. -->
