@@ -18,6 +18,9 @@ public sealed class SpeakerProfile
     /// <summary>When this voice was last heard (UTC ticks), so the least recently heard guest is the one forgotten.</summary>
     public long LastHeardTicks { get; set; }
 
+    /// <summary>When a provisional guest was first filed (UTC ticks); 0 for a profile saved before this was recorded (then <see cref="LastHeardTicks"/> stands in). It is how long a stranger has been remembered.</summary>
+    public long FirstSeenTicks { get; set; }
+
     /// <summary>Unit-length embeddings, oldest first.</summary>
     public List<float[]> Embeddings { get; set; } = new();
 
@@ -95,6 +98,29 @@ public sealed class SpeakerRegistry
 
     /// <summary>Provisional guests kept; past this the one heard longest ago is forgotten.</summary>
     public int MaxGuests { get; set; } = 8;
+
+    /// <summary>
+    /// How long a stranger is remembered if nobody ever says who they are, counted from the FIRST time they were heard (not the last: a stranger who keeps coming
+    /// back does not stay for ever, only a person someone named does). Null (the default) keeps guests until <see cref="MaxGuests"/> pushes them out. <see cref="ExpireGuests"/>
+    /// applies it; not saved with the profiles (it is the application's policy, not the data's).
+    /// </summary>
+    public TimeSpan? GuestLifetime { get; set; }
+
+    /// <summary>
+    /// Forgets the guests (never a named person) that have been remembered longer than <see cref="GuestLifetime"/>. Returns their names. Call it on start-up, on a timer, and
+    /// before reading the profiles to show them.
+    /// </summary>
+    public IReadOnlyList<string> ExpireGuests(DateTime? utcNow = null)
+    {
+        if (GuestLifetime is not { } lifetime) return Array.Empty<string>();
+        var cutoff = (utcNow ?? DateTime.UtcNow).Ticks - lifetime.Ticks;
+        lock (_lock)
+        {
+            var expired = _profiles.Where(p => p.IsGuest && (p.FirstSeenTicks != 0 ? p.FirstSeenTicks : p.LastHeardTicks) < cutoff).ToList();
+            foreach (var p in expired) _profiles.Remove(p);
+            return expired.Select(p => p.Name).ToList();
+        }
+    }
 
     /// <summary>A snapshot of the profiles.</summary>
     public IReadOnlyList<SpeakerProfile> Profiles { get { lock (_lock) return _profiles.ToArray(); } }
@@ -179,7 +205,7 @@ public sealed class SpeakerRegistry
 
             var number = 1;
             while (_profiles.Any(p => p.Name == $"Guest {number}")) number++;
-            guest = new SpeakerProfile { Name = $"Guest {number}", IsGuest = true };
+            guest = new SpeakerProfile { Name = $"Guest {number}", IsGuest = true, FirstSeenTicks = DateTime.UtcNow.Ticks, LastHeardTicks = DateTime.UtcNow.Ticks };
             _profiles.Add(guest);
             AddLocked(guest, embedding, seconds);
             var guests = _profiles.Where(p => p.IsGuest).OrderBy(p => p.LastHeardTicks).ToList();

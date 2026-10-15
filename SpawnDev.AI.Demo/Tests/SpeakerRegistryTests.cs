@@ -46,6 +46,45 @@ public sealed class SpeakerRegistryTests
         return (registry, held, clips.Where(c => !known.Contains(c.Speaker)).ToList());
     }
 
+    /// <summary>
+    /// A stranger nobody names is forgotten after <see cref="SpeakerRegistry.GuestLifetime"/>, counted from the first time they were heard (a guest who keeps coming back does not
+    /// stay); someone who has been named is never forgotten by it. Fails when ExpireGuests is a no-op, or when it counts from the last time heard, or removes named people.
+    /// </summary>
+    [AiTest(Timeout = 30_000)]
+    public async Task UnnamedGuestsExpire_NamedPeopleDoNot()
+    {
+        var clips = await LoadAsync();
+        var speakers = clips.Select(c => c.Speaker).Distinct().ToList();
+        var registry = new SpeakerRegistry { GuestLifetime = TimeSpan.FromHours(24) };
+        var named = clips.First(c => c.Speaker == speakers[0]);
+        registry.Enroll("Nikki", named.Embedding, 5);
+        // Two strangers, filed now.
+        registry.Observe(clips.First(c => c.Speaker == speakers[1]).Embedding, 5, out var guestA);
+        registry.Observe(clips.First(c => c.Speaker == speakers[2]).Embedding, 5, out var guestB);
+        if (guestA == null || guestB == null || guestA.Name == guestB.Name) throw new Exception("two strangers did not become two guests");
+
+        var now = DateTime.UtcNow;
+        if (registry.ExpireGuests(now.AddHours(23)).Count != 0) throw new Exception("guests expired before their 24 hours");
+
+        // Guest A is heard again at hour 20: counting from the first time, it still goes at hour 24.
+        registry.Observe(clips.Where(c => c.Speaker == speakers[1]).Skip(1).First().Embedding, 5, out _);
+        guestA.LastHeardTicks = now.AddHours(20).Ticks;
+        // Guest B introduces themselves at hour 10: they are kept.
+        registry.Rename(guestB.Name, "Aubri");
+
+        var gone = registry.ExpireGuests(now.AddHours(25));
+        if (gone.Count != 1 || gone[0] != guestA.Name) throw new Exception($"expected only {guestA.Name} to expire, got [{string.Join(", ", gone)}]");
+        var left = registry.Profiles.Select(p => p.Name).OrderBy(n => n).ToList();
+        if (!left.SequenceEqual(new[] { "Aubri", "Nikki" })) throw new Exception($"people left: [{string.Join(", ", left)}]");
+        // Even far in the future the named stay.
+        if (registry.ExpireGuests(now.AddDays(400)).Count != 0) throw new Exception("a named person expired");
+
+        // Without a lifetime nothing expires.
+        var open = new SpeakerRegistry();
+        open.Observe(clips[0].Embedding, 5, out _);
+        if (open.ExpireGuests(DateTime.UtcNow.AddDays(400)).Count != 0) throw new Exception("guests expired without a lifetime");
+    }
+
     /// <summary>An enrolled speaker is recognised by name from clips they were not enrolled with, and never as someone else.</summary>
     [AiTest(Timeout = 30_000)]
     public async Task EnrolledSpeakersAreRecognised()
