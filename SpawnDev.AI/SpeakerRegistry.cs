@@ -96,6 +96,12 @@ public sealed class SpeakerRegistry
     /// <summary>Embeddings kept per person: the newest win, so a changed microphone or a cold slowly takes over.</summary>
     public int MaxEmbeddingsPerProfile { get; set; } = 12;
 
+    /// <summary>
+    /// What provisional profiles are called: "Guest 1", "Guest 2". A registry of FACES uses another word ("Visitor") so that a stranger's voice and a stranger's face - which are not
+    /// known to be the same person - never share a name and get merged into one entry by anything that joins registries by name.
+    /// </summary>
+    public string GuestPrefix { get; set; } = "Guest";
+
     /// <summary>Provisional guests kept; past this the one heard longest ago is forgotten.</summary>
     public int MaxGuests { get; set; } = 8;
 
@@ -204,8 +210,8 @@ public sealed class SpeakerRegistry
             if (closeGuest != null) { AddLocked(closeGuest, embedding, seconds); guest = closeGuest; return match; }
 
             var number = 1;
-            while (_profiles.Any(p => p.Name == $"Guest {number}")) number++;
-            guest = new SpeakerProfile { Name = $"Guest {number}", IsGuest = true, FirstSeenTicks = DateTime.UtcNow.Ticks, LastHeardTicks = DateTime.UtcNow.Ticks };
+            while (_profiles.Any(p => p.Name == $"{GuestPrefix} {number}")) number++;
+            guest = new SpeakerProfile { Name = $"{GuestPrefix} {number}", IsGuest = true, FirstSeenTicks = DateTime.UtcNow.Ticks, LastHeardTicks = DateTime.UtcNow.Ticks };
             _profiles.Add(guest);
             AddLocked(guest, embedding, seconds);
             var guests = _profiles.Where(p => p.IsGuest).OrderBy(p => p.LastHeardTicks).ToList();

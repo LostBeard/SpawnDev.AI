@@ -55,8 +55,8 @@ public sealed class AiFaceEngine : IDisposable
     /// <summary>The faces that have been introduced. Persist it with <see cref="SpeakerRegistry.ToJson"/>.</summary>
     public SpeakerRegistry Registry { get; set; } = NewRegistry();
 
-    /// <summary>A registry with a face's thresholds: cosine 0.363 (OpenCV's own) to call a face someone, a 0.05 lead over the runner-up, and a few embeddings per person (poses, light).</summary>
-    public static SpeakerRegistry NewRegistry() => new() { AcceptThreshold = SFaceRecognizer.OpenCvCosineThreshold, MinMargin = 0.05f, MaxEmbeddingsPerProfile = 16 };
+    /// <summary>A registry with a face's thresholds: cosine 0.363 (OpenCV's own) to call a face someone, a 0.05 lead over the runner-up, a few embeddings per person (poses, light), and "Visitor N" for strangers (so they never share a name with a voice's "Guest N").</summary>
+    public static SpeakerRegistry NewRegistry() => new() { AcceptThreshold = SFaceRecognizer.OpenCvCosineThreshold, MinMargin = 0.05f, MaxEmbeddingsPerProfile = 16, GuestPrefix = "Visitor" };
 
     /// <summary>Faces with a detector confidence below this are ignored (OpenCV's demos use 0.7 to 0.9).</summary>
     public float MinDetectionScore { get; set; } = 0.8f;
