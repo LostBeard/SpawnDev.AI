@@ -55,7 +55,7 @@ Real applications that use the SpawnDev libraries (and show off what they can do
 - **Anaglyphohol** (LostBeard/Anaglyphohol) - A free web browser extension that converts 2D website images into 3D anaglyph images using Blazor WASM and Transformer.js
 - **anaglyphohol-chrome-web-store** (LostBeard/anaglyphohol-chrome-web-store) - A documented record of a Chrome Web Store review dispute over Anaglyphohol, a free open source WebAssembly extension. Resolved October 14, 2026: Google reinstated it. Install steps and every email.
 - **AnaglyphoholV2** (LostBeard/AnaglyphoholV2) - Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the videos and images on web pages into 3D as you browse. Put on a pair of red/cyan 3D glasses, open a video or an image search, and the picture gains depth.
-- **AubsCraft** (LostBeard/AubsCraft) - Blazor WASM admin panel for Minecraft Paper servers - real-time dashboard, RCON, player management, plugin browser, VR detection
+- **AubsCraft** (LostBeard/AubsCraft) - Blazor WASM admin panel for Minecraft Paper servers with real-time dashboard, RCON, player management, plugin browser, VR detection, and live spectator client.
 - **blazorjs-docs** (LostBeard/blazorjs-docs)
 - **BlazorShadowRoot** (LostBeard/BlazorShadowRoot) - Tests running Blazor WASM components in a ShadowRoot
 - **BlazorWASMRealTime2DTo2DZ** (LostBeard/BlazorWASMRealTime2DTo2DZ) - Blazor WebAssembly live 2D to 2D+Z conversion of webcam video using Transformers.js and TransformStream.
@@ -120,7 +120,7 @@ Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the 
 Repo: https://github.com/LostBeard/AnaglyphoholV2 - full README + CHANGELOG available via github_lookup.
 
 ## AubsCraft
-Blazor WASM admin panel for Minecraft Paper servers - real-time dashboard, RCON, player management, plugin browser, VR detection
+Blazor WASM admin panel for Minecraft Paper servers with real-time dashboard, RCON, player management, plugin browser, VR detection, and live spectator client.
 
 A real-time Minecraft server admin panel and **GPU-accelerated 3D world viewer** built with **Blazor WebAssembly**, **SpawnDev.ILGPU** (WebGPU), and **ASP.NET Core**. Browser-based server management with a live, interactive 3D map - no plugins required on the Minecraft side.  Built by [Todd Tanner (@LostBeard)](https://github.com/LostBeard) for his daughter Aubriella's Minecraft server (mc.spawndev.com).  **Powered by the [SpawnDev](https://github.com/LostBeard) ecosystem:** - [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS) - Full JS interop for .NET in the browser - [SpawnDe...
 
