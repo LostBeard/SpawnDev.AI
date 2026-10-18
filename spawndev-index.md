@@ -549,7 +549,7 @@ Repo: https://github.com/LostBeard/SpawnDev.ILGPU - full README + CHANGELOG avai
 ## SpawnDev.ILGPU.ML
 Hardware-agnostic machine learning infrastructure for .NET. Implements high-performance neural network layers in C# that are transpiled to run on WebGPU, CUDA, OpenCL, WebGL, CPU, and Wasm via SpawnDev.ILGPU. Optimized for Blazor WebAssembly and native GPU execution.
 
-[**Live Demo**](https://lostbeard.github.io/SpawnDev.ILGPU.ML/) — interactive GPU demos: classification, style transfer, depth estimation, object detection, pose estimation, text generation, background removal, zero-shot CLIP, and more — running on your GPU in your browser, no server. ([Which are verified vs WIP →](Docs/DEMO_AND_MODEL_STATUS.md))  **Hardware-agnostic neural network inference + training for .NET — C# compute kernels that run on WebGPU, CUDA, OpenCL, WebGL, Wasm, and CPU via [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU).**  SpawnDev.ILGPU.ML implements neural net...
+[**Live Demo**](https://lostbeard.github.io/SpawnDev.ILGPU.ML/) — interactive GPU demos: **text & image to 3D**, classification, style transfer, depth estimation, object detection, pose estimation, text generation, background removal, zero-shot CLIP, and more — running on your GPU in your browser, no server. ([Which are verified vs WIP →](Docs/DEMO_AND_MODEL_STATUS.md))  > **New in 5.3.11: [Text & Image to 3D in your browser](https://lostbeard.github.io/SpawnDev.ILGPU.ML/text-to-3d).** Type a prompt or drop a photo and get a textured PBR 3D model (GLB) built entirely on your own GPU over WebGP...
 
 Repo: https://github.com/LostBeard/SpawnDev.ILGPU.ML - full README + CHANGELOG available via github_lookup.
 
