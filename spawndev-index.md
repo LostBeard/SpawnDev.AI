@@ -542,7 +542,7 @@ Repo: https://github.com/LostBeard/SpawnDev.Identification - full README + CHANG
 ## SpawnDev.ILGPU
 .Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
 
-> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.ILGPU saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  **Run [ILGPU](https://github.com/m4rs-mt/ILGPU) C# kernels on WebGPU, WebGL, Wasm, Cuda, OpenCL, and CPU - from a single codebase.**   Write parallel compute code in C# and let the library pick the best available backend automatically. In the browser, three backends (WebGPU, WebGL, Wasm) bring GPU-accelerated compute to virt...
+> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.ILGPU saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  **Run [ILGPU](https://github.com/m4rs-mt/ILGPU) C# kernels on WebGPU, WebGL, Wasm, Cuda, OpenCL, and CPU (plain or SIMD-vectorized Velocity) - from a single codebase.**   Write parallel compute code in C# and let the library pick the best available backend automatically. In the browser, three backends (WebGPU, WebGL, Wasm) b...
 
 Repo: https://github.com/LostBeard/SpawnDev.ILGPU - full README + CHANGELOG available via github_lookup.
 
