@@ -542,14 +542,14 @@ Repo: https://github.com/LostBeard/SpawnDev.Identification - full README + CHANG
 ## SpawnDev.ILGPU
 .Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
 
-> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.ILGPU saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  **Run [ILGPU](https://github.com/m4rs-mt/ILGPU) C# kernels on WebGPU, WebGL, Wasm, Cuda, OpenCL, and CPU (plain or SIMD-vectorized Velocity) - from a single codebase.**   Write parallel compute code in C# and let the library pick the best available backend automatically. In the browser, three backends (WebGPU, WebGL, Wasm) b...
+**GPU compute in C#, in the browser or on the desktop.**  Write [ILGPU](https://github.com/m4rs-mt/ILGPU) kernels once. They run as WGSL, GLSL ES, WebAssembly, PTX, OpenCL C or SIMD CPU code. No JavaScript to write, no shaders to write, no native binaries to ship.   [**Live demo**](https://lostbeard.github.io/SpawnDev.ILGPU/) | [Docs](Docs/) | [Examples](Examples/README.md) | [Changelog](CHANGELOG.md)       SpawnDev.ILGPU extends [ILGPU](https://github.com/m4rs-mt/ILGPU), the .NET compiler that turns C# methods into GPU code, with three backends for the browser (**WebGPU**, **WebGL** and **Web...
 
 Repo: https://github.com/LostBeard/SpawnDev.ILGPU - full README + CHANGELOG available via github_lookup.
 
 ## SpawnDev.ILGPU.ML
 Hardware-agnostic machine learning infrastructure for .NET. Implements high-performance neural network layers in C# that are transpiled to run on WebGPU, CUDA, OpenCL, WebGL, CPU, and Wasm via SpawnDev.ILGPU. Optimized for Blazor WebAssembly and native GPU execution.
 
-[**Live Demo**](https://lostbeard.github.io/SpawnDev.ILGPU.ML/) — interactive GPU demos: **text & image to 3D**, classification, style transfer, depth estimation, object detection, pose estimation, text generation, background removal, zero-shot CLIP, and more — running on your GPU in your browser, no server. ([Which are verified vs WIP →](Docs/DEMO_AND_MODEL_STATUS.md))  > **New in 5.3.22: [FLUX 3 Image Klein 5.6B](https://lostbeard.github.io/SpawnDev.ILGPU.ML/generate) in your browser, four days after its release.** Text to image and edits of up to 10 reference pictures on the Image Generatio...
+**Neural network inference and training in C#, on any GPU, in the browser or on the desktop.**  Compute kernels written in C# run as WGSL, GLSL, PTX, OpenCL C, WebAssembly or SIMD CPU code through [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU). No ONNX Runtime. No native inference binaries. No server.   [**Live demo**](https://lostbeard.github.io/SpawnDev.ILGPU.ML/) | [Docs](Docs/README.md) | [Examples](Examples/README.md) | [Changelog](CHANGELOG.md) | [What is verified](Docs/DEMO_AND_MODEL_STATUS.md)       SpawnDev.ILGPU.ML is an inference and training engine for .NET whose eve...
 
 Repo: https://github.com/LostBeard/SpawnDev.ILGPU.ML - full README + CHANGELOG available via github_lookup.
 
