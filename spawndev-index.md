@@ -493,7 +493,7 @@ Repo: https://github.com/LostBeard/SpawnDev.BlazorJS.WebWorkers - full README + 
 ## SpawnDev.Codecs
 Pure-.NET, ILGPU-accelerated, patent-clean audio and video codecs (Opus, VP8/9, AV1, FLAC, Vorbis). Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm. Desktop and Blazor WebAssembly.
 
-**Pure-.NET, ILGPU-accelerated, patent-clean audio and video codecs.**  Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm - which means it runs on desktop AND in Blazor WASM browsers. No native binaries, no closed-source dependencies, no patent-encumbered codecs.  > **Status: SpawnDev.Codecs 0.3.0-rc.1 (2026-05-03).** *Architectural project split: main `SpawnDev.Codecs` library now ships ZERO external dependencies (only `SpawnDev.ILGPU` + `SpawnDev.EBML`). CPU reference encoders + decoders moved to a new sibling project `SpawnDev.Codecs.References` (which carries `Concentus ...
+**Image, video and audio codecs in C#, running on any GPU, in the browser or on the desktop.**  Every encoder and decoder is a chain of C# kernels that [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) compiles to WGSL, GLSL, WebAssembly, PTX, OpenCL C or SIMD CPU code. No native binaries. No server. Patent-clean formats only.   [Docs](Docs/README.md) | [What is verified](Docs/status.md) | [Changelog](CHANGELOG.md) | [Plans](Plans/)     SpawnDev.Codecs is a codec library for .NET where the codec work itself, from colour conversion to the entropy coder, runs on the accelerator you h...
 
 Repo: https://github.com/LostBeard/SpawnDev.Codecs - full README + CHANGELOG available via github_lookup.
 
