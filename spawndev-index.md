@@ -38,7 +38,7 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.BlazorJS.VisNetwork** (LostBeard/SpawnDev.BlazorJS.VisNetwork) - VisNetwork in Blazor WebAssembly
 - **SpawnDev.BlazorJS.WebTorrents** (LostBeard/SpawnDev.BlazorJS.WebTorrents) - WebTorrent peer to peer file sharing for Blazor WebAssembly
 - **SpawnDev.BlazorJS.WebWorkers** (LostBeard/SpawnDev.BlazorJS.WebWorkers) - Easily call Services in separate threads with WebWorkers and SharedWebWorkers. Run Blazor WASM in the ServiceWorker.
-- **SpawnDev.Codecs** (LostBeard/SpawnDev.Codecs) - Pure-.NET, ILGPU-accelerated, patent-clean audio and video codecs (Opus, VP8/9, AV1, FLAC, Vorbis). Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm. Desktop and Blazor WebAssembly.
+- **SpawnDev.Codecs** (LostBeard/SpawnDev.Codecs) - Pure-.NET, ILGPU-accelerated, patent-clean audio, video, image and data codecs (Opus, VP8/9, AV1, FLAC, Vorbis). Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm. Desktop and Blazor WebAssembly.
 - **SpawnDev.com** (LostBeard/SpawnDev.com) - Issues repo for SpawnDev.com
 - **SpawnDev.Cronos** (LostBeard/SpawnDev.Cronos) - A cron based timer for .Net
 - **SpawnDev.EBML** (LostBeard/SpawnDev.EBML) - An extendable .Net library for reading and writing Extensible Binary Meta Language (aka EBML) documents. Includes schema for Matroska and WebM.
@@ -491,7 +491,7 @@ Easily call Services in separate threads with WebWorkers and SharedWebWorkers. R
 Repo: https://github.com/LostBeard/SpawnDev.BlazorJS.WebWorkers - full README + CHANGELOG available via github_lookup.
 
 ## SpawnDev.Codecs
-Pure-.NET, ILGPU-accelerated, patent-clean audio and video codecs (Opus, VP8/9, AV1, FLAC, Vorbis). Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm. Desktop and Blazor WebAssembly.
+Pure-.NET, ILGPU-accelerated, patent-clean audio, video, image and data codecs (Opus, VP8/9, AV1, FLAC, Vorbis). Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm. Desktop and Blazor WebAssembly.
 
 **Image, video and audio codecs in C#, running on any GPU, in the browser or on the desktop.**  Every encoder and decoder is a chain of C# kernels that [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) compiles to WGSL, GLSL, WebAssembly, PTX, OpenCL C or SIMD CPU code. No native binaries. No server. Patent-clean formats only.   [Docs](Docs/README.md) | [What is verified](Docs/status.md) | [Changelog](CHANGELOG.md) | [Plans](Plans/)     SpawnDev.Codecs is a codec library for .NET where the codec work itself, from colour conversion to the entropy coder, runs on the accelerator you h...
 
