@@ -79,10 +79,12 @@ internal static class ConsolidateChecks
             $"compaction removed exactly the old, unpinned, unimportant episodes ({report.EpisodesCompacted}) and kept the promise, the diamonds and recent ones");
         var factsFromCompacted = facts.Where(f => f.DerivedFrom.Any(id => !left.Contains(id))).ToList();
         Check(factsFromCompacted.All(f => store.Get(f.Id) != null), $"facts digested from compacted episodes survive compaction ({factsFromCompacted.Count})");
-        var aubsFacts = facts.Where(f => f.Subjects.Contains("aubs")).Select(f => f.Id).ToList();
+        // By PROVENANCE, not by the fact's own Subjects: selecting by Subjects checked an empty set when the subjects were lost (red-check
+        // 2026-11-01) - exactly the breach this exists to catch. Every fact built from an episode about Aubs must go.
+        var aubsFacts = facts.Where(f => f.DerivedFrom.Any(id => episodeIds.IndexOf(id) is var i && i >= 0 && log[i].Subjects.Contains("aubs"))).Select(f => f.Id).ToList();
         store.ForgetSubject("aubs");
-        Check(aubsFacts.All(id => store.Get(id) == null) && store.List(new AiMemoryFilter { IncludeSuperseded = true }).All(e => !e.Subjects.Contains("aubs")),
-            $"forgetting Aubs after compaction still removes every fact about her ({aubsFacts.Count})");
+        Check(aubsFacts.Count > 0 && aubsFacts.All(id => store.Get(id) == null) && store.List(new AiMemoryFilter { IncludeSuperseded = true }).All(e => !e.Subjects.Contains("aubs")),
+            $"forgetting Aubs after compaction removes every fact built from an episode about her ({aubsFacts.Count})");
 
         // ---- quality: depends on the model ----
         Note(store.Get(pink!) == null || facts.Any(f => f.Text.Contains("purple", StringComparison.OrdinalIgnoreCase)), "a fact says the favourite colour is purple");
