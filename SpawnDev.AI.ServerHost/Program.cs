@@ -28,7 +28,8 @@ var context = SpawnDev.ILGPU.ML.MLContext.Create().ToContext();
 Accelerator accelerator =
     context.Devices.FirstOrDefault(d => d.AcceleratorType == AcceleratorType.Cuda)?.CreateAccelerator(context)
     ?? context.Devices.FirstOrDefault(d => d.AcceleratorType == AcceleratorType.OpenCL)?.CreateAccelerator(context)
-    ?? context.Devices.First(d => d.AcceleratorType == AcceleratorType.CPU).CreateAccelerator(context);
+    // Velocity (SIMD) is the CPU compute backend; the plain CPU device is a debugging backend only.
+    ?? SpawnDev.ILGPU.ML.MLContext.CreateCpuAccelerator(context);
 Console.WriteLine($"[SpawnDev.AI] accelerator: {accelerator.Name} ({accelerator.AcceleratorType})");
 
 // ── Diagnostic: `probe-hub [modelName]` loads the EXACT HuggingFace GGUF the BROWSER worker uses (via
