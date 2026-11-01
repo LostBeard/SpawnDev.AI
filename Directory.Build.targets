@@ -1,0 +1,47 @@
+<Project>
+  <!--
+    Package guards for every packable project in this repo. They live IN the repo (not only in
+    _DevComms/global) so the GitHub Pages workflow, which has no access to the workspace, runs them too.
+  -->
+
+  <!--
+    SDPKG002: `dotnet pack` under GeneratePackageOnBuild packages a STALE DLL.
+    With GeneratePackageOnBuild=true the NuGet pack targets drop Build from GenerateNuspecDependsOn, so
+    `dotnet pack` repackages whatever the last build left in bin and exits 0. The nupkg carries the NEW
+    version and the OLD code. It happened five times in this workspace; the last one was
+    SpawnDev.AI.Server 1.4.0-local.5 (2026-11-01), whose DLL was stamped 1.4.0-local.4+1cc937c.
+    `dotnet build -c Release` is the way to package these projects: the build compiles and then packs
+    (_PackAsBuildAfterTarget). Mark that path, and refuse GenerateNuspec on any path that did not compile.
+    The mark is BeforeTargets="Build": it runs after Build's dependencies (the compile) and before every
+    AfterTargets="Build" hook. NOT BeforeTargets="_PackAsBuildAfterTarget" - a target's DependsOnTargets
+    (there, Pack) run BEFORE its BeforeTargets hooks, so that mark arrived after the nuspec (red-checked).
+  -->
+  <Target Name="_SdMarkPackAfterBuild" BeforeTargets="Build">
+    <PropertyGroup>
+      <_SdPackFollowsBuild>true</_SdPackFollowsBuild>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="SdGuardStalePack"
+          BeforeTargets="GenerateNuspec"
+          Condition="'$(GeneratePackageOnBuild)' == 'true' and '$(_SdPackFollowsBuild)' != 'true' and '$(AllowPackWithoutBuild)' != 'true'">
+    <Error Code="SDPKG002"
+           Text="$(MSBuildProjectName) sets GeneratePackageOnBuild, so `dotnet pack` would package the DLL from the LAST build, not this source. Run `dotnet build -c Release` instead: it compiles and writes the nupkg. (Pass -p:AllowPackWithoutBuild=true only if you have just built this exact source in Release.)" />
+  </Target>
+
+  <!--
+    SDPKG001: PackageReleaseNotes must name the version being shipped (nuget.org shows it on the listing
+    page; SpawnDev.AI 1.2.0 went out saying v1.1.1). Same rule as _DevComms/global/ValidatePackageReleaseNotesVersion.targets.
+  -->
+  <Target Name="ValidatePackageReleaseNotesVersion"
+          BeforeTargets="GenerateNuspec;Build"
+          Condition="'$(PackageReleaseNotes)' != '' and '$(Version)' != ''">
+    <PropertyGroup>
+      <_ShipVersion>$([System.Text.RegularExpressions.Regex]::Match($(Version), '^[0-9]+[.][0-9]+[.][0-9]+').Value)</_ShipVersion>
+      <_NotesVersion>$([System.Text.RegularExpressions.Regex]::Match($(PackageReleaseNotes), '^v?[0-9]+[.][0-9]+[.][0-9]+').Value.TrimStart('v'))</_NotesVersion>
+    </PropertyGroup>
+    <Error Condition="'$(_NotesVersion)' != '' and '$(_NotesVersion)' != '$(_ShipVersion)'"
+           Code="SDPKG001"
+           Text="PackageReleaseNotes describes version $(_NotesVersion) but this package ships $(_ShipVersion). The release notes are what nuget.org shows on the listing page - update them, or drop the leading version from the text if it is not meant to name one." />
+  </Target>
+</Project>
