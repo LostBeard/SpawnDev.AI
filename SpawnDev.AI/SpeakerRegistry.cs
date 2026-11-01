@@ -6,6 +6,12 @@ namespace SpawnDev.AI;
 /// <summary>One enrolled voice: a person's name and the voice embeddings that stand for them.</summary>
 public sealed class SpeakerProfile
 {
+    /// <summary>
+    /// Stable id: assigned when the profile is made, kept through <see cref="SpeakerRegistry.Rename"/>. Anything that refers to a person (a memory's subjects, a link to a game
+    /// account) holds THIS, never the name. A profile saved before ids existed gets one when it is loaded.
+    /// </summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
     /// <summary>The name the person is called by.</summary>
     public string Name { get; set; } = "";
 
@@ -45,6 +51,9 @@ public sealed class SpeakerProfile
 /// <param name="Known">True when the best profile is far enough above the threshold AND the runner-up.</param>
 public sealed record SpeakerMatch(string? Name, float Score, string? RunnerUpName, float RunnerUpScore, bool Known)
 {
+    /// <summary>The <see cref="SpeakerProfile.Id"/> of the profile <see cref="Name"/> names (null when <see cref="Name"/> is).</summary>
+    public string? Id { get; init; }
+
     /// <summary>Nobody enrolled.</summary>
     public static readonly SpeakerMatch Nobody = new(null, 0f, null, 0f, false);
 }
@@ -120,12 +129,34 @@ public sealed class SpeakerRegistry
     {
         if (GuestLifetime is not { } lifetime) return Array.Empty<string>();
         var cutoff = (utcNow ?? DateTime.UtcNow).Ticks - lifetime.Ticks;
+        List<SpeakerProfile> expired;
         lock (_lock)
         {
-            var expired = _profiles.Where(p => p.IsGuest && (p.FirstSeenTicks != 0 ? p.FirstSeenTicks : p.LastHeardTicks) < cutoff).ToList();
+            expired = _profiles.Where(p => p.IsGuest && (p.FirstSeenTicks != 0 ? p.FirstSeenTicks : p.LastHeardTicks) < cutoff).ToList();
             foreach (var p in expired) _profiles.Remove(p);
-            return expired.Select(p => p.Name).ToList();
         }
+        RaiseRemoved(expired);
+        return expired.Select(p => p.Name).ToList();
+    }
+
+    /// <summary>
+    /// Raised (after the registry's lock is released) for each profile the registry dropped on its own or was told to: expired or evicted guests, <see cref="Forget"/>. An app
+    /// that remembers things about people (<see cref="AiMemoryStore.ForgetSubject"/>) forgets them here too.
+    /// </summary>
+    public event Action<SpeakerProfile>? ProfileRemoved;
+
+    /// <summary>
+    /// Raised (after the lock is released) when a profile was merged into another (<see cref="Rename"/> onto an existing name, <see cref="AbsorbDuplicateGuests"/>): the first
+    /// profile's id is gone and everything about it is now about the second (<see cref="AiMemoryStore.RemapSubject"/>).
+    /// </summary>
+    public event Action<SpeakerProfile, SpeakerProfile>? ProfileMerged;
+
+    private void RaiseRemoved(List<SpeakerProfile> removed) { foreach (var p in removed) ProfileRemoved?.Invoke(p); }
+
+    /// <summary>The profile with this id, or null.</summary>
+    public SpeakerProfile? FindById(string id)
+    {
+        lock (_lock) return _profiles.FirstOrDefault(p => p.Id == id);
     }
 
     /// <summary>A snapshot of the profiles.</summary>
@@ -166,12 +197,12 @@ public sealed class SpeakerRegistry
         if (bestNamed != null && bestNamedScore >= AcceptThreshold && (secondNamed == null || bestNamedScore - secondNamedScore >= MinMargin))
         {
             var other = ReferenceEquals(best, bestNamed) ? second : best;
-            return new SpeakerMatch(bestNamed.Name, bestNamedScore, other?.Name, other == null ? 0f : (ReferenceEquals(best, bestNamed) ? secondScore : bestScore), true);
+            return new SpeakerMatch(bestNamed.Name, bestNamedScore, other?.Name, other == null ? 0f : (ReferenceEquals(best, bestNamed) ? secondScore : bestScore), true) { Id = bestNamed.Id };
         }
 
         var runner = second == null ? 0f : secondScore;
         var known = bestScore >= AcceptThreshold && (second == null || bestScore - runner >= MinMargin);
-        return new SpeakerMatch(known ? best.Name : null, bestScore, second?.Name, runner, known);
+        return new SpeakerMatch(known ? best.Name : null, bestScore, second?.Name, runner, known) { Id = known ? best.Id : null };
     }
 
     /// <summary>
@@ -181,9 +212,9 @@ public sealed class SpeakerRegistry
     /// </summary>
     public IReadOnlyList<string> AbsorbDuplicateGuests(float threshold = 0.65f)
     {
+        var pairs = new List<(SpeakerProfile from, SpeakerProfile into)>();
         lock (_lock)
         {
-            var merged = new List<string>();
             foreach (var guest in _profiles.Where(p => p.IsGuest && p.Centroid != null).ToList())
             {
                 SpeakerProfile? into = null; var score = threshold;
@@ -198,10 +229,11 @@ public sealed class SpeakerRegistry
                 into.Seconds += guest.Seconds;
                 into.LastHeardTicks = Math.Max(into.LastHeardTicks, guest.LastHeardTicks);
                 _profiles.Remove(guest);
-                merged.Add(guest.Name);
+                pairs.Add((guest, into));
             }
-            return merged;
         }
+        foreach (var (from, into) in pairs) ProfileMerged?.Invoke(from, into);
+        return pairs.Select(x => x.from.Name).ToList();
     }
 
     /// <summary>Adds a person, or adds to one: the embedding joins that name's profile (a guest becomes named).</summary>
@@ -236,62 +268,82 @@ public sealed class SpeakerRegistry
     /// </summary>
     public SpeakerMatch Observe(ReadOnlySpan<float> embedding, double seconds, out SpeakerProfile? guest)
     {
+        var evicted = new List<SpeakerProfile>();
+        SpeakerMatch result;
         lock (_lock)
         {
-            var match = IdentifyLocked(embedding);
-            guest = null;
-            var heard = _profiles.FirstOrDefault(x => x.Name == match.Name);
-            if (match.Known && heard != null)
-            {
-                heard.LastHeardTicks = DateTime.UtcNow.Ticks;
-                if (heard.IsGuest) { AddLocked(heard, embedding, seconds); guest = heard; }
-                return match;
-            }
-            // Not a known voice. If it is close to a guest (but the margin rule kept it out), still treat it as that
-            // guest rather than minting a second one for the same stranger.
-            SpeakerProfile? closeGuest = null;
-            var closeScore = float.NegativeInfinity;
-            foreach (var p in _profiles)
-            {
-                if (!p.IsGuest || p.Centroid == null) continue;
-                var s = Cosine(embedding, p.Centroid);
-                if (s >= AcceptThreshold && s > closeScore) { closeGuest = p; closeScore = s; }
-            }
-            if (closeGuest != null) { AddLocked(closeGuest, embedding, seconds); guest = closeGuest; return match; }
+            result = ObserveLocked(embedding, seconds, out guest, evicted);
+        }
+        RaiseRemoved(evicted);
+        return result;
+    }
 
-            var number = 1;
-            while (_profiles.Any(p => p.Name == $"{GuestPrefix} {number}")) number++;
-            guest = new SpeakerProfile { Name = $"{GuestPrefix} {number}", IsGuest = true, FirstSeenTicks = DateTime.UtcNow.Ticks, LastHeardTicks = DateTime.UtcNow.Ticks };
-            _profiles.Add(guest);
-            AddLocked(guest, embedding, seconds);
-            var guests = _profiles.Where(p => p.IsGuest).OrderBy(p => p.LastHeardTicks).ToList();
-            while (guests.Count > MaxGuests) { _profiles.Remove(guests[0]); guests.RemoveAt(0); }
+    private SpeakerMatch ObserveLocked(ReadOnlySpan<float> embedding, double seconds, out SpeakerProfile? guest, List<SpeakerProfile> evicted)
+    {
+        var match = IdentifyLocked(embedding);
+        guest = null;
+        var heard = _profiles.FirstOrDefault(x => x.Name == match.Name);
+        if (match.Known && heard != null)
+        {
+            heard.LastHeardTicks = DateTime.UtcNow.Ticks;
+            if (heard.IsGuest) { AddLocked(heard, embedding, seconds); guest = heard; }
             return match;
         }
+        // Not a known voice. If it is close to a guest (but the margin rule kept it out), still treat it as that
+        // guest rather than minting a second one for the same stranger.
+        SpeakerProfile? closeGuest = null;
+        var closeScore = float.NegativeInfinity;
+        foreach (var p in _profiles)
+        {
+            if (!p.IsGuest || p.Centroid == null) continue;
+            var s = Cosine(embedding, p.Centroid);
+            if (s >= AcceptThreshold && s > closeScore) { closeGuest = p; closeScore = s; }
+        }
+        if (closeGuest != null) { AddLocked(closeGuest, embedding, seconds); guest = closeGuest; return match; }
+
+        var number = 1;
+        while (_profiles.Any(p => p.Name == $"{GuestPrefix} {number}")) number++;
+        guest = new SpeakerProfile { Name = $"{GuestPrefix} {number}", IsGuest = true, FirstSeenTicks = DateTime.UtcNow.Ticks, LastHeardTicks = DateTime.UtcNow.Ticks };
+        _profiles.Add(guest);
+        AddLocked(guest, embedding, seconds);
+        var guests = _profiles.Where(p => p.IsGuest).OrderBy(p => p.LastHeardTicks).ToList();
+        while (guests.Count > MaxGuests) { _profiles.Remove(guests[0]); evicted.Add(guests[0]); guests.RemoveAt(0); }
+        return match;
     }
 
     /// <summary>Gives a profile (usually a guest) a name. If that name already has a profile the two are merged.</summary>
     public bool Rename(string from, string to)
     {
         if (string.IsNullOrWhiteSpace(to)) return false;
+        SpeakerProfile src, dst;
         lock (_lock)
         {
-            var src = _profiles.FirstOrDefault(x => string.Equals(x.Name, from, StringComparison.OrdinalIgnoreCase));
-            if (src == null) return false;
-            var dst = _profiles.FirstOrDefault(x => !ReferenceEquals(x, src) && string.Equals(x.Name, to, StringComparison.OrdinalIgnoreCase));
-            if (dst == null) { src.Name = to.Trim(); src.IsGuest = false; return true; }
+            var found = _profiles.FirstOrDefault(x => string.Equals(x.Name, from, StringComparison.OrdinalIgnoreCase));
+            if (found == null) return false;
+            src = found;
+            var existing = _profiles.FirstOrDefault(x => !ReferenceEquals(x, src) && string.Equals(x.Name, to, StringComparison.OrdinalIgnoreCase));
+            if (existing == null) { src.Name = to.Trim(); src.IsGuest = false; return true; }   // same profile, same Id
+            dst = existing;
             foreach (var e in src.Embeddings) AddLocked(dst, e, 0);
             dst.Seconds += src.Seconds;
             dst.IsGuest = false;
             _profiles.Remove(src);
-            return true;
         }
+        ProfileMerged?.Invoke(src, dst);
+        return true;
     }
 
     /// <summary>Forgets a person.</summary>
     public bool Forget(string name)
     {
-        lock (_lock) return _profiles.RemoveAll(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)) > 0;
+        List<SpeakerProfile> gone;
+        lock (_lock)
+        {
+            gone = _profiles.Where(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach (var p in gone) _profiles.Remove(p);
+        }
+        RaiseRemoved(gone);
+        return gone.Count > 0;
     }
 
     private void AddLocked(SpeakerProfile p, ReadOnlySpan<float> embedding, double seconds)
