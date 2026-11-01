@@ -16,6 +16,13 @@ if (args.Length > 0 && args[0] == "probe-intent")
     return;
 }
 
+// Gate: `memory-consolidate [model] [cpu|cuda|opencl] [quality]` - ConsolidateAsync with a real chat model (ConsolidateChecks.cs).
+if (args.Length > 0 && args[0] == "memory-consolidate")
+{
+    Environment.ExitCode = await ConsolidateChecks.RunAsync(args);
+    return;
+}
+
 // Gate: `memory-test [cpu|cuda|opencl] [entries]` - AiMemoryEngine vs the reference search, real MiniLM (MemoryChecks.cs). Default CPU (Velocity).
 if (args.Length > 0 && args[0] == "memory-test")
 {

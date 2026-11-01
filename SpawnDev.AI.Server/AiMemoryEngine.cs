@@ -32,7 +32,7 @@ namespace SpawnDev.AI.Server;
 /// handler that waited for a search in flight would deadlock.
 /// </para>
 /// </remarks>
-public sealed class AiMemoryEngine : IDisposable
+public sealed partial class AiMemoryEngine : IDisposable
 {
     private readonly IModelSource _source;
     private readonly Accelerator _acc;

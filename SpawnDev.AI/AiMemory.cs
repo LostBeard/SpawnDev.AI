@@ -283,6 +283,32 @@ public sealed class AiMemoryStore
         return RemoveWhere(e => e.Subjects.Any(set.Contains));
     }
 
+    /// <summary>
+    /// Compaction, NOT forgetting: removes digested episodes WITHOUT removing what was derived from them (the facts are the point of digesting).
+    /// Only episodes that are <see cref="AiMemoryEntry.Consolidated"/> and not <see cref="AiMemoryEntry.Pinned"/> go; any other id is left alone.
+    /// Privacy still holds: a fact carries the subjects of the episodes it came from, so <see cref="ForgetSubject"/> finds it without them.
+    /// Returns the ids removed.
+    /// </summary>
+    public IReadOnlyList<string> Compact(params string[] episodeIds)
+    {
+        var set = new HashSet<string>(episodeIds, StringComparer.Ordinal);
+        List<string> removed;
+        lock (_lock)
+        {
+            removed = new List<string>();
+            for (int i = _entries.Count - 1; i >= 0; i--)
+            {
+                var e = _entries[i];
+                if (!set.Contains(e.Id) || e.Kind != AiMemoryKind.Episode || !e.Consolidated || e.Pinned) continue;
+                _entries.RemoveAt(i); _vectors.RemoveAt(i);
+                removed.Add(e.Id);
+            }
+            if (removed.Count > 0) Reindex();
+        }
+        if (removed.Count > 0) Removed?.Invoke(removed);
+        return removed;
+    }
+
     /// <summary>Forgets everything in one world (and what was derived from it).</summary>
     public IReadOnlyList<string> ForgetScope(string scope) => RemoveWhere(e => string.Equals(e.Scope, scope, StringComparison.Ordinal));
 
