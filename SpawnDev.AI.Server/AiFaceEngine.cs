@@ -1,5 +1,9 @@
+using System.Runtime.InteropServices;
+using ILGPU;
 using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML;
+using SpawnDev.ILGPU.ML.Preprocessing;
+using SpawnDev.SpawnJS.JSObjects;
 using SpawnDev.ILGPU.ML.Hub;
 using SpawnDev.ILGPU.ML.Pipelines;
 
@@ -37,8 +41,10 @@ public sealed class AiFaceEngine : IDisposable
     private readonly Accelerator _accelerator;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _inferGate = new(1, 1);
+    private readonly SemaphoreSlim _frameGate = new(1, 1);   // guards _frame for a whole LookAsync
     private YuNetFaceDetector? _detector;
     private SFaceRecognizer? _recognizer;
+    private MemoryBuffer1D<int, Stride1D.Dense>? _frame;     // one picture on the device, reused across looks
 
     /// <summary>HuggingFace repo of the face detector (MIT; YuNet).</summary>
     public string DetectorRepo { get; set; } = "opencv/face_detection_yunet";
@@ -101,6 +107,24 @@ public sealed class AiFaceEngine : IDisposable
         finally { _inferGate.Release(); }
     }
 
+    /// <summary>The faces in a picture held by a JS typed array (canvas ImageData is <see cref="PixelOrder.Rgba"/>), best first. Uploaded to the device once; nothing crosses the .NET heap.</summary>
+    public async Task<IReadOnlyList<FaceDetection>> DetectAsync(TypedArray pixels, int width, int height, PixelOrder order, CancellationToken ct = default)
+    {
+        await EnsureLoadedAsync(ct).ConfigureAwait(false);
+        await _inferGate.WaitAsync(ct).ConfigureAwait(false);
+        try { return await _detector!.DetectAsync(pixels, width, height, order, MinDetectionScore).ConfigureAwait(false); }
+        finally { _inferGate.Release(); }
+    }
+
+    /// <summary>The faces in a picture already on the device (one 32-bit pixel per element, top row first, no padding), best first.</summary>
+    public async Task<IReadOnlyList<FaceDetection>> DetectAsync(ArrayView1D<int, Stride1D.Dense> pixels, int width, int height, PixelOrder order, CancellationToken ct = default)
+    {
+        await EnsureLoadedAsync(ct).ConfigureAwait(false);
+        await _inferGate.WaitAsync(ct).ConfigureAwait(false);
+        try { return await _detector!.DetectAsync(pixels, width, height, order, MinDetectionScore).ConfigureAwait(false); }
+        finally { _inferGate.Release(); }
+    }
+
     /// <summary>The embedding of one detected face.</summary>
     public async Task<float[]> EmbedAsync(byte[] bgra, int width, int height, FaceDetection face, CancellationToken ct = default)
     {
@@ -110,23 +134,87 @@ public sealed class AiFaceEngine : IDisposable
         finally { _inferGate.Release(); }
     }
 
+    /// <summary>The embedding of one detected face in a picture held by a JS typed array.</summary>
+    public async Task<float[]> EmbedAsync(TypedArray pixels, int width, int height, FaceDetection face, PixelOrder order, CancellationToken ct = default)
+    {
+        await EnsureLoadedAsync(ct).ConfigureAwait(false);
+        await _inferGate.WaitAsync(ct).ConfigureAwait(false);
+        try { return await _recognizer!.EmbedAsync(pixels, width, height, face, order).ConfigureAwait(false); }
+        finally { _inferGate.Release(); }
+    }
+
+    /// <summary>The embedding of one detected face in a picture already on the device.</summary>
+    public async Task<float[]> EmbedAsync(ArrayView1D<int, Stride1D.Dense> pixels, int width, int height, FaceDetection face, PixelOrder order, CancellationToken ct = default)
+    {
+        await EnsureLoadedAsync(ct).ConfigureAwait(false);
+        await _inferGate.WaitAsync(ct).ConfigureAwait(false);
+        try { return await _recognizer!.EmbedAsync(pixels, width, height, face, order).ConfigureAwait(false); }
+        finally { _inferGate.Release(); }
+    }
+
     /// <summary>
     /// Looks at a picture and files what it sees: each face large enough to read is named if it is someone enrolled, otherwise filed under (or joined to) a provisional guest.
+    /// The picture (32-bit B, G, R, A) is uploaded to the device ONCE and detection and every face's embedding read it there.
     /// </summary>
     /// <param name="observe">False: only identify, change nothing in the registry.</param>
     public async Task<IReadOnlyList<AiFaceResult>> LookAsync(byte[] bgra, int width, int height, bool observe = true, CancellationToken ct = default)
     {
-        var faces = await DetectAsync(bgra, width, height, ct).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(bgra);
+        if (width <= 0 || height <= 0 || bgra.Length != (long)width * height * 4) throw new ArgumentException($"{bgra.Length} bytes is not {width}x{height} BGRA");
+        await _frameGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var frame = Frame((long)width * height);
+            var words = MemoryMarshal.Cast<byte, int>(bgra.AsSpan());
+            frame.CopyFromCPU(ref MemoryMarshal.GetReference(words), words.Length);
+            return await LookAsync(frame, width, height, PixelOrder.Bgra, observe, ct).ConfigureAwait(false);
+        }
+        finally { _frameGate.Release(); }
+    }
+
+    /// <summary>
+    /// <see cref="LookAsync(byte[], int, int, bool, CancellationToken)"/> for a picture held by a JS typed array (a camera frame, canvas ImageData = <see cref="PixelOrder.Rgba"/>):
+    /// uploaded to the device once, never through the .NET heap.
+    /// </summary>
+    public async Task<IReadOnlyList<AiFaceResult>> LookAsync(TypedArray pixels, int width, int height, PixelOrder order, bool observe = true, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(pixels);
+        if (width <= 0 || height <= 0 || pixels.ByteLength != (long)width * height * 4) throw new ArgumentException($"{pixels.ByteLength} bytes is not {width}x{height} at 4 bytes a pixel");
+        await _frameGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            Frame((long)width * height);
+            MediaInterop.UploadToDevice(pixels, _frame!);
+            return await LookAsync(_frame!.View.SubView(0, (long)width * height), width, height, order, observe, ct).ConfigureAwait(false);
+        }
+        finally { _frameGate.Release(); }
+    }
+
+    /// <summary><see cref="LookAsync(byte[], int, int, bool, CancellationToken)"/> for a picture already on the device (one 32-bit pixel per element).</summary>
+    public async Task<IReadOnlyList<AiFaceResult>> LookAsync(ArrayView1D<int, Stride1D.Dense> pixels, int width, int height, PixelOrder order, bool observe = true, CancellationToken ct = default)
+    {
+        var faces = await DetectAsync(pixels, width, height, order, ct).ConfigureAwait(false);
         var results = new List<AiFaceResult>();
         foreach (var face in faces)
         {
             if (face.Width < MinRecognizableWidth) { results.Add(new AiFaceResult(face, null, null, null)); continue; }
-            var embedding = await EmbedAsync(bgra, width, height, face, ct).ConfigureAwait(false);
+            var embedding = await EmbedAsync(pixels, width, height, face, order, ct).ConfigureAwait(false);
             if (!observe) { results.Add(new AiFaceResult(face, Registry.Identify(embedding), null, embedding)); continue; }
             var match = Registry.Observe(embedding, 1, out var guest);
             results.Add(new AiFaceResult(face, match, guest, embedding));
         }
         return results;
+    }
+
+    /// <summary>The device frame buffer, grown to at least <paramref name="pixels"/> (callers hold _frameGate).</summary>
+    private ArrayView1D<int, Stride1D.Dense> Frame(long pixels)
+    {
+        if (_frame == null || _frame.Length < pixels)
+        {
+            _frame?.Dispose();
+            _frame = _accelerator.Allocate1D<int>(pixels);
+        }
+        return _frame.View.SubView(0, pixels);
     }
 
     /// <summary>Adds this embedding to a person's face (creating them if new). "Vertex, this is Nikki."</summary>
@@ -172,7 +260,9 @@ public sealed class AiFaceEngine : IDisposable
     {
         _detector?.Dispose(); _recognizer?.Dispose();
         _detector = null; _recognizer = null;
+        _frame?.Dispose(); _frame = null;
         _gate.Dispose();
+        _frameGate.Dispose();
         _inferGate.Dispose();
     }
 }

@@ -16,6 +16,13 @@ if (args.Length > 0 && args[0] == "probe-intent")
     return;
 }
 
+// Gate: `face-test [fixtureDir]` - AiFaceEngine's managed / device-view / RGBA / LookAsync paths agree, recognition works (FaceChecks.cs). CPU (Velocity), no GPU.
+if (args.Length > 0 && args[0] == "face-test")
+{
+    Environment.ExitCode = await FaceChecks.RunAsync(args);
+    return;
+}
+
 // Gate: `install-test [modelsRoot]` - OllamaModelInstaller against the real registry (InstallerChecks.cs). No GPU.
 if (args.Length > 0 && args[0] == "install-test")
 {

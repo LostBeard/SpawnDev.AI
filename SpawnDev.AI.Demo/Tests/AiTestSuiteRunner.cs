@@ -44,6 +44,7 @@ public static class AiTestSuiteRunner
         typeof(SpeakChunkingTests),
         typeof(ModelLoadProgressTests),
         typeof(AiMemoryStoreTests),
+        typeof(AiFaceEngineTests),
         typeof(EmbodiedSpeechTests),
         typeof(AppPreferencesTests),
         typeof(SpeakerRegistryTests),

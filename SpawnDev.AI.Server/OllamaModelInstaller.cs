@@ -12,7 +12,7 @@ namespace SpawnDev.AI.Server;
 /// <param name="ManifestUrl">(namespace, model, tag) -> the manifest's URL.</param>
 /// <param name="BlobUrl">(namespace, model, digest "sha256:hex") -> the blob's URL.</param>
 /// <param name="IndexUrl">A JSON list of the models this source hosts (see <see cref="OllamaModelInstaller.ListInstallableAsync"/>), or null when it has none.</param>
-public sealed record OllamaModelSource(string Name, Func<string, string, string, Uri> ManifestUrl, Func<string, string, string, Uri> BlobUrl, Uri? IndexUrl = null)
+public sealed record OllamaModelSource(string Name, Func<string, string, string, Uri> ManifestUrl, Func<string, string, string, Uri> BlobUrl, Func<Uri>? IndexUrl = null)
 {
     /// <summary>Ollama's own registry, anonymous (no credentials are ever sent). It has no list of models.</summary>
     public static OllamaModelSource Registry { get; } = new("registry.ollama.ai",
@@ -20,17 +20,13 @@ public sealed record OllamaModelSource(string Name, Func<string, string, string,
         (ns, model, digest) => new Uri($"https://registry.ollama.ai/v2/{ns}/{model}/blobs/{digest}"));
 
     /// <summary>
-    /// models.spawndev.com (free egress): the registry's manifest verbatim at <c>ollama/{model}/{tag}/manifest</c> and blobs by digest at <c>ollama/blobs/sha256-{hex}</c>,
-    /// shared across models; <c>ollama/index.json</c> lists what is hosted. Library namespace only.
+    /// models.spawndev.com (free egress; <see cref="SpawnDev.ILGPU.ML.Hub.ModelsHost"/> owns the layout and its <c>BaseUrl</c>): the registry's manifest verbatim
+    /// and content-addressed blobs shared across models, plus an index of what is hosted. A namespaced model is looked up as "{ns}/{model}".
     /// </summary>
-    public static OllamaModelSource SpawnDevModels(string baseUrl = "https://models.spawndev.com")
-    {
-        var b = baseUrl.TrimEnd('/');
-        return new("models.spawndev.com",
-            (ns, model, tag) => new Uri($"{b}/ollama/{(ns == "library" ? "" : ns + "/")}{model}/{tag}/manifest"),
-            (ns, model, digest) => new Uri($"{b}/ollama/blobs/{digest.Replace(':', '-')}"),
-            new Uri($"{b}/ollama/index.json"));
-    }
+    public static OllamaModelSource SpawnDevModels { get; } = new("models.spawndev.com",
+        (ns, model, tag) => new Uri(SpawnDev.ILGPU.ML.Hub.ModelsHost.GetOllamaManifestUrl(ns == "library" ? model : $"{ns}/{model}", tag)),
+        (ns, model, digest) => new Uri(SpawnDev.ILGPU.ML.Hub.ModelsHost.GetOllamaBlobUrl(digest)),
+        () => new Uri(SpawnDev.ILGPU.ML.Hub.ModelsHost.GetOllamaIndexUrl()));
 }
 
 /// <summary>Where an install is.</summary>
@@ -76,7 +72,7 @@ public sealed class OllamaModelInstaller
     {
         _http = http;
         _root = modelsRoot ?? OllamaModelStore.DefaultRoot();
-        Sources = sources ?? new[] { OllamaModelSource.SpawnDevModels(), OllamaModelSource.Registry };
+        Sources = sources ?? new[] { OllamaModelSource.SpawnDevModels, OllamaModelSource.Registry };
     }
 
     /// <summary>The sources, in the order they are tried.</summary>
@@ -159,7 +155,7 @@ public sealed class OllamaModelInstaller
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(StallTimeout);
-                using var doc = JsonDocument.Parse(await _http.GetByteArrayAsync(src.IndexUrl, cts.Token).ConfigureAwait(false));
+                using var doc = JsonDocument.Parse(await _http.GetByteArrayAsync(src.IndexUrl(), cts.Token).ConfigureAwait(false));
                 foreach (var m in doc.RootElement.GetProperty("models").EnumerateArray())
                     result.Add(new OllamaInstallableModel(m.GetProperty("name").GetString()!, m.TryGetProperty("size", out var s) ? s.GetInt64() : 0, src.Name,
                         m.TryGetProperty("description", out var d) ? d.GetString() : null));
