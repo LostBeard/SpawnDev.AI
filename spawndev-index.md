@@ -38,7 +38,7 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.BlazorJS.VisNetwork** (LostBeard/SpawnDev.BlazorJS.VisNetwork) - VisNetwork in Blazor WebAssembly
 - **SpawnDev.BlazorJS.WebTorrents** (LostBeard/SpawnDev.BlazorJS.WebTorrents) - WebTorrent peer to peer file sharing for Blazor WebAssembly
 - **SpawnDev.BlazorJS.WebWorkers** (LostBeard/SpawnDev.BlazorJS.WebWorkers) - Easily call Services in separate threads with WebWorkers and SharedWebWorkers. Run Blazor WASM in the ServiceWorker.
-- **SpawnDev.Codecs** (LostBeard/SpawnDev.Codecs) - Pure-.NET, ILGPU-accelerated, patent-clean audio and video codecs (Opus, VP8/9, AV1, FLAC, Vorbis). Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm. Desktop and Blazor WebAssembly.
+- **SpawnDev.Codecs** (LostBeard/SpawnDev.Codecs) - Pure-.NET, ILGPU-accelerated, patent-clean audio, video, image and data codecs (Opus, VP8/9, AV1, FLAC, Vorbis). Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm. Desktop and Blazor WebAssembly.
 - **SpawnDev.com** (LostBeard/SpawnDev.com) - Issues repo for SpawnDev.com
 - **SpawnDev.Cronos** (LostBeard/SpawnDev.Cronos) - A cron based timer for .Net
 - **SpawnDev.EBML** (LostBeard/SpawnDev.EBML) - An extendable .Net library for reading and writing Extensible Binary Meta Language (aka EBML) documents. Includes schema for Matroska and WebM.
@@ -47,7 +47,6 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.Identification** (LostBeard/SpawnDev.Identification) - Identity verification using ECDSA signatures for browser and non-browser platforms.
 - **SpawnDev.ILGPU** (LostBeard/SpawnDev.ILGPU) - .Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
 - **SpawnDev.ILGPU.ML** (LostBeard/SpawnDev.ILGPU.ML) - Hardware-agnostic machine learning infrastructure for .NET. Implements high-performance neural network layers in C# that are transpiled to run on WebGPU, CUDA, OpenCL, WebGL, CPU, and Wasm via SpawnDev.ILGPU. Optimized for Blazor WebAssembly and native GPU execution.
-- **SpawnDev.ILGPU.WebGPU** (LostBeard/SpawnDev.ILGPU.WebGPU) - WebGPU backend for ILGPU, enabling GPU compute in Blazor WebAssembly.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -56,7 +55,7 @@ Real applications that use the SpawnDev libraries (and show off what they can do
 - **Anaglyphohol** (LostBeard/Anaglyphohol) - A free web browser extension that converts 2D website images into 3D anaglyph images using Blazor WASM and Transformer.js
 - **anaglyphohol-chrome-web-store** (LostBeard/anaglyphohol-chrome-web-store) - A documented record of a Chrome Web Store review dispute over Anaglyphohol, a free open source WebAssembly extension. Resolved October 14, 2026: Google reinstated it. Install steps and every email.
 - **AnaglyphoholV2** (LostBeard/AnaglyphoholV2) - Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the videos and images on web pages into 3D as you browse. Put on a pair of red/cyan 3D glasses, open a video or an image search, and the picture gains depth.
-- **AubsCraft** (LostBeard/AubsCraft) - Blazor WASM admin panel for Minecraft Paper servers - real-time dashboard, RCON, player management, plugin browser, VR detection
+- **AubsCraft** (LostBeard/AubsCraft) - Blazor WASM admin panel for Minecraft Paper servers with real-time dashboard, RCON, player management, plugin browser, VR detection, and live spectator client.
 - **blazorjs-docs** (LostBeard/blazorjs-docs)
 - **BlazorShadowRoot** (LostBeard/BlazorShadowRoot) - Tests running Blazor WASM components in a ShadowRoot
 - **BlazorWASMRealTime2DTo2DZ** (LostBeard/BlazorWASMRealTime2DTo2DZ) - Blazor WebAssembly live 2D to 2D+Z conversion of webcam video using Transformers.js and TransformStream.
@@ -69,6 +68,7 @@ Real applications that use the SpawnDev libraries (and show off what they can do
 - **DayZServerRunner** (LostBeard/DayZServerRunner) - DayZ server manager for Windows and Linux
 - **free-your-data** (LostBeard/free-your-data) - Tools and articles for escaping Google Photos, Drive, and other cloud data hostage situations
 - **Gemineachy** (LostBeard/Gemineachy) - A .NET WebAssembly browser extension that supercharges Gemini with client-side tools, virtual filesystems, interactive games, and Reachy Mini robotics integration.
+- **Lenticulous** (LostBeard/Lenticulous) - Recovers the pixel pattern of a lenticular (glasses-free 3D) display with a camera, in the browser. .NET 10 Blazor WebAssembly + SpawnJS.
 - **lostbeard.github.io** (LostBeard/lostbeard.github.io)
 - **LostSpawns** (LostBeard/LostSpawns) - Lost Spawns is a post-apocalyptic survival voxel game inspired by DayZ. It runs entirely client-side in your web browser using WebGPU for hardware-accelerated 3D rendering and GPU compute — no plugins, no native code, just C# and Blazor.
 - **MiniRover** (LostBeard/MiniRover) - Open-source C# software for the Freenove FNK0053 4WD car: nanoFramework firmware + .NET WebAssembly client (WebRTC video, gamepad/touch/VR driving, browser ML)
@@ -120,7 +120,7 @@ Anaglyphohol is a browser extension for Chrome, Edge and Firefox that turns the 
 Repo: https://github.com/LostBeard/AnaglyphoholV2 - full README + CHANGELOG available via github_lookup.
 
 ## AubsCraft
-Blazor WASM admin panel for Minecraft Paper servers - real-time dashboard, RCON, player management, plugin browser, VR detection
+Blazor WASM admin panel for Minecraft Paper servers with real-time dashboard, RCON, player management, plugin browser, VR detection, and live spectator client.
 
 A real-time Minecraft server admin panel and **GPU-accelerated 3D world viewer** built with **Blazor WebAssembly**, **SpawnDev.ILGPU** (WebGPU), and **ASP.NET Core**. Browser-based server management with a live, interactive 3D map - no plugins required on the Minecraft side.  Built by [Todd Tanner (@LostBeard)](https://github.com/LostBeard) for his daughter Aubriella's Minecraft server (mc.spawndev.com).  **Powered by the [SpawnDev](https://github.com/LostBeard) ecosystem:** - [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS) - Full JS interop for .NET in the browser - [SpawnDe...
 
@@ -200,6 +200,13 @@ A .NET WebAssembly browser extension that supercharges Gemini with client-side t
 A .NET WebAssembly browser extension that supercharges Gemini with client-side tools, virtual filesystems, interactive games, and Reachy Mini robotics integration.  - Checkers - Chess - Virtual file system with OPFS and external folder support  - Reachy Mini control  - Animated agent avatar(s) - Local LLM and ML tools via [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) - Multi-agent gaming and collaboration
 
 Repo: https://github.com/LostBeard/Gemineachy - full README + CHANGELOG available via github_lookup.
+
+## Lenticulous
+Recovers the pixel pattern of a lenticular (glasses-free 3D) display with a camera, in the browser. .NET 10 Blazor WebAssembly + SpawnJS.
+
+Recovers the **pixel pattern** of a lenticular (glasses-free 3D) display by scanning it with a camera, entirely in the browser. A .NET 10 Blazor WebAssembly app built on [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS).  > **Status: early.** The pieces below marked done work on real hardware; the scan itself is not built yet. See > [PLAN.md](PLAN.md) for the full plan, measurements and open questions.   A lenticular display puts a lens sheet over the panel, so each sub-pixel (the red, green or blue third of a pixel) is only visible from one viewing angle. The pixel pattern say...
+
+Repo: https://github.com/LostBeard/Lenticulous - full README + CHANGELOG available via github_lookup.
 
 ## lostbeard.github.io
 
@@ -484,9 +491,9 @@ Easily call Services in separate threads with WebWorkers and SharedWebWorkers. R
 Repo: https://github.com/LostBeard/SpawnDev.BlazorJS.WebWorkers - full README + CHANGELOG available via github_lookup.
 
 ## SpawnDev.Codecs
-Pure-.NET, ILGPU-accelerated, patent-clean audio and video codecs (Opus, VP8/9, AV1, FLAC, Vorbis). Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm. Desktop and Blazor WebAssembly.
+Pure-.NET, ILGPU-accelerated, patent-clean audio, video, image and data codecs (Opus, VP8/9, AV1, FLAC, Vorbis). Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm. Desktop and Blazor WebAssembly.
 
-**Pure-.NET, ILGPU-accelerated, patent-clean audio and video codecs.**  Runs on every ILGPU backend - CUDA, OpenCL, CPU, WebGPU, WebGL, Wasm - which means it runs on desktop AND in Blazor WASM browsers. No native binaries, no closed-source dependencies, no patent-encumbered codecs.  > **Status: SpawnDev.Codecs 0.3.0-rc.1 (2026-05-03).** *Architectural project split: main `SpawnDev.Codecs` library now ships ZERO external dependencies (only `SpawnDev.ILGPU` + `SpawnDev.EBML`). CPU reference encoders + decoders moved to a new sibling project `SpawnDev.Codecs.References` (which carries `Concentus ...
+**Image, video and audio codecs in C#, running on any GPU, in the browser or on the desktop.**  Every encoder and decoder is a chain of C# kernels that [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) compiles to WGSL, GLSL, WebAssembly, PTX, OpenCL C or SIMD CPU code. No native binaries. No server. Patent-clean formats only.   [Docs](Docs/README.md) | [What is verified](Docs/status.md) | [Changelog](CHANGELOG.md) | [Plans](Plans/)     SpawnDev.Codecs is a codec library for .NET where the codec work itself, from colour conversion to the entropy coder, runs on the accelerator you h...
 
 Repo: https://github.com/LostBeard/SpawnDev.Codecs - full README + CHANGELOG available via github_lookup.
 
@@ -535,21 +542,14 @@ Repo: https://github.com/LostBeard/SpawnDev.Identification - full README + CHANG
 ## SpawnDev.ILGPU
 .Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
 
-> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.ILGPU saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  **Run [ILGPU](https://github.com/m4rs-mt/ILGPU) C# kernels on WebGPU, WebGL, Wasm, Cuda, OpenCL, and CPU - from a single codebase.**   Write parallel compute code in C# and let the library pick the best available backend automatically. In the browser, three backends (WebGPU, WebGL, Wasm) bring GPU-accelerated compute to virt...
+**GPU compute in C#, in the browser or on the desktop.**  Write [ILGPU](https://github.com/m4rs-mt/ILGPU) kernels once. They run as WGSL, GLSL ES, WebAssembly, PTX, OpenCL C or SIMD CPU code. No JavaScript to write, no shaders to write, no native binaries to ship.   [**Live demo**](https://lostbeard.github.io/SpawnDev.ILGPU/) | [Docs](Docs/) | [Examples](Examples/README.md) | [Changelog](CHANGELOG.md)       SpawnDev.ILGPU extends [ILGPU](https://github.com/m4rs-mt/ILGPU), the .NET compiler that turns C# methods into GPU code, with three backends for the browser (**WebGPU**, **WebGL** and **Web...
 
 Repo: https://github.com/LostBeard/SpawnDev.ILGPU - full README + CHANGELOG available via github_lookup.
 
 ## SpawnDev.ILGPU.ML
 Hardware-agnostic machine learning infrastructure for .NET. Implements high-performance neural network layers in C# that are transpiled to run on WebGPU, CUDA, OpenCL, WebGL, CPU, and Wasm via SpawnDev.ILGPU. Optimized for Blazor WebAssembly and native GPU execution.
 
-[**Live Demo**](https://lostbeard.github.io/SpawnDev.ILGPU.ML/) — interactive GPU demos: classification, style transfer, depth estimation, object detection, pose estimation, text generation, background removal, zero-shot CLIP, and more — running on your GPU in your browser, no server. ([Which are verified vs WIP →](Docs/DEMO_AND_MODEL_STATUS.md))  **Hardware-agnostic neural network inference + training for .NET — C# compute kernels that run on WebGPU, CUDA, OpenCL, WebGL, Wasm, and CPU via [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU).**  SpawnDev.ILGPU.ML implements neural net...
+**Neural network inference and training in C#, on any GPU, in the browser or on the desktop.**  Compute kernels written in C# run as WGSL, GLSL, PTX, OpenCL C, WebAssembly or SIMD CPU code through [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU). No ONNX Runtime. No native inference binaries. No server.   [**Live demo**](https://lostbeard.github.io/SpawnDev.ILGPU.ML/) | [Docs](Docs/README.md) | [Examples](Examples/README.md) | [Changelog](CHANGELOG.md) | [What is verified](Docs/DEMO_AND_MODEL_STATUS.md)       SpawnDev.ILGPU.ML is an inference and training engine for .NET whose eve...
 
 Repo: https://github.com/LostBeard/SpawnDev.ILGPU.ML - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.ILGPU.WebGPU
-WebGPU backend for ILGPU, enabling GPU compute in Blazor WebAssembly.
-
-> ⚠️ **DEPRECATED — This repository is archived and no longer maintained.** > > This project has been superseded by **[SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU)**, which includes everything this project does and more. Please migrate to SpawnDev.ILGPU for continued support and new features.   **Run [ILGPU](https://github.com/m4rs-mt/ILGPU) kernels directly in the browser using WebGPU!**   Write GPU compute shaders in C# and compile them to WGSL automatically.   - **ILGPU-compatible** - Use familiar ILGPU APIs (`ArrayView`, `Index1D/2D/3D`, math intrinsics, etc.) - **WGSL tran...
-
-Repo: https://github.com/LostBeard/SpawnDev.ILGPU.WebGPU - full README + CHANGELOG available via github_lookup.
 
