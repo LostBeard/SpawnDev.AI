@@ -267,14 +267,11 @@ public sealed class AiChatEngine : IAiChatService
             thinking: !SuppressThinking, toolsJson: toolsJson);
         if (SuppressThinking)
         {
-            var before = promptIds.Length;
-            promptIds = WithThinkingSuppressed(promptIds, lm.Tokenizer);
+            promptIds = WithThinkingSuppressed(promptIds, lm.Tokenizer, out var how);
             // ⚠️ ANNOUNCE IT. "The model reasoned anyway" and "my prefill never applied" produce the
             // identical reply, so without this line a failing run invites a theory about the model when
             // the honest reading is that the code did not run.
-            PerfLog?.Invoke(promptIds.Length > before
-                ? $"thinking suppressed: +{promptIds.Length - before} prefill tokens"
-                : "thinking NOT suppressed: no <think> token in this vocabulary (not a reasoning model)");
+            PerfLog?.Invoke(how);
         }
         long buildMs = sw.ElapsedMilliseconds;
 
@@ -608,10 +605,26 @@ public sealed class AiChatEngine : IAiChatService
     /// not a reasoning model, and is left completely alone.
     /// </para>
     /// </remarks>
-    private static int[] WithThinkingSuppressed(int[] promptIds, SentencePieceTokenizer tokenizer)
+    private static int[] WithThinkingSuppressed(int[] promptIds, SentencePieceTokenizer tokenizer, out string how)
     {
         if (!tokenizer.TryGetId("<think>", out var open) || !tokenizer.TryGetId("</think>", out var close))
+        {
+            how = "thinking NOT suppressed: no <think> token in this vocabulary (not a reasoning model)";
             return promptIds;   // not a hybrid reasoning model - nothing to suppress
+        }
+
+        // 🔴 ONCE. SpawnDev.ILGPU.ML 5.8.1 made BuildChatPrompt(thinking: false) write this block itself for a template with an
+        // enable_thinking switch (Qwen3), as the model's own template does; this method then appended it AGAIN, so every Qwen3 prompt
+        // ended "<think>\n\n</think>\n\n<think>\n\n</think>\n\n" and qwen3:0.6b's greedy first answer to "In one short sentence: what
+        // is a GPU?" became "A: What is a GPU?" (AiChatTests.MultiTurn_Qwen3_0_6b, 2026-11-01; found by Tuvok). A closed think block
+        // already in the prompt's tail means the template did it: leave it. (ML 5.8.0 wrote none, so this still appends there.)
+        int tail = Math.Max(0, promptIds.Length - 8);
+        int lastOpen = Array.LastIndexOf(promptIds, open);
+        if (lastOpen >= tail && Array.IndexOf(promptIds, close, lastOpen) > lastOpen)
+        {
+            how = "thinking suppressed: the chat template already closed the think block (not added again)";
+            return promptIds;
+        }
 
         // The template writes "<think>\n\n</think>\n\n"; the newlines are ordinary text.
         var gap = tokenizer.Encode("\n\n");
@@ -621,6 +634,7 @@ public sealed class AiChatEngine : IAiChatService
         result.AddRange(gap);
         result.Add(close);
         result.AddRange(gap);
+        how = $"thinking suppressed: +{result.Count - promptIds.Length} prefill tokens";
         return result.ToArray();
     }
 
