@@ -161,6 +161,22 @@ internal static class MemoryChecks
             var load = System.Diagnostics.Stopwatch.StartNew();
             await e3.EnsureReadyAsync();
             Console.WriteLine($"  {bigN:N0} entries uploaded in {load.Elapsed.TotalMilliseconds:F0} ms");
+            // The facts loaded in bulk at start-up (kind, scope, time, importance per slot) must filter and rank as the reference does.
+            var bigFilters = new AiMemoryFilter?[] { new() { Scope = "mc:home" }, new() { Kinds = new[] { AiMemoryKind.Lesson } },
+                new() { FromTicks = now - TimeSpan.FromDays(10).Ticks, Scope = "mc:creative" } };
+            int bigBad = 0, bigCases = 0;
+            foreach (var q in Queries.Take(4))
+            {
+                var bigQ = await e3.EmbedAsync(q);
+                foreach (var f in bigFilters)
+                {
+                    var dev = await e3.SearchAsync(q, 10, f, nowTicks: now);
+                    var cpu = big.Search(bigQ, 10, f, nowTicks: now);
+                    bigCases++;
+                    if (dev.Count != cpu.Count || dev.Zip(cpu).Any(x => x.First.Entry.Id != x.Second.Entry.Id || Math.Abs(x.First.Score - x.Second.Score) > 1e-3f)) bigBad++;
+                }
+            }
+            Check(bigBad == 0, $"a store loaded at start-up ({bigN:N0} entries, bulk upload) searches as the reference does ({bigCases - bigBad}/{bigCases} cases)");
             for (int w = 0; w < 3; w++) await e3.SearchAsync(Queries[w], 10, new AiMemoryFilter { Scope = "mc:home" }, nowTicks: now);
             var times = new List<double>();
             for (int n = 0; n < 50; n++)

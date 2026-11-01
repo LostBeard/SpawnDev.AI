@@ -315,7 +315,21 @@ public sealed partial class AiMemoryEngine : IDisposable
         {
             var slots = _index.AddRange(matrix, ids.Count);
             for (int n = 0; n < ids.Count; n++) { _slotOf[ids[n]] = slots[n]; _idOf[slots[n]] = ids[n]; }
-            foreach (var id in ids) RefreshFacts(id);
+            // ONE upload per fact array. Per-entry RefreshFacts made 5 tiny uploads per memory: 50,000 entries took 10.8 s to load on an
+            // RTX 2060 and 3.6 s on a 4070 (Seven's measurement, 2026-11-01), all of it paid at every start of the app.
+            int cap = _index.Capacity;
+            var kind = Enumerable.Repeat(-1, cap).ToArray();
+            var scope = new int[cap]; var sup = new int[cap]; var time = new long[cap]; var imp = new float[cap];
+            var byId = Store.List(new AiMemoryFilter { IncludeSuperseded = true }).ToDictionary(e => e.Id, StringComparer.Ordinal);
+            for (int n = 0; n < ids.Count; n++)
+            {
+                if (!byId.TryGetValue(ids[n], out var e)) continue;
+                int slot = slots[n];
+                if (!_scopeIds.TryGetValue(e.Scope, out var sc)) { sc = _scopeIds.Count; _scopeIds[e.Scope] = sc; }
+                kind[slot] = (int)e.Kind; scope[slot] = sc; sup[slot] = e.SupersededBy != null ? 1 : 0; time[slot] = e.TimeTicks; imp[slot] = e.Importance;
+            }
+            _kind!.View.CopyFromCPU(kind); _scope!.View.CopyFromCPU(scope); _superseded!.View.CopyFromCPU(sup);
+            _time!.View.CopyFromCPU(time); _importance!.View.CopyFromCPU(imp);
         }
     }
 
