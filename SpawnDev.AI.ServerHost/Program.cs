@@ -16,6 +16,13 @@ if (args.Length > 0 && args[0] == "probe-intent")
     return;
 }
 
+// Gate: `install-test [modelsRoot]` - OllamaModelInstaller against the real registry (InstallerChecks.cs). No GPU.
+if (args.Length > 0 && args[0] == "install-test")
+{
+    Environment.ExitCode = await InstallerChecks.RunAsync(args);
+    return;
+}
+
 // Diagnostic: `probe-github-tool` exercises the GitHub tool directly (list/read/file/errors). No GPU.
 if (args.Length > 0 && args[0] == "probe-github-tool")
 {
