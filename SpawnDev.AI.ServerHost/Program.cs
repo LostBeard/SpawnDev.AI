@@ -23,6 +23,13 @@ if (args.Length > 0 && args[0] == "face-test")
     return;
 }
 
+// Gate: `install-live [model] [root]` - a full install of a hosted model from models.spawndev.com only (InstallerChecks.RunLiveAsync). Network + disk, no GPU.
+if (args.Length > 0 && args[0] == "install-live")
+{
+    Environment.ExitCode = await InstallerChecks.RunLiveAsync(args);
+    return;
+}
+
 // Gate: `install-test [modelsRoot]` - OllamaModelInstaller against the real registry (InstallerChecks.cs). No GPU.
 if (args.Length > 0 && args[0] == "install-test")
 {

@@ -8,6 +8,41 @@ internal static class InstallerChecks
 {
     const string Model = "all-minilm:22m";
 
+    /// <summary>
+    /// `install-live [model] [root]`: the full install of a HOSTED model from models.spawndev.com ONLY (no registry fallback that could hide a hosting fault): it is
+    /// listed by ListInstallableAsync with its size, every blob comes from the host and matches its digest, and the cache resolves it. Default llama3.1:8b (4.9 GB).
+    /// </summary>
+    public static async Task<int> RunLiveAsync(string[] args)
+    {
+        var model = args.Length > 1 ? args[1] : "llama3.1:8b";
+        var root = args.Length > 2 ? args[2] : Path.Combine(Path.GetTempPath(), "spawndev-install-live");
+        using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        int failures = 0;
+        void Check(bool ok, string what) { Console.WriteLine($"TEST: {what}|{(ok ? "PASS" : "FAIL")}"); if (!ok) failures++; }
+        var sources = new HashSet<string>();
+        long lastPrint = 0;
+        var inst = new OllamaModelInstaller(http, root, new[] { OllamaModelSource.SpawnDevModels })
+        {
+            Progress = p =>
+            {
+                if (p.Source != null) sources.Add(p.Source);
+                if (p.Stage != "layer" || Environment.TickCount64 - lastPrint > 10_000) { lastPrint = Environment.TickCount64; Console.WriteLine($"  {p.Stage} {p.DoneBytes / 1e9:F2}/{p.TotalBytes / 1e9:F2} GB {p.BytesPerSecond / 1e6:F1} MB/s"); }
+            },
+        };
+        var listed = await inst.ListInstallableAsync();
+        var entry = listed.FirstOrDefault(m => m.Name == model);
+        Console.WriteLine($"  listed: {string.Join(", ", listed.Select(m => $"{m.Name} {m.SizeBytes / 1e9:F2} GB"))}");
+        Check(entry != null && entry.SizeBytes > 0, $"{model} is listed by the host's index with its size");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var installed = await inst.InstallAsync(model);
+        Console.WriteLine($"  installed in {clock.Elapsed.TotalMinutes:F1} min: {installed.GgufPath} ({installed.GgufSize:N0} bytes)");
+        Check(sources.SetEquals(new[] { "models.spawndev.com" }), $"every file came from models.spawndev.com ({string.Join(",", sources)})");
+        Check(new OllamaModelStore(root).Resolve(model)?.GgufSize == installed.GgufSize && installed.GgufSize > 1_000_000_000, "the cache resolves the full model");
+        Check(entry == null || entry.SizeBytes >= installed.GgufSize, "the listed size covers the model layer");
+        Console.WriteLine($"RESULTS: {failures} failed (cache left at {root}; delete it when done)");
+        return failures;
+    }
+
     public static async Task<int> RunAsync(string[] args)
     {
         var root = args.Length > 1 ? args[1] : Path.Combine(Path.GetTempPath(), "spawndev-install-test");
