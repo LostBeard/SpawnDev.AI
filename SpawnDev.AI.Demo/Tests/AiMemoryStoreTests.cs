@@ -112,6 +112,7 @@ public sealed class AiMemoryStoreTests
         var top = got[0].Entry.Id;
         Expect(s.Supersede(top, "e1"), "supersede failed");
         Expect(s.Search(q, 10, filter, ranking, now).All(h => h.Entry.Id != top), "a superseded entry was still returned");
+        Expect(s.Search(q, 600, null, ranking, now).All(h => h.Entry.Id != top), "a search with NO filter returned a superseded entry (no filter must mean the default filter)");
         var withOld = new AiMemoryFilter { Scope = "world-a", Kinds = filter.Kinds, IncludeSuperseded = true };
         Expect(s.Search(q, 10, withOld, ranking, now)[0].Entry.Id == top, "IncludeSuperseded did not bring it back");
         Expect(s.Get(top)?.SupersededBy == "e1", "the history was lost");

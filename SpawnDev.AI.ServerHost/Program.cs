@@ -16,6 +16,13 @@ if (args.Length > 0 && args[0] == "probe-intent")
     return;
 }
 
+// Gate: `memory-test [cpu|cuda|opencl] [entries]` - AiMemoryEngine vs the reference search, real MiniLM (MemoryChecks.cs). Default CPU (Velocity).
+if (args.Length > 0 && args[0] == "memory-test")
+{
+    Environment.ExitCode = await MemoryChecks.RunAsync(args);
+    return;
+}
+
 // Gate: `face-test [fixtureDir]` - AiFaceEngine's managed / device-view / RGBA / LookAsync paths agree, recognition works (FaceChecks.cs). CPU (Velocity), no GPU.
 if (args.Length > 0 && args[0] == "face-test")
 {

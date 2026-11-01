@@ -108,7 +108,8 @@ public sealed record AiMemoryRanking(float Relevance = 1f, float Recency = 0.25f
 {
     /// <summary>Relevance only: the plain nearest neighbours.</summary>
     public static readonly AiMemoryRanking RelevanceOnly = new(1f, 0f, 0f);
-    internal double HalfLifeTicks => (RecencyHalfLife ?? TimeSpan.FromDays(7)).Ticks;
+    /// <summary>The recency half-life in ticks (default 7 days).</summary>
+    public double HalfLifeTicks => (RecencyHalfLife ?? TimeSpan.FromDays(7)).Ticks;
 }
 
 /// <summary>One search result.</summary>
@@ -167,6 +168,15 @@ public sealed class AiMemoryStore
     /// <summary>Raised (outside the store's lock) with the ids of entries a delete removed, including derived ones - an engine drops its device copy of them.</summary>
     public event Action<IReadOnlyList<string>>? Removed;
 
+    /// <summary>Raised (outside the lock) after <see cref="Add"/> stored an entry: a copy of it and its unit-length embedding. An engine uploads them.</summary>
+    public event Action<AiMemoryEntry, float[]>? Added;
+
+    /// <summary>Raised (outside the lock) with an entry whose metadata or embedding changed (<see cref="Update"/>, <see cref="Supersede"/>, <see cref="RemapSubject"/>), so a device copy can follow.</summary>
+    public event Action<string>? Changed;
+
+    /// <summary>Raised (outside the lock) after <see cref="ReplaceEmbeddings"/> switched the store to another model: every vector changed.</summary>
+    public event Action? Reembedded;
+
     /// <summary>Number of entries.</summary>
     public int Count { get { lock (_lock) return _entries.Count; } }
 
@@ -183,19 +193,28 @@ public sealed class AiMemoryStore
     {
         ArgumentNullException.ThrowIfNull(entry);
         if (embedding.Length != Dimension) throw new ArgumentException($"embedding has {embedding.Length} values; this store holds {Dimension} ({ModelId})");
+        AiMemoryEntry e; float[] v;
         lock (_lock)
         {
             if (LearningPaused || entry.Subjects.Any(_blocked.Contains)) return null;
-            var e = entry.Clone();
+            e = entry.Clone();
             if (string.IsNullOrEmpty(e.Id)) e.Id = Guid.NewGuid().ToString("N");
             if (_index.ContainsKey(e.Id)) throw new ArgumentException($"memory '{e.Id}' already exists");
             if (e.TimeTicks == 0) e.TimeTicks = DateTime.UtcNow.Ticks;
             e.Importance = Math.Clamp(e.Importance, 0f, 1f);
             _index[e.Id] = _entries.Count;
             _entries.Add(e);
-            _vectors.Add(SpeakerRegistry.Normalize(embedding.ToArray()));
-            return e.Id;
+            v = SpeakerRegistry.Normalize(embedding.ToArray());
+            _vectors.Add(v);
         }
+        Added?.Invoke(e.Clone(), (float[])v.Clone());
+        return e.Id;
+    }
+
+    /// <summary>A copy of one entry's unit-length embedding, or null.</summary>
+    public float[]? GetEmbedding(string id)
+    {
+        lock (_lock) return _index.TryGetValue(id, out var i) ? (float[])_vectors[i].Clone() : null;
     }
 
     /// <summary>A copy of one entry, or null.</summary>
@@ -212,6 +231,13 @@ public sealed class AiMemoryStore
 
     /// <summary>Changes an entry's words or metadata. A new <paramref name="embedding"/> must come with changed text (the old one no longer describes it).</summary>
     public bool Update(string id, Action<AiMemoryEntry> change, ReadOnlySpan<float> embedding = default)
+    {
+        if (!UpdateLocked(id, change, embedding)) return false;
+        Changed?.Invoke(id);
+        return true;
+    }
+
+    private bool UpdateLocked(string id, Action<AiMemoryEntry> change, ReadOnlySpan<float> embedding)
     {
         lock (_lock)
         {
@@ -239,8 +265,9 @@ public sealed class AiMemoryStore
         {
             if (oldId == newId || !_index.TryGetValue(oldId, out var o) || !_index.ContainsKey(newId)) return false;
             _entries[o].SupersededBy = newId;
-            return true;
         }
+        Changed?.Invoke(oldId);
+        return true;
     }
 
     /// <summary>Deletes entries, and everything derived from them (transitively). Returns every id removed.</summary>
@@ -265,25 +292,27 @@ public sealed class AiMemoryStore
     /// </summary>
     public int RemapSubject(string fromId, string toId)
     {
+        var changed = new List<string>();
         lock (_lock)
         {
-            int n = 0;
             foreach (var e in _entries)
             {
                 var i = e.Subjects.IndexOf(fromId);
                 if (i < 0) continue;
                 e.Subjects.RemoveAt(i);
                 if (!e.Subjects.Contains(toId)) e.Subjects.Add(toId);
-                n++;
+                changed.Add(e.Id);
             }
             if (_blocked.Remove(fromId)) _blocked.Add(toId);
-            return n;
         }
+        foreach (var id in changed) Changed?.Invoke(id);
+        return changed.Count;
     }
 
     private IReadOnlyList<string> RemoveWhere(Func<AiMemoryEntry, bool> seed)
     {
         List<string> removed;
+        var revived = new List<string>();
         lock (_lock)
         {
             var doomed = new HashSet<string>(_entries.Where(seed).Select(e => e.Id), StringComparer.Ordinal);
@@ -302,11 +331,12 @@ public sealed class AiMemoryStore
                 _entries.RemoveAt(i); _vectors.RemoveAt(i);
             }
             // A surviving entry superseded by a removed one is current again.
-            foreach (var e in _entries) if (e.SupersededBy != null && doomed.Contains(e.SupersededBy)) e.SupersededBy = null;
+            foreach (var e in _entries) if (e.SupersededBy != null && doomed.Contains(e.SupersededBy)) { e.SupersededBy = null; revived.Add(e.Id); }
             Reindex();
             removed = doomed.ToList();
         }
         Removed?.Invoke(removed);
+        foreach (var id in revived) Changed?.Invoke(id);
         return removed;
     }
 
@@ -323,6 +353,9 @@ public sealed class AiMemoryStore
     {
         if (query.Length != Dimension) throw new ArgumentException($"query has {query.Length} values; this store holds {Dimension}");
         if (k <= 0) return Array.Empty<AiMemoryHit>();
+        // No filter = the DEFAULT filter, which leaves superseded entries out ("pink" must not answer once "purple" replaced it). Applying
+        // no filter at all returned them (found by AiMemoryEngine's parity gate, which treated null as the default).
+        filter ??= new AiMemoryFilter();
         ranking ??= new AiMemoryRanking();
         var q = SpeakerRegistry.Normalize(query.ToArray());
         var now = nowTicks ?? DateTime.UtcNow.Ticks;
@@ -332,7 +365,7 @@ public sealed class AiMemoryStore
             for (int i = 0; i < _entries.Count; i++)
             {
                 var e = _entries[i];
-                if (filter != null && !filter.Matches(e)) continue;
+                if (!filter.Matches(e)) continue;
                 var v = _vectors[i];
                 float dot = 0;
                 for (int d = 0; d < v.Length; d++) dot += q[d] * v[d];
@@ -385,6 +418,7 @@ public sealed class AiMemoryStore
             _vectors.Clear(); _vectors.AddRange(fresh);
             ModelId = modelId; Dimension = dimension;
         }
+        Reembedded?.Invoke();
     }
 
     #region Persistence

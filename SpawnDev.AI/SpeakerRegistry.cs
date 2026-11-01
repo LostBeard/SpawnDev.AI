@@ -393,7 +393,8 @@ public sealed class SpeakerRegistry
         return na == 0 || nb == 0 ? 0f : (float)(dot / Math.Sqrt(na * nb));
     }
 
-    internal static float[] Normalize(float[] v)
+    /// <summary>A unit-length copy of <paramref name="v"/> (<paramref name="v"/> itself when its length is ~0). What every embedding stored here is.</summary>
+    public static float[] Normalize(float[] v)
     {
         double n = 0;
         foreach (var x in v) n += x * x;
