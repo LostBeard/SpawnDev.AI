@@ -497,6 +497,8 @@ public sealed class AiWorkerClient
     /// Tool definitions the model may call, each a JSON object (as from <see cref="ListToolsAsync"/>).
     /// Null leaves tools off entirely.
     /// </param>
+    /// <param name="onUsage">Receives the turn's token counts and the server's timing split (<see cref="AiChatUsage"/>) from the final
+    /// frame. Null when the caller does not need them.</param>
     /// <remarks>
     /// ⚠️ PASSING TOOLS TURNS OFF TOKEN STREAMING, and that is the server's design rather than an
     /// oversight: a tool call only resolves once the whole message has been generated, so the router runs
@@ -506,7 +508,7 @@ public sealed class AiWorkerClient
     /// </remarks>
     public async Task<string> ChatStreamAsync(string model, IReadOnlyList<AiChatMessage> messages,
         AiGenerationOptions? options = null, Action<string>? onDelta = null,
-        IReadOnlyList<string>? toolsJson = null, CancellationToken ct = default)
+        IReadOnlyList<string>? toolsJson = null, CancellationToken ct = default, Action<AiChatUsage>? onUsage = null)
     {
         options ??= new AiGenerationOptions();
         var body = JsonSerializer.Serialize(new
@@ -542,9 +544,12 @@ public sealed class AiWorkerClient
                             && msg.TryGetProperty("content", out var c)
                             && c.GetString() is { Length: > 0 } delta)
                             onDelta?.Invoke(delta);
-                        if (root.TryGetProperty("done", out var d) && d.ValueKind == JsonValueKind.True
-                            && root.TryGetProperty("done_reason", out var dr))
-                            doneReason = dr.GetString() ?? "stop";
+                        if (root.TryGetProperty("done", out var d) && d.ValueKind == JsonValueKind.True)
+                        {
+                            if (root.TryGetProperty("done_reason", out var dr))
+                                doneReason = dr.GetString() ?? "stop";
+                            if (onUsage != null) onUsage(ReadUsage(root));
+                        }
                     }
                     break;
                 // A TOOL-ENABLED turn comes back as ONE non-streamed message, not as events. Without
@@ -560,6 +565,7 @@ public sealed class AiWorkerClient
                             onDelta?.Invoke(whole);
                         if (root.TryGetProperty("done_reason", out var dr2))
                             doneReason = dr2.GetString() ?? "stop";
+                        if (onUsage != null) onUsage(ReadUsage(root));
                     }
                     break;
                 case "json" or "error" when f.Status is not (>= 200 and < 300) && f.Status != 0:
@@ -569,6 +575,16 @@ public sealed class AiWorkerClient
         });
         if (error != null) throw new HttpRequestException($"/api/chat: {error}");
         return doneReason;
+    }
+
+    /// <summary>Ollama's final-frame usage: counts, and the *_duration fields (nanoseconds) when the server sent them.</summary>
+    private static AiChatUsage ReadUsage(JsonElement root)
+    {
+        static int Int(JsonElement r, string n) => r.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
+        static double? Ms(JsonElement r, string n) => r.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() / 1_000_000.0 : null;
+        var total = Ms(root, "total_duration");
+        var timings = total is { } tot ? new AiChatTimings(Ms(root, "load_duration") ?? 0, Ms(root, "prompt_eval_duration"), Ms(root, "eval_duration"), tot) : null;
+        return new AiChatUsage(Int(root, "prompt_eval_count"), Int(root, "eval_count"), timings);
     }
 
     /// <summary>

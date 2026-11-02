@@ -32,6 +32,7 @@ public static class AiTestSuiteRunner
         typeof(CharacterLibraryTests),
         typeof(BundledVoiceTests),
         typeof(ReasoningModelTests),
+        typeof(DecodeRateTests),
         typeof(ThinkingFilterTests),
         typeof(StageDirectionTests),
         typeof(CharacterToolAccessTests),

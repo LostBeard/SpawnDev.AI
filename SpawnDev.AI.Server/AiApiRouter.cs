@@ -395,17 +395,17 @@ public sealed class AiApiRouter
                 ? new { role = "assistant", content = "", tool_calls = res.ToolCalls.Select(tc => new { function = new { name = tc.Name, arguments = ParseJsonOrEmpty(tc.ArgumentsJson) } }).ToArray() }
                 : new { role = "assistant", content = res.Text };
             string doneReason = res.ToolCalls.Count > 0 ? "stop" : OllamaDone(res);
-            if (!stream) { await t.WriteJsonAsync(200, new { model, created_at = created, message = toolMsg, done = true, done_reason = doneReason }); return; }
+            if (!stream) { await t.WriteJsonAsync(200, OllamaDoneFrame(model, created, "message", toolMsg, res, doneReason)); return; }
             await t.StartEventStreamAsync(AiEventStreamKind.Ndjson);
             await t.WriteEventAsync(null, new { model, created_at = created, message = toolMsg, done = false });
-            await t.WriteEventAsync(null, new { model, created_at = created, message = new { role = "assistant", content = "" }, done = true, done_reason = doneReason });
+            await t.WriteEventAsync(null, OllamaDoneFrame(model, created, "message", new { role = "assistant", content = "" }, res, doneReason));
             return;
         }
 
         if (!stream)
         {
             var res = await _engine.ChatAsync(request, t.Aborted);
-            await t.WriteJsonAsync(200, new { model, created_at = created, message = new { role = "assistant", content = res.Text }, done = true, done_reason = OllamaDone(res) });
+            await t.WriteJsonAsync(200, OllamaDoneFrame(model, created, "message", new { role = "assistant", content = res.Text }, res, OllamaDone(res)));
             return;
         }
 
@@ -413,7 +413,7 @@ public sealed class AiApiRouter
         var res2 = await _engine.ChatStreamAsync(request, async delta =>
             await t.WriteEventAsync(null, new { model, created_at = created, message = new { role = "assistant", content = delta }, done = false }),
             t.Aborted);
-        await t.WriteEventAsync(null, new { model, created_at = created, message = new { role = "assistant", content = "" }, done = true, done_reason = OllamaDone(res2) });
+        await t.WriteEventAsync(null, OllamaDoneFrame(model, created, "message", new { role = "assistant", content = "" }, res2, OllamaDone(res2)));
     }
 
     private async Task ApiGenerate(JsonElement req, IAiServerTransport t)
@@ -431,14 +431,14 @@ public sealed class AiApiRouter
         if (!stream)
         {
             var res = await _engine.ChatAsync(request, t.Aborted);
-            await t.WriteJsonAsync(200, new { model, created_at = created, response = res.Text, done = true, done_reason = OllamaDone(res) });
+            await t.WriteJsonAsync(200, OllamaDoneFrame(model, created, "response", res.Text, res, OllamaDone(res)));
             return;
         }
         await t.StartEventStreamAsync(AiEventStreamKind.Ndjson);
         var res2 = await _engine.ChatStreamAsync(request, async delta =>
             await t.WriteEventAsync(null, new { model, created_at = created, response = delta, done = false }),
             t.Aborted);
-        await t.WriteEventAsync(null, new { model, created_at = created, response = "", done = true, done_reason = OllamaDone(res2) });
+        await t.WriteEventAsync(null, OllamaDoneFrame(model, created, "response", "", res2, OllamaDone(res2)));
     }
 
     // ── Anthropic Messages: /v1/messages (+count_tokens) — Claude CLI ──
@@ -1007,6 +1007,30 @@ public sealed class AiApiRouter
 
     private static string FinishReason(AiChatResult r) => r.Stop == AiStopKind.Length ? "length" : "stop";
     private static string OllamaDone(AiChatResult r) => r.Stop == AiStopKind.Length ? "length" : "stop";
+
+    /// <summary>
+    /// The final Ollama frame (done = true) with Ollama's usage and timing fields: prompt_eval_count, eval_count and, when the engine timed the
+    /// pass, total_duration, load_duration, prompt_eval_duration, eval_duration in NANOSECONDS (Ollama's unit). Clients such as `ollama run
+    /// --verbose` and Open WebUI compute tok/s as eval_count / eval_duration, so a duration the engine did not measure is OMITTED rather than
+    /// sent as 0 (a 0 there is a division by zero in the client).
+    /// </summary>
+    private static Dictionary<string, object?> OllamaDoneFrame(string model, string created, string bodyKey, object body, AiChatResult r, string doneReason)
+    {
+        var f = new Dictionary<string, object?>
+        {
+            ["model"] = model, ["created_at"] = created, [bodyKey] = body, ["done"] = true, ["done_reason"] = doneReason,
+            ["prompt_eval_count"] = r.PromptTokens, ["eval_count"] = r.GeneratedTokens,
+        };
+        static long Ns(double ms) => (long)Math.Round(ms * 1_000_000);
+        if (r.Timings is { } tm)
+        {
+            f["total_duration"] = Ns(tm.TotalMs);
+            f["load_duration"] = Ns(tm.LoadMs);
+            if (tm.PromptEvalMs is { } p) f["prompt_eval_duration"] = Ns(p);
+            if (tm.EvalMs is { } e && e > 0) f["eval_duration"] = Ns(e);
+        }
+        return f;
+    }
     private static string AnthropicStop(AiChatResult r) => r.Stop == AiStopKind.Length ? "max_tokens" : "end_turn";
 
     /// <summary>

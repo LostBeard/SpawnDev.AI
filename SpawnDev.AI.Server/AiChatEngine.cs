@@ -257,6 +257,7 @@ public sealed class AiChatEngine : IAiChatService
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         using var lease = await _registry.AcquireAsync(request.Model, ct).ConfigureAwait(false);
+        double loadMs = sw.Elapsed.TotalMilliseconds;
         var lm = lease.Model;
         // 🔴 `thinking` DEFAULTS TO TRUE in ChatTemplates, and not passing it is why gemma4:12b replied
         // "<|channel>thought <channel|>Jupiter is the largest planet..." - its reasoning channel arrived as
@@ -277,6 +278,7 @@ public sealed class AiChatEngine : IAiChatService
 
         var cfg = ToConfig(request.Options);
         long firstMs = -1;
+        double decodeStartMs = 0, firstTokenMs = -1;   // sub-millisecond, for AiChatTimings
 
         Func<string, Task>? wrapped = null;
         ToolAwareStreamer? streamer = null;
@@ -298,11 +300,19 @@ public sealed class AiChatEngine : IAiChatService
             thinking = new ThinkingStreamer(sink);
             wrapped = async d =>
             {
-                if (firstMs < 0) firstMs = sw.ElapsedMilliseconds;
+                if (firstMs < 0) { firstMs = sw.ElapsedMilliseconds; firstTokenMs = sw.Elapsed.TotalMilliseconds; }
                 await thinking.PushAsync(d).ConfigureAwait(false);
             };
         }
 
+        // Not streamed: a hook that only times the first token, so a non-streamed reply reports the same AiChatTimings split.
+        wrapped ??= _ =>
+        {
+            if (firstTokenMs < 0) firstTokenMs = sw.Elapsed.TotalMilliseconds;
+            return Task.CompletedTask;
+        };
+
+        decodeStartMs = sw.Elapsed.TotalMilliseconds;
         var res = await lm.Generator.GenerateAsync(promptIds, cfg, request.Options.Stops, stopIds, wrapped, ct)
             .ConfigureAwait(false);
 
@@ -331,8 +341,13 @@ public sealed class AiChatEngine : IAiChatService
             $"TTFT={(firstMs >= 0 ? firstMs : sw.ElapsedMilliseconds),7}ms total={sw.ElapsedMilliseconds,7}ms " +
             $"gen={res.GeneratedTokens,5}tok stop={res.Stop} engine={lm.Generator.Engine}");
 
+        double totalMs = sw.Elapsed.TotalMilliseconds;
         return new AiChatResult(visible, res.PromptTokens, res.GeneratedTokens, ToStopKind(res.Stop), calls)
         {
+            Timings = new AiChatTimings(loadMs,
+                firstTokenMs >= 0 ? firstTokenMs - decodeStartMs : null,
+                firstTokenMs >= 0 ? totalMs - firstTokenMs : null,
+                totalMs),
             // A reply that was nothing but Llama's pythonic calls has no words left to show or speak.
             TextWithoutToolCalls = calls.Count == 0 ? visible
                 : ChatTemplates.IsOnlyPythonicCalls(visible) ? ""
