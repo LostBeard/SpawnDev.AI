@@ -6,8 +6,8 @@ using SpawnDev.ILGPU.ML.Pipelines;
 
 /// <summary>
 /// `chat-bench [model] [cuda|opencl|cpu]`: decode speed of AiChatEngine on an Ollama-cache model with each engine (the session engine, then Auto -
-/// the batch decoder where supported), greedy and top-p + penalty, 128 new tokens, 5 runs each after one warm-up; and whether greedy output is the
-/// same text on both engines (it must be: greedy is deterministic on each). Exit code = failures.
+/// the batch decoder where supported), greedy and top-p + penalty, 128 new tokens, 5 runs each after one warm-up; and whether, and where, greedy
+/// output differs between the engines. A difference is reported, not failed: two correct engines can flip a near-tie (see the NOTE below).
 /// </summary>
 internal static class ChatBench
 {
@@ -50,9 +50,21 @@ internal static class ChatBench
                 Console.WriteLine($"BENCH: chat {acc.AcceleratorType} {model} requested={engine} used={engineUsed} {name}: median {rates[2]:F1} tok/s (min {rates[0]:F1}, max {rates[4]:F1}) incl. prompt");
             }
         }
+        // NOT a pass / fail. Two correct engines (different kernels, different accumulation order) may take different greedy paths at a
+        // near-tie: smollm2:360m diverged at token 81 where the top-2 logit margin was 0.0024-0.015 while the engines' logits differ by up to
+        // ~0.04 (Tuvok, 2026-11-02, ML Bench_OllamaGreedyDivergence_Margin). Whether a divergence is a tie or a fault needs the logits, which
+        // this host does not see: that gate lives in SpawnDev.ILGPU.ML. Here: report whether and where the texts first differ.
         bool same = greedyText.Count == 2 && greedyText[GgufEngine.Generator] == greedyText[GgufEngine.Auto];
-        Console.WriteLine($"TEST: greedy output is the same text on both engines|{(same ? "PASS" : "FAIL")}");
-        if (!same) { failures++; foreach (var kv in greedyText) Console.WriteLine($"  {kv.Key}: {kv.Value[..Math.Min(160, kv.Value.Length)]}"); }
+        Console.WriteLine($"NOTE: greedy output on both engines: {(same ? "identical" : "DIFFERS (check the top-2 margin at that step with ML's Bench_OllamaGreedyDivergence_Margin)")}");
+        if (!same && greedyText.Count == 2)
+        {
+            string g = greedyText[GgufEngine.Generator], b = greedyText[GgufEngine.Auto];
+            int at = 0; while (at < g.Length && at < b.Length && g[at] == b[at]) at++;
+            string Around(string s) => s.Substring(Math.Max(0, at - 40), Math.Min(s.Length, at + 60) - Math.Max(0, at - 40)).Replace("\n", "\\n");
+            Console.WriteLine($"  first difference at character {at} of {g.Length} / {b.Length}:");
+            Console.WriteLine($"  Generator: ...{Around(g)}...");
+            Console.WriteLine($"  Auto     : ...{Around(b)}...");
+        }
         Console.WriteLine($"RESULTS: {failures} failed");
         return failures;
     }
