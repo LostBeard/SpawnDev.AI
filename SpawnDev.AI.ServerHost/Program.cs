@@ -16,6 +16,13 @@ if (args.Length > 0 && args[0] == "probe-intent")
     return;
 }
 
+// Bench: `chat-bench [model] [cuda|opencl|cpu]` - decode speed on the session engine vs Auto (batch decoder) + greedy equality (ChatBench.cs).
+if (args.Length > 0 && args[0] == "chat-bench")
+{
+    Environment.ExitCode = await ChatBench.RunAsync(args);
+    return;
+}
+
 // Gate: `memory-consolidate [model] [cpu|cuda|opencl] [quality]` - ConsolidateAsync with a real chat model (ConsolidateChecks.cs).
 if (args.Length > 0 && args[0] == "memory-consolidate")
 {

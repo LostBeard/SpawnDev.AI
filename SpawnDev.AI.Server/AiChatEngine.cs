@@ -329,7 +329,7 @@ public sealed class AiChatEngine : IAiChatService
         PerfLog?.Invoke(
             $"{(onDelta != null ? "stream" : "once"),-6} prompt={promptIds.Length,6}tok reused={lm.Generator.LastReusedPrefix,6}tok " +
             $"TTFT={(firstMs >= 0 ? firstMs : sw.ElapsedMilliseconds),7}ms total={sw.ElapsedMilliseconds,7}ms " +
-            $"gen={res.GeneratedTokens,5}tok stop={res.Stop}");
+            $"gen={res.GeneratedTokens,5}tok stop={res.Stop} engine={lm.Generator.Engine}");
 
         return new AiChatResult(visible, res.PromptTokens, res.GeneratedTokens, ToStopKind(res.Stop), calls)
         {

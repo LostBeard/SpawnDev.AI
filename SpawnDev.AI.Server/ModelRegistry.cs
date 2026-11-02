@@ -14,14 +14,17 @@ public sealed class LoadedModel : IDisposable
 {
     public required AiModelInfo Info { get; init; }
     public required GGUFModel Gguf { get; init; }
-    public required InferenceSession Session { get; init; }
+    /// <summary>The graph session, when the generator decodes with one (<see cref="GgufGenerator.Engine"/> = Generator); null on the batch decoder,
+    /// which has none. Owned by <see cref="Generator"/> when it was made by <c>GgufGenerator.CreateAsync</c>.</summary>
+    public InferenceSession? Session { get; init; }
     public required GgufGenerator Generator { get; init; }
     public required SentencePieceTokenizer Tokenizer { get; init; }
     public required ChatTemplates.ChatFormat Format { get; init; }
     /// <summary>An owned backing resource disposed with the model (a hub model stream in the browser).</summary>
     public IDisposable? OwnedStream { get; init; }
 
-    public void Dispose() { Generator.Dispose(); Session.Dispose(); OwnedStream?.Dispose(); }
+    /// <summary>Disposes the generator (and with it the session and stream it owns) and any other owned resource.</summary>
+    public void Dispose() { Generator.Dispose(); OwnedStream?.Dispose(); }
 }
 
 /// <summary>

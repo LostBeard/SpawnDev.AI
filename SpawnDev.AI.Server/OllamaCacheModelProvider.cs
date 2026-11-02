@@ -44,29 +44,39 @@ public sealed class OllamaCacheModelProvider : IAiModelProvider
     public Task<string?> ResolveAsync(string name, CancellationToken ct = default)
         => Task.FromResult(_store.Resolve(name)?.Name);
 
+    /// <summary>
+    /// Which decoder a loaded model uses. <see cref="GgufEngine.Auto"/> (default): the batch decoder for qwen2 / qwen3 / llama (without rope_freqs)
+    /// on CUDA, OpenCL and WebGPU (MEASURED by SpawnDev.ILGPU.ML 5.8.1-local.4, Qwen2.5-0.5B: WebGPU 64.0 -> 254.6 tok/s, CUDA 97.7 -> 166.7, OpenCL
+    /// 48.5 -> 194.3), the session engine otherwise. Same generation either way; set Generator to compare.
+    /// </summary>
+    public GgufEngine Engine { get; set; } = GgufEngine.Auto;
+
     public async Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
         bool enableWebGPUDecodeCapture, CancellationToken ct = default)
     {
         var meta = _store.Resolve(name)
             ?? throw new FileNotFoundException($"Model '{name}' is not in the Ollama cache.");
-        await using var hs = File.OpenRead(meta.GgufPath);
-        var gguf = await GGUFParser.ParseHeaderAsync(hs, ct).ConfigureAwait(false);
-        var tok = SentencePieceTokenizer.FromGGUF(gguf)
-            ?? throw new InvalidOperationException($"'{meta.Name}' has no SentencePiece tokenizer metadata.");
-        var session = await InferenceSession.CreateFromGGUFFileAsync(accelerator, meta.GgufPath, ct: ct)
-            .ConfigureAwait(false);
-        int ctxCap = gguf.ContextLength > 0 ? Math.Min((int)gguf.ContextLength, maxSeqLen) : maxSeqLen;
-        var gen = new GgufGenerator(session, accelerator, gguf, maxSeqLen: ctxCap)
+        // The generator owns this stream on either engine (ownsStream): the session engine reads weights from it on demand.
+        var fs = new FileStream(meta.GgufPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, useAsync: true);
+        GgufGenerator gen; GGUFModel gguf; SentencePieceTokenizer tok;
+        try
         {
-            EnableWebGPUDecodeCapture = enableWebGPUDecodeCapture,
-        };
+            gguf = await GGUFParser.ParseHeaderAsync(fs, ct).ConfigureAwait(false);
+            tok = SentencePieceTokenizer.FromGGUF(gguf)
+                ?? throw new InvalidOperationException($"'{meta.Name}' has no SentencePiece tokenizer metadata.");
+            int ctxCap = gguf.ContextLength > 0 ? Math.Min((int)gguf.ContextLength, maxSeqLen) : maxSeqLen;
+            gen = await GgufGenerator.CreateAsync(accelerator, fs, ctxCap, model: gguf, engine: Engine, ownsStream: true, ct: ct).ConfigureAwait(false);
+        }
+        catch { fs.Dispose(); throw; }
+        gen.EnableWebGPUDecodeCapture = enableWebGPUDecodeCapture;
+        Console.WriteLine($"[SpawnDev.AI] {meta.Name}: decoding with {gen.Engine}{(gen.EngineReason.Length > 0 ? " (" + gen.EngineReason + ")" : "")}");
         return new LoadedModel
         {
             Info = new AiModelInfo(meta.Name, meta.GgufSize,
                 string.IsNullOrEmpty(gguf.Architecture) ? "gguf" : gguf.Architecture,
                 QuantOf(meta.Name), gguf.ContextLength, Capabilities(meta)),
             Gguf = gguf,
-            Session = session,
+            Session = gen.Engine == GgufEngine.Generator ? gen.Session : null,
             Generator = gen,
             Tokenizer = tok,
             Format = ChatTemplates.DetectChatFormat(gguf),

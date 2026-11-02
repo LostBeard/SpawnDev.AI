@@ -192,14 +192,12 @@ public sealed class HubModelProvider : IAiModelProvider
             var gguf = await GGUFParser.ParseHeaderAsync(stream, ct).ConfigureAwait(false);
             var tok = SentencePieceTokenizer.FromGGUF(gguf)
                 ?? throw new InvalidOperationException($"'{opt.Name}' has no SentencePiece tokenizer metadata.");
-            stream.Seek(0, SeekOrigin.Begin);
-            var session = await InferenceSession.CreateFromGGUFStreamAsync(accelerator, stream,
-                OnLoadProgress, ct).ConfigureAwait(false);
             int ctxCap = gguf.ContextLength > 0 ? Math.Min((int)gguf.ContextLength, maxSeqLen) : maxSeqLen;
-            var gen = new GgufGenerator(session, accelerator, gguf, maxSeqLen: ctxCap)
-            {
-                EnableWebGPUDecodeCapture = enableWebGPUDecodeCapture,
-            };
+            // The weights stream JS -> GPU on either engine (no managed copy); the generator owns the stream from here (ownsStream).
+            var gen = await GgufGenerator.CreateAsync(accelerator, stream, ctxCap, model: gguf, onProgress: OnLoadProgress,
+                engine: Engine, ownsStream: true, ct: ct).ConfigureAwait(false);
+            gen.EnableWebGPUDecodeCapture = enableWebGPUDecodeCapture;
+            Console.WriteLine($"[SpawnDev.AI] {opt.Name}: decoding with {gen.Engine}{(gen.EngineReason.Length > 0 ? " (" + gen.EngineReason + ")" : "")}");
             return new LoadedModel
             {
                 Info = new AiModelInfo(opt.Name, opt.ApproxSizeBytes > 0 ? opt.ApproxSizeBytes : stream.Length,
@@ -207,11 +205,10 @@ public sealed class HubModelProvider : IAiModelProvider
                     OllamaCacheModelProvider.QuantOf(opt.File), gguf.ContextLength,
                     new[] { "completion", "tools" }),
                 Gguf = gguf,
-                Session = session,
-                Generator = gen,
+                Session = gen.Engine == GgufEngine.Generator ? gen.Session : null,
+                Generator = gen,       // owns the delivery stream now (ownsStream): it lives and dies with the loaded model
                 Tokenizer = tok,
                 Format = ChatTemplates.DetectChatFormat(gguf),
-                OwnedStream = stream,   // delivery stream lives (and dies) with the loaded model
             };
         }
         catch
@@ -220,6 +217,9 @@ public sealed class HubModelProvider : IAiModelProvider
             throw;
         }
     }
+
+    /// <summary>Which decoder a loaded model uses (see <see cref="OllamaCacheModelProvider.Engine"/>). Default <see cref="GgufEngine.Auto"/>.</summary>
+    public GgufEngine Engine { get; set; } = GgufEngine.Auto;
 
     private HubModelOption? Find(string name)
         => _models.FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase));
