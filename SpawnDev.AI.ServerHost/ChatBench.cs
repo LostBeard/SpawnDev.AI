@@ -20,6 +20,20 @@ internal static class ChatBench
         var model = args.Length > 1 ? args[1] : "qwen3:1.7b";
         var which = args.Length > 2 ? args[2] : "cuda";
         int contextWords = args.Length > 3 && int.TryParse(args[3], out var cw) ? cw : 0;
+        // suffixWords > 0 (needs contextWords): after the decode runs, 5 more turns that keep the filler as a cached prefix and append a
+        // DIFFERENT suffix of that many words each time - the agent pattern (Vertex: ~95% of a 3-5k prompt reused, 100-350 new tokens per
+        // turn, first word after 2-5 s on an RTX 2060). Reports the NEW-token prefill rate, (prompt - reused) / PromptEvalMs, and as the
+        // reference the full-prompt prefill rate of the same total with nothing reused (a fresh engine per run would reload; instead the
+        // reference run puts the varying words FIRST, so no prefix matches).
+        int suffixWords = args.Length > 4 && int.TryParse(args[4], out var sx) ? sx : 0;
+        string[] vocab = { "the", "river", "village", "stone", "builder", "north", "wall", "torch", "farm", "wheat", "chest", "diamond", "night", "zombie",
+            "bridge", "canyon", "desert", "temple", "portal", "nether", "cat", "wolf", "castle", "moat", "redstone", "door", "glass", "dome", "ocean", "tower" };
+        string Words(int count, int seed)
+        {
+            var rw = new Random(seed); var b = new System.Text.StringBuilder();
+            for (int w = 0; w < count; w++) { b.Append(vocab[rw.Next(vocab.Length)]); b.Append(w % 12 == 11 ? ".\n" : " "); }
+            return b.ToString();
+        }
         int failures = 0;
         using var context = MLContext.Create().ToContext();
         using var acc = which switch
@@ -34,12 +48,7 @@ internal static class ChatBench
         if (contextWords > 0)
         {
             // Varied, natural text (a repeated sentence would let a prefix cache or the model's own copying skew the run).
-            var rnd = new Random(5);
-            string[] words = { "the", "river", "village", "stone", "builder", "north", "wall", "torch", "farm", "wheat", "chest", "diamond", "night", "zombie",
-                "bridge", "canyon", "desert", "temple", "portal", "nether", "cat", "wolf", "castle", "moat", "redstone", "door", "glass", "dome", "ocean", "tower" };
-            var sb = new System.Text.StringBuilder("Here are some notes from the game log:\n");
-            for (int w = 0; w < contextWords; w++) { sb.Append(words[rnd.Next(words.Length)]); sb.Append(w % 12 == 11 ? ".\n" : " "); }
-            filler = sb.Append("\n\n").ToString();
+            filler = "Here are some notes from the game log:\n" + Words(contextWords, 5) + "\n\n";
         }
         var messages = new[] { new AiChatMessage("user", filler + Question) };
         var greedy = new AiGenerationOptions { Strategy = "greedy", Temperature = 0, MaxOutputTokens = 128 };
@@ -50,8 +59,13 @@ internal static class ChatBench
             var provider = new OllamaCacheModelProvider(new OllamaModelStore()) { Engine = engine };
             await using var registry = new ModelRegistry(provider, acc);
             var chat = new AiChatEngine(registry);
-            string engineUsed = "?";
-            chat.PerfLog = line => { var i = line.IndexOf("engine=", StringComparison.Ordinal); if (i >= 0) engineUsed = line[(i + 7)..].Trim(); };
+            string engineUsed = "?"; int reused = 0;
+            chat.PerfLog = line =>
+            {
+                var i = line.IndexOf("engine=", StringComparison.Ordinal); if (i >= 0) engineUsed = line[(i + 7)..].Trim();
+                var j = line.IndexOf("reused=", StringComparison.Ordinal);
+                if (j >= 0) { var rest = line[(j + 7)..].TrimStart(); int k = 0; while (k < rest.Length && char.IsDigit(rest[k])) k++; int.TryParse(rest[..k], out reused); }
+            };
             await chat.ChatAsync(new AiChatRequest { Model = model, Messages = messages, Options = greedy });   // load + warm-up
             foreach (var (name, opt) in new[] { ("greedy", greedy), ("top-p+penalty", topP) })
             {
@@ -68,6 +82,27 @@ internal static class ChatBench
                 rates.Sort(); decodeRates.Sort();
                 string decode = decodeRates.Count == 5 ? $"decode median {decodeRates[2]:F1} tok/s (min {decodeRates[0]:F1}, max {decodeRates[4]:F1}), " : "";
                 Console.WriteLine($"BENCH: chat {acc.AcceleratorType} {model} prompt={promptTokens}tok requested={engine} used={engineUsed} {name}: {decode}wall median {rates[2]:F1} tok/s incl. prompt");
+            }
+            if (suffixWords > 0 && contextWords > 0)
+            {
+                var shortGreedy = new AiGenerationOptions { Strategy = "greedy", Temperature = 0, MaxOutputTokens = 8 };
+                foreach (var (label, suffixFirst) in new[] { ("suffix-prefill", false), ("full-prefill", true) })
+                {
+                    var prefillRates = new List<double>(); var firstMs = new List<double>(); int lastNew = 0, lastPrompt = 0, lastReused = 0;
+                    for (int r = 0; r < 5; r++)
+                    {
+                        string fresh = "New notes:\n" + Words(suffixWords, 100 + r + (suffixFirst ? 50 : 0)) + "\n\n";
+                        var turn = new[] { new AiChatMessage("user", suffixFirst ? fresh + filler + Question : filler + fresh + Question) };
+                        var res = await chat.ChatAsync(new AiChatRequest { Model = model, Messages = turn, Options = shortGreedy });
+                        int newTokens = res.PromptTokens - reused;
+                        if (res.Timings?.PromptEvalMs is { } pe && pe > 0) { prefillRates.Add(newTokens / (pe / 1000)); firstMs.Add(pe); }
+                        lastNew = newTokens; lastPrompt = res.PromptTokens; lastReused = reused;
+                    }
+                    prefillRates.Sort(); firstMs.Sort();
+                    if (prefillRates.Count == 5)
+                        Console.WriteLine($"BENCH: {label} {acc.AcceleratorType} {model} used={engineUsed} prompt={lastPrompt}tok reused={lastReused}tok new={lastNew}tok: " +
+                            $"median {prefillRates[2]:F0} new tok/s (min {prefillRates[0]:F0}, max {prefillRates[4]:F0}), first token median {firstMs[2]:F0} ms");
+                }
             }
         }
         // NOT a pass / fail. Two correct engines (different kernels, different accumulation order) may take different greedy paths at a

@@ -30,6 +30,13 @@ if (args.Length > 0 && args[0] == "memory-consolidate")
     return;
 }
 
+// Probe: `speaker-mem [cpu|cuda|opencl]` - AiSpeakerEngine's working pool, what a release frees, and what re-allocating costs (SpeakerMemProbe.cs).
+if (args.Length > 0 && args[0] == "speaker-mem")
+{
+    Environment.ExitCode = await SpeakerMemProbe.RunAsync(args);
+    return;
+}
+
 // Bench: `embed-bench [cpu|cuda|opencl]` - AiMemoryEngine embedding time at MaxTokens 16/32/64/128 and agreement with 128 (EmbedBench.cs).
 if (args.Length > 0 && args[0] == "embed-bench")
 {

@@ -42,6 +42,7 @@ public sealed class AiSpeakerEngine : IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _inferGate = new(1, 1);
     private SpeakerEmbeddingPipeline? _pipeline;
+    private InferenceSession? _session;
 
     /// <summary>HuggingFace repo of the speaker encoder (MIT; ReDimNet2-B6 exported to ONNX).</summary>
     public string ModelRepo { get; set; } = "soniqo/ReDimNet2-B6-ONNX-FP32";
@@ -60,6 +61,25 @@ public sealed class AiSpeakerEngine : IDisposable
 
     /// <summary>Whether the speaker model is resident.</summary>
     public bool IsLoaded => _pipeline != null;
+
+    /// <summary>
+    /// Device memory the model's working buffers hold between embeddings (the session's free pool), in bytes; 0 when not loaded.
+    /// ReDimNet2 runs a fixed 6 s window, so this is the same after every clip. It is reclaimable: ILGPU's memory pressure takes it back
+    /// before an allocation would cut into the device headroom (<c>Accelerator.DeviceMemoryHeadroomBytes</c>), so it never spills a
+    /// later model. <see cref="ReleaseWorkingMemory"/> frees it now.
+    /// </summary>
+    public long WorkingMemoryBytes => _session?.PooledFreeBytes ?? 0;
+
+    /// <summary>
+    /// Frees the working buffers (<see cref="WorkingMemoryBytes"/>) and keeps the weights; the next embedding allocates them again.
+    /// For a caller that identifies speakers rarely and wants the memory for something else now. Returns the bytes freed.
+    /// </summary>
+    public async Task<long> ReleaseWorkingMemoryAsync(CancellationToken ct = default)
+    {
+        await _inferGate.WaitAsync(ct).ConfigureAwait(false);   // never while an embedding is using the pool
+        try { return _session?.ReleaseWorkingMemory() ?? 0; }
+        finally { _inferGate.Release(); }
+    }
 
     /// <param name="source">Model delivery - plain HTTP through the hub, cached in OPFS.</param>
     /// <param name="accelerator">The shared accelerator.</param>
@@ -155,6 +175,7 @@ public sealed class AiSpeakerEngine : IDisposable
             await using (stream)
                 session = await InferenceSession.CreateFromOnnxStreamAsync(_accelerator, stream, ct: ct).ConfigureAwait(false);
             _pipeline = new SpeakerEmbeddingPipeline(session, _accelerator);
+            _session = session;
             OnLoadProgress?.Invoke("ready", 100);
             Console.WriteLine($"[AiSpeakerEngine] ReDimNet2 ready on {_accelerator.AcceleratorType}");
         }
@@ -170,6 +191,7 @@ public sealed class AiSpeakerEngine : IDisposable
     {
         _pipeline?.Dispose();
         _pipeline = null;
+        _session = null;   // disposed by the pipeline
         return Task.CompletedTask;
     }
 
