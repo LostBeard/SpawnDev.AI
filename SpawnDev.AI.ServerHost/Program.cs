@@ -30,6 +30,13 @@ if (args.Length > 0 && args[0] == "memory-consolidate")
     return;
 }
 
+// Bench: `embed-bench [cpu|cuda|opencl]` - AiMemoryEngine embedding time at MaxTokens 16/32/64/128 and agreement with 128 (EmbedBench.cs).
+if (args.Length > 0 && args[0] == "embed-bench")
+{
+    Environment.ExitCode = await EmbedBench.RunAsync(args);
+    return;
+}
+
 // Gate: `memory-test [cpu|cuda|opencl] [entries]` - AiMemoryEngine vs the reference search, real MiniLM (MemoryChecks.cs). Default CPU (Velocity).
 if (args.Length > 0 && args[0] == "memory-test")
 {
