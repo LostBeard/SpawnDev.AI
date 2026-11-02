@@ -22,7 +22,7 @@
 		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.AI.git</RepositoryUrl>
 		<PackageTags>AI;LLM;Ollama;DotNetWebAssembly;WebGPU;GGUF;ToolCalling</PackageTags>
 		<Title>SpawnDev.AI.Server</Title>
-		<Version>1.4.0-local.15</Version>
+		<Version>1.4.0-local.16</Version>
 		<PackageReleaseNotes>v1.4.0 - AiMemoryEngine: memory search on the accelerator (all-MiniLM-L6-v2 + DeviceVectorIndex; 50,000 entries p95 5.6 ms on an RTX 4070 including the embed) and ConsolidateAsync (episodes into facts with provenance, conflicts superseded). OllamaModelInstaller (install a model without Ollama, models.spawndev.com then registry.ollama.ai). AiFaceEngine: face detection and recognition (YuNet + SFace) on the shared accelerator, with a face registry (introductions, Visitor N guests, expiry). On SpawnDev.ILGPU.ML 5.8.0 and SpawnDev.ILGPU 5.4.14. v1.3.0 - Live words: AiStreamingSpeechEngine (Nemotron Speech Streaming 0.6B, words as they are spoken, 5.63% WER on 60 LibriSpeech clips, a 160 ms chunk in ~70 ms). Full history: CHANGELOG.md</PackageReleaseNotes>
 		<Description>Ollama/OpenAI-compatible model server on the SpawnDev.ILGPU.ML inference engine (GGUF, KV-cache decode, WebGPU dispatch-plan capture/replay). One handler core, two transports: HTTP on desktop (drop-in for Ollama clients on :11434), MessagePort in the browser (shared/dedicated worker) - the same request/response shapes either way.</Description>
 	</PropertyGroup>
@@ -38,7 +38,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.8.1-local.10" />
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.8.1-local.11" />
 		<!-- Direct reference: NuGet resolves the LOWEST version satisfying ML's floor (5.3.4 asks for
 		     SpawnDev.ILGPU >= 5.3.5), so an ILGPU fix released after the ML package reaches the server and the
 		     demo only through this line. Keep it at the newest ILGPU. -->
