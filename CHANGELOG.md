@@ -2,6 +2,27 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI 1.3.0 + SpawnDev.AI.Server 1.4.0 - 2026-11-03 - long-term memory, faces, model install, the batch decoder by default
+
+On SpawnDev.ILGPU.ML 5.8.1 and SpawnDev.ILGPU 5.4.15. Release gate (RTX 4070, installed Chrome, stable packages from a cold nuget.org-only
+restore): heavy suite 89/89; chat-bench llama3.1:8b CUDA (3,665-token prompt) greedy output identical on both engines.
+
+- **AiMemoryStore / AiMemoryEngine**: long-term memory (episodes, facts, lessons) with cascading hard deletes, ForgetSubject, do-not-learn,
+  supersede history and compaction; search on the accelerator (all-MiniLM-L6-v2 + DeviceVectorIndex; 50,000 entries p95 5.6 ms on an
+  RTX 4070 including the embed); ConsolidateAsync turns episodes into facts with provenance. Embeddings run at the text's real length
+  (MiniLM on the CPU accelerator 374 -> 52 ms per short text, same vectors).
+- **AiFaceEngine**: face detection and recognition (YuNet + SFace) with a face registry (introductions, Visitor N guests, expiry).
+- **OllamaModelInstaller**: installs a model without Ollama (models.spawndev.com, then registry.ollama.ai).
+- **Chat runs on the batch decoder by default** (GgufEngine.Auto: qwen2 / qwen3 / llama, CUDA / OpenCL / WebGPU; the session engine
+  otherwise). llama3.1:8b, RTX 4070, 3.7k-token prompt: 200 new tokens over a cached prefix reach the first token in 204 ms, a full prompt
+  reads at 1,660 tok/s, decode 45.5 tok/s. On Vertex's RTX 2060 (sm_75) the first word went from ~1.83 s to ~225 ms (tensor-core prefill).
+- **Ollama surface**: the final /api/chat and /api/generate frame carries prompt_eval_count, eval_count, total_duration, load_duration,
+  prompt_eval_duration and eval_duration (ns); AiChatResult.Timings / AiChatUsage give the same split to library callers.
+- **AiSpeakerEngine.WorkingMemoryBytes / ReleaseWorkingMemoryAsync** (with ML 5.8.1 the speaker model's pool is ~0.7 GB, was ~2.1 GB).
+- SpeakerProfile.Id, ProfileRemoved / ProfileMerged events; SpeakerRegistry guest expiry and GuestPrefix.
+- ServerHost benches: chat-bench (long-context and suffix-prefill modes), embed-bench, speaker-mem, memory-test, memory-consolidate.
+- Fixed: Qwen3's think block doubled under WithThinkingSuppressed.
+
 ## SpawnDev.AI.Server 1.3.0 - 2026-10-15 - live words: speech to text as it is spoken
 
 - **`AiStreamingSpeechEngine`**: NVIDIA Nemotron Speech Streaming 0.6B (cache-aware FastConformer + RNN-T, the sherpa-onnx 160 ms export from the hub) on the shared accelerator.

@@ -4,8 +4,8 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>1.3.0-local.6</Version>
-		<PackageReleaseNotes>v1.3.0 - AiMemoryStore: long-term memory (episodes, facts, lessons) with hard deletes that cascade to what was derived, ForgetSubject by stable ids, do-not-learn and pause, supersede history, compaction, one embedding model per store. SpeakerProfile.Id + ProfileRemoved / ProfileMerged events. SpeakerRegistry: strangers nobody names are forgotten (GuestLifetime, ExpireGuests, counted from FirstSeenTicks; named people never); GuestPrefix (a face registry files strangers as Visitor N, so voices and faces never merge by name); a named person outranks a near-duplicate guest (AbsorbDuplicateGuests). v1.2.0 - SpeakerRegistry and speaker contracts for speaker identification. Full history: CHANGELOG.md</PackageReleaseNotes>
+		<Version>1.3.0</Version>
+		<PackageReleaseNotes>v1.3.0 - AiChatResult.Timings (AiChatTimings: load, prompt eval, eval) and AiChatUsage. AiMemoryStore: long-term memory (episodes, facts, lessons) with hard deletes that cascade to what was derived, ForgetSubject by stable ids, do-not-learn and pause, supersede history, compaction, one embedding model per store. SpeakerProfile.Id + ProfileRemoved / ProfileMerged events. SpeakerRegistry: strangers nobody names are forgotten (GuestLifetime, ExpireGuests, counted from FirstSeenTicks; named people never); GuestPrefix (a face registry files strangers as Visitor N, so voices and faces never merge by name); a named person outranks a near-duplicate guest (AbsorbDuplicateGuests). v1.2.0 - SpeakerRegistry and speaker contracts for speaker identification. Full history: CHANGELOG.md</PackageReleaseNotes>
 		<Title>SpawnDev.AI</Title>
 		<Authors>LostBeard</Authors>
 		<Description>Core contracts for the SpawnDev AI stack: chat sessions, Ollama/OpenAI-compatible API shapes, and tool-calling contracts. Shared by SpawnDev.AI.Server (desktop HTTP + browser-worker model server) and the browser demo.</Description>
