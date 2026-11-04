@@ -145,6 +145,17 @@ public sealed class AiChatEngine : IAiChatService
         return lease.Model.Tokenizer.Encode(text ?? "");
     }
 
+    /// <summary>
+    /// Decodes token ids with the model's tokenizer, as the decoder renders generated text (control tokens contribute nothing). The inverse
+    /// view of <see cref="TokenizeAsync"/>; for checking ids against text, e.g. <see cref="AiChatPass.GeneratedTokenIds"/> against
+    /// <see cref="AiChatPass.RawOutput"/>. Acquires the model like a chat does.
+    /// </summary>
+    public async Task<string> DecodeAsync(string model, int[] ids, CancellationToken ct = default)
+    {
+        using var lease = await _registry.AcquireAsync(FirstOrDefaultModel(model), ct).ConfigureAwait(false);
+        return lease.Model.Tokenizer.Decode(ids ?? Array.Empty<int>());
+    }
+
     public Task<AiChatResult> ChatAsync(AiChatRequest request, CancellationToken ct = default)
         => GenerateAsync(request, onDelta: null, ct);
 
@@ -401,6 +412,7 @@ public sealed class AiChatEngine : IAiChatService
                     res.PromptTokens, res.GeneratedTokens, lm.Generator.LastReusedPrefix, ToStopKind(res.Stop), timings)
                 {
                     EndOfTurnTokenIds = stopIds?.ToArray() ?? Array.Empty<int>(),
+                    GeneratedTokenIds = res.GeneratedTokenIds ?? Array.Empty<int>(),
                 });
             }
             catch (Exception ex)
@@ -925,4 +937,12 @@ public sealed record AiChatPass(string Model, IReadOnlyList<AiChatMessage> Messa
     /// text does not contain the token that ended the turn, so a training target that should end the turn appends one of these.
     /// </summary>
     public int[] EndOfTurnTokenIds { get; init; } = Array.Empty<int>();
+
+    /// <summary>
+    /// The token ids the model generated in this pass, exactly as sampled (SpawnDev.ILGPU.ML GenerationResult.GeneratedTokenIds, both
+    /// engines). The token that ended the turn is NOT included (append one of <see cref="EndOfTurnTokenIds"/>); the tokens of a stop STRING
+    /// are, so after a stop-string ending they can decode to slightly more than <see cref="RawOutput"/>. Training input =
+    /// <see cref="PromptTokenIds"/> + these (+ an end-of-turn id) is the inference sequence by construction, with no re-tokenization.
+    /// </summary>
+    public int[] GeneratedTokenIds { get; init; } = Array.Empty<int>();
 }

@@ -62,6 +62,13 @@ internal static class PassObserverChecks
             Console.WriteLine($"  end-of-turn ids: [{string.Join(", ", p.EndOfTurnTokenIds)}]");
             Check(p.EndOfTurnTokenIds.Length > 0 && p.EndOfTurnTokenIds.Any(id => p.PromptTokenIds.Contains(id)),
                 "EndOfTurnTokenIds are the template's turn-closing tokens (they appear in the prompt)");
+            // The generated ids are what was sampled: as many as the pass reports, no end-of-turn id among them (the stop token is excluded),
+            // and their bytes are the raw output (no stop STRING in this request, so nothing to trim).
+            Console.WriteLine($"  generated ids: [{string.Join(", ", p.GeneratedTokenIds)}]");
+            Check(p.GeneratedTokenIds.Length == p.GeneratedTokens, $"GeneratedTokenIds has GeneratedTokens ids ({p.GeneratedTokenIds.Length} vs {p.GeneratedTokens})");
+            Check(!p.GeneratedTokenIds.Any(id => p.EndOfTurnTokenIds.Contains(id)), "GeneratedTokenIds excludes the end-of-turn token");
+            var genText = await chat.DecodeAsync(model, p.GeneratedTokenIds);
+            Check(genText == p.RawOutput, $"GeneratedTokenIds decode to the raw output (\"{genText}\" vs \"{p.RawOutput}\")");
             // TokenizeAsync is the call the template makes per segment: ChatML encodes "system\n" + content in one call, right after the
             // first <|im_start|>, so its ids must be exactly that slice of the prompt.
             var sys = await chat.TokenizeAsync(model, "system\nAnswer in one short sentence.");
