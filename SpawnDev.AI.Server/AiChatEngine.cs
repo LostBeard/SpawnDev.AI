@@ -26,6 +26,16 @@ public sealed class AiChatEngine : IAiChatService
     public Action<string>? PerfLog { get; set; }
 
     /// <summary>
+    /// Read-only view of every generation pass (one per model call, so a tool-calling turn reports each round): the messages and tools it
+    /// was built from, the EXACT rendered prompt (the token ids sent to the model, after the chat template and thinking suppression, and
+    /// their text with the template's special tokens kept) and the model's raw output before thinking / tool markup is stripped.
+    /// For training data that must match inference exactly (a template mismatch between training and inference silently makes a LoRA
+    /// adapter useless). Null (default) costs nothing; when set, rendering the prompt text is one pass over the prompt's ids. Called on the
+    /// generating thread after the pass completes; an exception it throws is reported through <see cref="PerfLog"/> and does not fail the chat.
+    /// </summary>
+    public Action<AiChatPass>? PassObserver { get; set; }
+
+    /// <summary>
     /// The OpenAI-style function definition of <paramref name="tool"/> as the MODEL reads it in its prompt:
     /// <c>{"type":"function","function":{"name","description","parameters"}}</c>, with quotes, apostrophes and any
     /// non-ASCII text written as themselves.
@@ -252,6 +262,30 @@ public sealed class AiChatEngine : IAiChatService
         };
     }
 
+    /// <summary>
+    /// The text of <paramref name="ids"/> with control tokens kept: the tokenizer's own Decode drops them (BOS, turn markers), so each
+    /// control token is written as its vocabulary string (tokenizer.ggml.tokens) and every other run is decoded as UTF-8 bytes.
+    /// </summary>
+    private static string RenderWithSpecials(LoadedModel lm, int[] ids)
+    {
+        var vocab = lm.Gguf.GetMetadataStringArray("tokenizer.ggml.tokens");
+        var sb = new System.Text.StringBuilder();
+        var run = new List<byte>();
+        void Flush() { if (run.Count > 0) { sb.Append(System.Text.Encoding.UTF8.GetString(run.ToArray())); run.Clear(); } }
+        foreach (int id in ids)
+        {
+            var bytes = lm.Tokenizer.TokenToBytes(id);
+            if (bytes.Length == 0 && vocab != null && id >= 0 && id < vocab.Length)
+            {
+                Flush();
+                sb.Append(vocab[id]);
+            }
+            else run.AddRange(bytes);
+        }
+        Flush();
+        return sb.ToString();
+    }
+
     private async Task<AiChatResult> GenerateOnePassAsync(AiChatRequest request, IReadOnlyList<AiChatMessage> messages,
         IReadOnlyList<string>? toolsJson, Func<string, Task>? onDelta, CancellationToken ct)
     {
@@ -342,12 +376,25 @@ public sealed class AiChatEngine : IAiChatService
             $"gen={res.GeneratedTokens,5}tok stop={res.Stop} engine={lm.Generator.Engine}");
 
         double totalMs = sw.Elapsed.TotalMilliseconds;
+        var timings = new AiChatTimings(loadMs,
+            firstTokenMs >= 0 ? firstTokenMs - decodeStartMs : null,
+            firstTokenMs >= 0 ? totalMs - firstTokenMs : null,
+            totalMs);
+        if (PassObserver is { } observer)
+        {
+            try
+            {
+                observer(new AiChatPass(request.Model, messages, toolsJson, promptIds, RenderWithSpecials(lm, promptIds), res.Text, visible,
+                    res.PromptTokens, res.GeneratedTokens, lm.Generator.LastReusedPrefix, ToStopKind(res.Stop), timings));
+            }
+            catch (Exception ex)
+            {
+                PerfLog?.Invoke($"PassObserver threw {ex.GetType().Name}: {ex.Message} (the chat continues)");
+            }
+        }
         return new AiChatResult(visible, res.PromptTokens, res.GeneratedTokens, ToStopKind(res.Stop), calls)
         {
-            Timings = new AiChatTimings(loadMs,
-                firstTokenMs >= 0 ? firstTokenMs - decodeStartMs : null,
-                firstTokenMs >= 0 ? totalMs - firstTokenMs : null,
-                totalMs),
+            Timings = timings,
             // A reply that was nothing but Llama's pythonic calls has no words left to show or speak.
             TextWithoutToolCalls = calls.Count == 0 ? visible
                 : ChatTemplates.IsOnlyPythonicCalls(visible) ? ""
@@ -837,3 +884,22 @@ public sealed class AiChatEngine : IAiChatService
         return sb.ToString();
     }
 }
+
+/// <summary>
+/// One generation pass of <see cref="AiChatEngine"/>, reported through <see cref="AiChatEngine.PassObserver"/>.
+/// </summary>
+/// <param name="Model">The model name the request asked for.</param>
+/// <param name="Messages">The messages this pass was built from (a tool round includes the earlier rounds and their tool responses).</param>
+/// <param name="ToolsJson">The tool definitions in the prompt, or null.</param>
+/// <param name="PromptTokenIds">The exact token ids sent to the model (chat template applied, thinking suppression prefilled).</param>
+/// <param name="RenderedPrompt">Those ids as text with the template's special tokens kept (e.g. <c>&lt;|im_start|&gt;</c>).</param>
+/// <param name="RawOutput">The model's output text before thinking and tool-call markup are removed (control tokens are not included).</param>
+/// <param name="VisibleText">The output as the caller sees it (thinking stripped).</param>
+/// <param name="PromptTokens">Prompt length the decoder used (after fitting to the context).</param>
+/// <param name="GeneratedTokens">Tokens generated in this pass.</param>
+/// <param name="ReusedPrefixTokens">Prompt tokens reused from the previous pass's cache.</param>
+/// <param name="Stop">Why the pass stopped.</param>
+/// <param name="Timings">Load / prompt eval / eval split of this pass.</param>
+public sealed record AiChatPass(string Model, IReadOnlyList<AiChatMessage> Messages, IReadOnlyList<string>? ToolsJson, int[] PromptTokenIds,
+    string RenderedPrompt, string RawOutput, string VisibleText, int PromptTokens, int GeneratedTokens, int ReusedPrefixTokens, AiStopKind Stop,
+    AiChatTimings Timings);

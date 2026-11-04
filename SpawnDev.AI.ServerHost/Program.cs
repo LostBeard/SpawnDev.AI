@@ -30,6 +30,13 @@ if (args.Length > 0 && args[0] == "memory-consolidate")
     return;
 }
 
+// Gate: `pass-test [model] [cuda|opencl|cpu]` - AiChatEngine.PassObserver: exact rendered prompt + raw output per pass (PassObserverChecks.cs).
+if (args.Length > 0 && args[0] == "pass-test")
+{
+    Environment.ExitCode = await PassObserverChecks.RunAsync(args);
+    return;
+}
+
 // Probe: `speaker-mem [cpu|cuda|opencl]` - AiSpeakerEngine's working pool, what a release frees, and what re-allocating costs (SpeakerMemProbe.cs).
 if (args.Length > 0 && args[0] == "speaker-mem")
 {
