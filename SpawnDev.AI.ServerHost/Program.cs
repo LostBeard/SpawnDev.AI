@@ -30,6 +30,13 @@ if (args.Length > 0 && args[0] == "memory-consolidate")
     return;
 }
 
+// Gate: `lora-test [cuda|opencl] [fixtureDir]` - LoRA adapters via ModelRegistry.SetAdapterAsync on both engines vs ML's outputs (LoraChecks.cs).
+if (args.Length > 0 && args[0] == "lora-test")
+{
+    Environment.ExitCode = await LoraChecks.RunAsync(args);
+    return;
+}
+
 // Gate: `pass-test [model] [cuda|opencl|cpu]` - AiChatEngine.PassObserver: exact rendered prompt + raw output per pass (PassObserverChecks.cs).
 if (args.Length > 0 && args[0] == "pass-test")
 {

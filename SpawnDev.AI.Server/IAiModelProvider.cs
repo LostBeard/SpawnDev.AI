@@ -23,4 +23,14 @@ public interface IAiModelProvider
     /// <summary>Load a model onto the accelerator (session + generator + tokenizer + chat format).</summary>
     Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
         bool enableWebGPUDecodeCapture, CancellationToken ct = default);
+
+    /// <summary>
+    /// Load a model with LoRA adapters applied (SpawnDev.ILGPU.ML <c>GgufGenerator.CreateAsync(..., lora:)</c>, either engine), or the base
+    /// model when <paramref name="lora"/> is null. The default implementation serves only the base model; the built-in providers implement it.
+    /// </summary>
+    Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen, bool enableWebGPUDecodeCapture,
+        SpawnDev.ILGPU.ML.Training.LoraAdapterSet? lora, CancellationToken ct = default)
+        => lora == null
+            ? LoadAsync(name, accelerator, maxSeqLen, enableWebGPUDecodeCapture, ct)
+            : throw new NotSupportedException($"{GetType().Name} does not load LoRA adapters.");
 }

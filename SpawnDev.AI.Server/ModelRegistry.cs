@@ -23,8 +23,14 @@ public sealed class LoadedModel : IDisposable
     /// <summary>An owned backing resource disposed with the model (a hub model stream in the browser).</summary>
     public IDisposable? OwnedStream { get; init; }
 
+    /// <summary>The label of the LoRA adapter this model generates with (<see cref="ModelRegistry.SetAdapterAsync(string, SpawnDev.ILGPU.ML.Training.LoraAdapterSet?, string?, CancellationToken)"/>), or null for the base model.</summary>
+    public string? AdapterLabel { get; internal set; }
+
+    /// <summary>A LoRA runtime swapped onto the resident batch decoder by the registry (the generator owns the one it was created with).</summary>
+    internal SpawnDev.ILGPU.ML.Training.LoraRuntime? SwappedLora { get; set; }
+
     /// <summary>Disposes the generator (and with it the session and stream it owns) and any other owned resource.</summary>
-    public void Dispose() { Generator.Dispose(); OwnedStream?.Dispose(); }
+    public void Dispose() { Generator.Dispose(); SwappedLora?.Dispose(); SwappedLora = null; OwnedStream?.Dispose(); }
 }
 
 /// <summary>
@@ -41,6 +47,8 @@ public sealed class ModelRegistry : IAsyncDisposable
     private readonly int _maxSeqLen;
     private readonly SemaphoreSlim _gate = new(1, 1); // serialize decode (and model swaps)
     private LoadedModel? _resident;
+    // LoRA adapter per canonical model name: applied at every load of that model and on the resident one when set.
+    private readonly Dictionary<string, (SpawnDev.ILGPU.ML.Training.LoraAdapterSet Set, string Label)> _adapters = new(StringComparer.OrdinalIgnoreCase);
 
     public ModelRegistry(IAiModelProvider provider, Accelerator accelerator, int maxSeqLen = 8192)
     {
@@ -98,8 +106,10 @@ public sealed class ModelRegistry : IAsyncDisposable
             {
                 _resident?.Dispose();
                 _resident = null;
+                _adapters.TryGetValue(canonical, out var adapter);
                 _resident = await _provider.LoadAsync(canonical, _accelerator, _maxSeqLen,
-                    EnableWebGPUDecodeCapture, ct).ConfigureAwait(false);
+                    EnableWebGPUDecodeCapture, adapter.Set, ct).ConfigureAwait(false);
+                _resident.AdapterLabel = adapter.Set != null ? adapter.Label : null;
             }
             return new Lease(_resident, _gate);
         }
@@ -108,6 +118,54 @@ public sealed class ModelRegistry : IAsyncDisposable
             _gate.Release(); // never strand the gate on a load failure
             throw;
         }
+    }
+
+    /// <summary>
+    /// Generate with LoRA adapters on <paramref name="modelName"/> (null = the base model again). Remembered per model: applied at every later load
+    /// of it, so an evicted model comes back with its adapter. If the model is resident: on the batch decoder the adapter is swapped in place
+    /// (<c>GgufGenerator.Lora</c>; the prefix cache is forgotten, so the next request prefills in full); on the session engine, which takes
+    /// adapters only at load, the model is unloaded and the next request reloads it with the adapter. <paramref name="label"/> names the adapter
+    /// in <see cref="LoadedModel.AdapterLabel"/> and <see cref="AiChatPass.AdapterLabel"/> (training and evaluation lines record which adapter
+    /// produced them).
+    /// </summary>
+    public async Task SetAdapterAsync(string modelName, SpawnDev.ILGPU.ML.Training.LoraAdapterSet? adapter, string? label = null, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var canonical = await _provider.ResolveAsync(modelName, ct).ConfigureAwait(false)
+                ?? throw new FileNotFoundException($"Model '{modelName}' is not available from this provider.");
+            if (adapter != null) _adapters[canonical] = (adapter, label ?? "adapter");
+            else _adapters.Remove(canonical);
+            if (_resident == null || !string.Equals(_resident.Info.Name, canonical, StringComparison.OrdinalIgnoreCase)) return;
+            if (_resident.Generator.Engine == GgufEngine.BatchDecoder)
+            {
+                var runtime = adapter != null ? SpawnDev.ILGPU.ML.Training.LoraRuntime.Load(_accelerator, adapter) : null;
+                _resident.Generator.Lora = runtime;
+                _resident.SwappedLora?.Dispose();
+                _resident.SwappedLora = runtime;
+                _resident.AdapterLabel = adapter != null ? label ?? "adapter" : null;
+            }
+            else
+            {
+                _resident.Dispose();
+                _resident = null;
+            }
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// <see cref="SetAdapterAsync(string, SpawnDev.ILGPU.ML.Training.LoraAdapterSet?, string?, CancellationToken)"/> from a PEFT adapter directory
+    /// (<c>adapter_model.safetensors</c> + <c>adapter_config.json</c>; desktop). Null = the base model. The label is the directory's name.
+    /// </summary>
+    public Task SetAdapterAsync(string modelName, string? adapterDirectory, CancellationToken ct = default)
+    {
+        if (adapterDirectory == null) return SetAdapterAsync(modelName, (SpawnDev.ILGPU.ML.Training.LoraAdapterSet?)null, null, ct);
+        var set = SpawnDev.ILGPU.ML.Training.LoraAdapterSet.Load(
+            File.ReadAllBytes(Path.Combine(adapterDirectory, "adapter_model.safetensors")),
+            File.ReadAllText(Path.Combine(adapterDirectory, "adapter_config.json")));
+        return SetAdapterAsync(modelName, set, Path.GetFileName(Path.TrimEndingDirectorySeparator(adapterDirectory)), ct);
     }
 
     /// <summary>Whether an LLM currently holds GPU memory.</summary>

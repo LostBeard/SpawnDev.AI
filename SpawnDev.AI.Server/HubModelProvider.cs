@@ -146,15 +146,20 @@ public sealed class HubModelProvider : IAiModelProvider
                 await CachedFractionAsync(m.Name, ct).ConfigureAwait(false)));
         return rows;
     }
-    public async Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
+    public Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
         bool enableWebGPUDecodeCapture, CancellationToken ct = default)
+        => LoadAsync(name, accelerator, maxSeqLen, enableWebGPUDecodeCapture, null, ct);
+
+    /// <inheritdoc />
+    public async Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
+        bool enableWebGPUDecodeCapture, SpawnDev.ILGPU.ML.Training.LoraAdapterSet? lora, CancellationToken ct = default)
     {
         var opt = Find(name)
             ?? throw new FileNotFoundException($"Model '{name}' is not in the hub model list.");
         LoadingModel = opt.Name;
         try
         {
-            return await LoadCoreAsync(opt, accelerator, maxSeqLen, enableWebGPUDecodeCapture, ct)
+            return await LoadCoreAsync(opt, accelerator, maxSeqLen, enableWebGPUDecodeCapture, lora, ct)
                 .ConfigureAwait(false);
         }
         finally
@@ -167,7 +172,7 @@ public sealed class HubModelProvider : IAiModelProvider
     }
 
     private async Task<LoadedModel> LoadCoreAsync(HubModelOption opt, Accelerator accelerator, int maxSeqLen,
-        bool enableWebGPUDecodeCapture, CancellationToken ct)
+        bool enableWebGPUDecodeCapture, SpawnDev.ILGPU.ML.Training.LoraAdapterSet? lora, CancellationToken ct)
     {
         // ⚠️ REPORTED BEFORE THE AWAIT, not after. Opening the stream is where a cold model spends its
         // download - MEASURED 44.4 s for 1.83 GB - and a stage announced only on the way out would leave
@@ -195,7 +200,7 @@ public sealed class HubModelProvider : IAiModelProvider
             int ctxCap = gguf.ContextLength > 0 ? Math.Min((int)gguf.ContextLength, maxSeqLen) : maxSeqLen;
             // The weights stream JS -> GPU on either engine (no managed copy); the generator owns the stream from here (ownsStream).
             var gen = await GgufGenerator.CreateAsync(accelerator, stream, ctxCap, model: gguf, onProgress: OnLoadProgress,
-                engine: Engine, ownsStream: true, ct: ct).ConfigureAwait(false);
+                engine: Engine, ownsStream: true, ct: ct, lora: lora).ConfigureAwait(false);
             gen.EnableWebGPUDecodeCapture = enableWebGPUDecodeCapture;
             Console.WriteLine($"[SpawnDev.AI] {opt.Name}: decoding with {gen.Engine}{(gen.EngineReason.Length > 0 ? " (" + gen.EngineReason + ")" : "")}");
             return new LoadedModel

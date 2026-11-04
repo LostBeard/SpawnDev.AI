@@ -51,8 +51,13 @@ public sealed class OllamaCacheModelProvider : IAiModelProvider
     /// </summary>
     public GgufEngine Engine { get; set; } = GgufEngine.Auto;
 
-    public async Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
+    public Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
         bool enableWebGPUDecodeCapture, CancellationToken ct = default)
+        => LoadAsync(name, accelerator, maxSeqLen, enableWebGPUDecodeCapture, null, ct);
+
+    /// <inheritdoc />
+    public async Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
+        bool enableWebGPUDecodeCapture, SpawnDev.ILGPU.ML.Training.LoraAdapterSet? lora, CancellationToken ct = default)
     {
         var meta = _store.Resolve(name)
             ?? throw new FileNotFoundException($"Model '{name}' is not in the Ollama cache.");
@@ -65,7 +70,7 @@ public sealed class OllamaCacheModelProvider : IAiModelProvider
             tok = SentencePieceTokenizer.FromGGUF(gguf)
                 ?? throw new InvalidOperationException($"'{meta.Name}' has no SentencePiece tokenizer metadata.");
             int ctxCap = gguf.ContextLength > 0 ? Math.Min((int)gguf.ContextLength, maxSeqLen) : maxSeqLen;
-            gen = await GgufGenerator.CreateAsync(accelerator, fs, ctxCap, model: gguf, engine: Engine, ownsStream: true, ct: ct).ConfigureAwait(false);
+            gen = await GgufGenerator.CreateAsync(accelerator, fs, ctxCap, model: gguf, engine: Engine, ownsStream: true, ct: ct, lora: lora).ConfigureAwait(false);
         }
         catch { fs.Dispose(); throw; }
         gen.EnableWebGPUDecodeCapture = enableWebGPUDecodeCapture;

@@ -1,0 +1,117 @@
+using System.Text.Json;
+using ILGPU.Runtime;
+using SpawnDev.AI;
+using SpawnDev.AI.Server;
+using SpawnDev.ILGPU.ML;
+using SpawnDev.ILGPU.ML.Pipelines;
+using SpawnDev.ILGPU.ML.Preprocessing;
+
+/// <summary>
+/// `lora-test [cuda|opencl] [fixtureDir]`: LoRA adapters through <see cref="ModelRegistry.SetAdapterAsync(string, string?, CancellationToken)"/>, on both
+/// engines, against SpawnDev.ILGPU.ML's own outputs for the same adapter (Tuvok's smollm2:360m synthetic fixture: 24 dev lines, each with the
+/// prompt ids, the greedy ids GgufGenerator produced with the adapter and without it, per engine).
+/// Checks, per engine: the adapter set before load is applied at load (24/24 lines equal the adapter ids); clearing it gives the base model
+/// back (each line equals that engine's base ids, and differs from the adapter); on the batch decoder an adapter set on the RESIDENT model is
+/// swapped in place (same loaded model, no reload) and generates the adapter ids; a chat pass records the adapter label and the stop token that
+/// ended it.
+/// </summary>
+internal static class LoraChecks
+{
+    const string Model = "smollm2:360m";
+
+    sealed record Line(string id, int[] prompt_ids, int[] target_ids, int end_of_turn_id, int[] base_ids, int[] adapter_ids);
+
+    public static async Task<int> RunAsync(string[] args)
+    {
+        var which = args.Length > 1 ? args[1] : "cuda";
+        var dir = args.Length > 2 ? args[2] : @"D:\users\tj\Projects\_Training\fixtures\smollm2-360m-synthetic-lora";
+        int failures = 0;
+        void Check(bool ok, string what) { Console.WriteLine($"TEST: {what}|{(ok ? "PASS" : "FAIL")}"); if (!ok) failures++; }
+        List<Line> Read(string file) => File.ReadAllLines(Path.Combine(dir, file)).Where(l => l.Trim().Length > 0)
+            .Select(l => JsonSerializer.Deserialize<Line>(l)!).ToList();
+        var batchRef = Read("generation_eval.jsonl");             // Auto = BatchDecoder on CUDA
+        var sessionRef = Read("generation_eval.generator.jsonl"); // the session engine
+
+        using var context = MLContext.Create().ToContext();
+        using var acc = which switch
+        {
+            "opencl" => context.Devices.First(d => d.AcceleratorType == AcceleratorType.OpenCL).CreateAccelerator(context),
+            _ => context.Devices.First(d => d.AcceleratorType == AcceleratorType.Cuda).CreateAccelerator(context),
+        };
+        Console.WriteLine($"accelerator: {acc.Name} ({acc.AcceleratorType}), model {Model}, fixture {dir}");
+
+        async Task<int[][]> RunLines(ModelRegistry reg, List<Line> lines)
+        {
+            var outs = new int[lines.Count][];
+            for (int i = 0; i < lines.Count; i++)
+            {
+                using var lease = await reg.AcquireAsync(Model);
+                var cfg = new GenerationConfig { Strategy = "greedy", Temperature = 0, MaxNewTokens = lines[i].target_ids.Length + 4 };
+                var res = await lease.Model.Generator.GenerateAsync(lines[i].prompt_ids, cfg, null, new[] { lines[i].end_of_turn_id });
+                outs[i] = res.GeneratedTokenIds;
+            }
+            return outs;
+        }
+        int Same(int[][] got, List<Line> lines, Func<Line, int[]> want) => got.Select((g, i) => g.SequenceEqual(want(lines[i])) ? 1 : 0).Sum();
+
+        foreach (var (engine, refs) in new[] { (GgufEngine.Generator, sessionRef), (GgufEngine.Auto, batchRef) })
+        {
+            await using var registry = new ModelRegistry(new OllamaCacheModelProvider(new OllamaModelStore()) { Engine = engine }, acc);
+            // 1) Set before load: applied when the model loads.
+            await registry.SetAdapterAsync(Model, dir);
+            var adapterOut = await RunLines(registry, refs);
+            string used;
+            using (var l = await registry.AcquireAsync(Model)) used = l.Model.Generator.Engine.ToString();
+            int a = Same(adapterOut, refs, r => r.adapter_ids);
+            int hit = Same(adapterOut, refs, r => r.target_ids);
+            Console.WriteLine($"  [{engine} -> {used}] adapter: {a}/{refs.Count} equal ML's adapter ids, {hit}/{refs.Count} equal the target");
+            Check(a == refs.Count, $"{engine}: an adapter set before load generates ML's adapter ids on every line ({a}/{refs.Count})");
+
+            // 2) Cleared: the base model again (session engine: reloaded; batch decoder: swapped in place).
+            await registry.SetAdapterAsync(Model, (string?)null);
+            var baseOut = await RunLines(registry, refs);
+            int b = Same(baseOut, refs, r => r.base_ids);
+            int differ = baseOut.Select((g, i) => g.SequenceEqual(adapterOut[i]) ? 0 : 1).Sum();
+            Console.WriteLine($"  [{engine}] base: {b}/{refs.Count} equal ML's base ids, {differ}/{refs.Count} differ from the adapter output");
+            Check(b == refs.Count, $"{engine}: cleared, the model generates ML's base ids on every line ({b}/{refs.Count})");
+            Check(differ == refs.Count, $"{engine}: base and adapter outputs differ on every line ({differ}/{refs.Count})");
+
+            // 3) Batch decoder: set on the RESIDENT model, swapped in place.
+            if (used == nameof(GgufEngine.BatchDecoder))
+            {
+                LoadedModel before;
+                using (var l = await registry.AcquireAsync(Model)) before = l.Model;
+                await registry.SetAdapterAsync(Model, dir);
+                LoadedModel after;
+                using (var l = await registry.AcquireAsync(Model)) after = l.Model;
+                Check(ReferenceEquals(before, after) && after.AdapterLabel == Path.GetFileName(dir),
+                    "batch decoder: an adapter set on the resident model is swapped in place (no reload), labelled with its directory");
+                var swapped = await RunLines(registry, refs);
+                int s = Same(swapped, refs, r => r.adapter_ids);
+                Check(s == refs.Count, $"batch decoder: the swapped-in adapter generates ML's adapter ids ({s}/{refs.Count})");
+            }
+
+            // 4) A chat pass records the adapter and the token that ended it.
+            if (engine == GgufEngine.Auto)
+            {
+                var chat = new AiChatEngine(registry);
+                AiChatPass? pass = null;
+                chat.PassObserver = p => pass = p;
+                await chat.ChatAsync(new AiChatRequest
+                {
+                    Model = Model,
+                    Messages = new[] { new AiChatMessage("user", "Say hello.") },
+                    Options = new AiGenerationOptions { Strategy = "greedy", Temperature = 0, MaxOutputTokens = 64 },
+                });
+                Console.WriteLine($"  chat pass: adapter {pass?.AdapterLabel}, stop {pass?.Stop}, end token {pass?.EndTokenId?.ToString() ?? "null"}, end-of-turn [{string.Join(",", pass?.EndOfTurnTokenIds ?? Array.Empty<int>())}]");
+                Check(pass?.AdapterLabel == Path.GetFileName(dir), "a chat pass records the adapter label");
+                // No stop strings in this request: a natural stop must name its token, a length stop must not.
+                Check(pass != null && (pass.Stop == AiStopKind.Length ? pass.EndTokenId == null
+                    : pass.EndTokenId != null && !pass.GeneratedTokenIds.Contains(pass.EndTokenId.Value)),
+                    "a chat pass records the stop token that ended it (null on a length stop), not among the generated ids");
+            }
+        }
+        Console.WriteLine($"RESULTS: {failures} failed");
+        return failures;
+    }
+}

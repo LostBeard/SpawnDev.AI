@@ -413,6 +413,8 @@ public sealed class AiChatEngine : IAiChatService
                 {
                     EndOfTurnTokenIds = stopIds?.ToArray() ?? Array.Empty<int>(),
                     GeneratedTokenIds = res.GeneratedTokenIds ?? Array.Empty<int>(),
+                    EndTokenId = res.StopTokenId,
+                    AdapterLabel = lm.AdapterLabel,
                 });
             }
             catch (Exception ex)
@@ -945,4 +947,14 @@ public sealed record AiChatPass(string Model, IReadOnlyList<AiChatMessage> Messa
     /// <see cref="PromptTokenIds"/> + these (+ an end-of-turn id) is the inference sequence by construction, with no re-tokenization.
     /// </summary>
     public int[] GeneratedTokenIds { get; init; } = Array.Empty<int>();
+
+    /// <summary>
+    /// The stop token that ended this pass (one of <see cref="EndOfTurnTokenIds"/> or EOS; llama 3.1 ends a turn with &lt;|eot_id|&gt; 128009 or,
+    /// after a tool call, &lt;|eom_id|&gt; 128008), or null when the pass ended on its length limit, a stop string or a cancel. Not part of
+    /// <see cref="GeneratedTokenIds"/>; a training target that reproduces the turn appends exactly this id.
+    /// </summary>
+    public int? EndTokenId { get; init; }
+
+    /// <summary>The LoRA adapter the model generated with (<see cref="ModelRegistry.SetAdapterAsync(string, string?, CancellationToken)"/>), or null for the base model.</summary>
+    public string? AdapterLabel { get; init; }
 }
