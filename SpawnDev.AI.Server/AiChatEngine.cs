@@ -132,6 +132,19 @@ public sealed class AiChatEngine : IAiChatService
         return promptIds.Length;
     }
 
+    /// <summary>
+    /// Tokenizes <paramref name="text"/> with the model's tokenizer exactly as the chat template tokenizes each text segment
+    /// (<c>tokenizer.Encode(text)</c>; no BOS, no special tokens; a SentencePiece vocab adds its space prefix, a byte-level BPE vocab such
+    /// as qwen / llama 3 does not). For text the model did NOT generate, e.g. a corrected training target. For the model's own output prefer
+    /// <see cref="AiChatPass"/>'s ids: a model can emit a non-canonical tokenization that re-encoding its text would not reproduce.
+    /// Acquires the model like a chat does (loads it if it is not resident).
+    /// </summary>
+    public async Task<int[]> TokenizeAsync(string model, string text, CancellationToken ct = default)
+    {
+        using var lease = await _registry.AcquireAsync(FirstOrDefaultModel(model), ct).ConfigureAwait(false);
+        return lease.Model.Tokenizer.Encode(text ?? "");
+    }
+
     public Task<AiChatResult> ChatAsync(AiChatRequest request, CancellationToken ct = default)
         => GenerateAsync(request, onDelta: null, ct);
 
@@ -385,7 +398,10 @@ public sealed class AiChatEngine : IAiChatService
             try
             {
                 observer(new AiChatPass(request.Model, messages, toolsJson, promptIds, RenderWithSpecials(lm, promptIds), res.Text, visible,
-                    res.PromptTokens, res.GeneratedTokens, lm.Generator.LastReusedPrefix, ToStopKind(res.Stop), timings));
+                    res.PromptTokens, res.GeneratedTokens, lm.Generator.LastReusedPrefix, ToStopKind(res.Stop), timings)
+                {
+                    EndOfTurnTokenIds = stopIds?.ToArray() ?? Array.Empty<int>(),
+                });
             }
             catch (Exception ex)
             {
@@ -902,4 +918,11 @@ public sealed class AiChatEngine : IAiChatService
 /// <param name="Timings">Load / prompt eval / eval split of this pass.</param>
 public sealed record AiChatPass(string Model, IReadOnlyList<AiChatMessage> Messages, IReadOnlyList<string>? ToolsJson, int[] PromptTokenIds,
     string RenderedPrompt, string RawOutput, string VisibleText, int PromptTokens, int GeneratedTokens, int ReusedPrefixTokens, AiStopKind Stop,
-    AiChatTimings Timings);
+    AiChatTimings Timings)
+{
+    /// <summary>
+    /// The template's end-of-turn token ids (the stop ids the decoder watched for, e.g. <c>&lt;|im_end|&gt;</c> for ChatML). The generated
+    /// text does not contain the token that ended the turn, so a training target that should end the turn appends one of these.
+    /// </summary>
+    public int[] EndOfTurnTokenIds { get; init; } = Array.Empty<int>();
+}

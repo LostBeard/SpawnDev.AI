@@ -58,6 +58,15 @@ internal static class PassObserverChecks
                 "the rendered prompt keeps the template's special tokens");
             Check(p.RawOutput.Contains(p.VisibleText.Trim()), "the raw output contains the visible reply");
             Check(p.Messages.Count == 2 && p.Messages[1].Content == Words, "the pass carries the messages it was built from");
+            // The end-of-turn ids are the template's stop tokens; for ChatML that is <|im_end|>, the token the prompt closes each turn with.
+            Console.WriteLine($"  end-of-turn ids: [{string.Join(", ", p.EndOfTurnTokenIds)}]");
+            Check(p.EndOfTurnTokenIds.Length > 0 && p.EndOfTurnTokenIds.Any(id => p.PromptTokenIds.Contains(id)),
+                "EndOfTurnTokenIds are the template's turn-closing tokens (they appear in the prompt)");
+            // TokenizeAsync is the call the template makes per segment: ChatML encodes "system\n" + content in one call, right after the
+            // first <|im_start|>, so its ids must be exactly that slice of the prompt.
+            var sys = await chat.TokenizeAsync(model, "system\nAnswer in one short sentence.");
+            Check(p.PromptTokenIds.Length > sys.Length && p.PromptTokenIds.Skip(1).Take(sys.Length).SequenceEqual(sys),
+                $"TokenizeAsync matches the template's own encoding of a segment ({sys.Length} ids)");
             // Rendering is a pure function of the ids: render the ids again through a second observed chat and compare.
             passes.Clear();
             await chat.ChatAsync(request);
