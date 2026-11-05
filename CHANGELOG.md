@@ -2,6 +2,24 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.4.1 - 2026-11-05 - training data that matches inference, LoRA adapters
+
+On SpawnDev.ILGPU.ML 5.8.2 (SpawnDev.AI stays 1.3.0). For Vertex's LoRA training with SpawnDev.ILGPU.ML.
+
+- **`AiChatEngine.PassObserver`**: every generation pass (each tool round too) as an `AiChatPass`: the messages and tools it was built
+  from, `PromptTokenIds` (the exact ids sent: chat template applied, thinking suppression prefilled), `RenderedPrompt` (those ids as
+  text with special tokens kept), `GeneratedTokenIds` (as sampled; the ending stop token excluded), `EndOfTurnTokenIds` (the template's
+  stop ids), `EndTokenId` (the stop token that actually ended the pass, e.g. llama 3.1 eot 128009 vs eom 128008), `RawOutput` /
+  `VisibleText`, token counts, reused prefix, timings, and `AdapterLabel`. Training input = prompt ids + generated ids + the end token is
+  the inference sequence by construction. Null observer costs nothing; a throwing one is reported through PerfLog.
+- **`AiChatEngine.TokenizeAsync` / `DecodeAsync`**: the tokenizer exactly as the chat template uses it, for targets the model did not write.
+- **LoRA adapters: `ModelRegistry.SetAdapterAsync(model, adapterDirectory | LoraAdapterSet, label)`**: PEFT adapters on either engine,
+  remembered per model and applied at every load; on a resident batch-decoder model swapped in place (no reload); null = base model.
+  `IAiModelProvider.LoadAsync` gained a LoRA overload (default implementation: base model only).
+- Release gate (RTX 4070 quiet, stable packages after a cold nuget.org-only restore): heavy suite 89/89, browser decode qwen3:4b 65.6 tok/s.
+- Tests: ServerHost `pass-test` (15 checks) and `lora-test` (13 checks: SpawnDev.ILGPU.ML's smollm2:360m synthetic adapter fixture, both
+  engines 24/24 equal to ML's own adapter ids, cleared 24/24 base, in-place swap 24/24).
+
 ## SpawnDev.AI 1.3.0 + SpawnDev.AI.Server 1.4.0 - 2026-11-03 - long-term memory, faces, model install, the batch decoder by default
 
 On SpawnDev.ILGPU.ML 5.8.1 and SpawnDev.ILGPU 5.4.15. Release gate (RTX 4070, installed Chrome, stable packages from a cold nuget.org-only
