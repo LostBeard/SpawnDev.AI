@@ -2,6 +2,18 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.4.4 - 2026-11-06 - SpawnDev.ILGPU.ML 5.8.6 (faster Q8_0 decode in the browser)
+
+On SpawnDev.ILGPU.ML 5.8.6 (SpawnDev.ILGPU 5.4.16, SpawnDev.AI stays 1.3.0). No API change.
+
+- The batch decoder regroups Q8_0 weights in place at load (`GGMLType.Q8_0G`: per 8 blocks, the 8 fp16 scales as a header, then
+  the 256 int8 values; same bytes, no extra memory). Qwen3-1.7B Q8_0 in Chrome WebGPU on an RTX 4070 (measured by
+  SpawnDev.ILGPU.ML): decode 147.4 -> 166.3 tok/s at a short prompt, 130.6 -> 145.4 at 1,826 tokens. CUDA gains ~1.5%.
+- LoRA over Q8_0 bases: ServerHost `lora-ab` (new) runs the synthetic fixture adapter on smollm2:360m-instruct-q8_0 on the batch
+  decoder (set at load, cleared in place, swapped back in place). Against 5.8.5 the greedy ids are identical on all 24 lines in
+  every phase, with the float-order-changing Q8 paths off and with the defaults. SmolLM2-360M regroups only ffn_down (K = 2560);
+  SpawnDev.ILGPU.ML's `Training_DecoderLora_OverQ8Grouped_MatchesNative` covers a fully regrouped model.
+
 ## SpawnDev.AI.Server 1.4.3 - 2026-11-06 - SpawnDev.ILGPU.ML 5.8.5 (faster Q8_0 decode)
 
 On SpawnDev.ILGPU.ML 5.8.5 (SpawnDev.ILGPU 5.4.16, SpawnDev.AI stays 1.3.0). No API change. Skips 5.8.4: its CUDA-graph decode

@@ -37,6 +37,14 @@ if (args.Length > 0 && args[0] == "lora-test")
     return;
 }
 
+// A/B: `lora-ab [cuda|opencl] [model] [outJson]` - the fixture's adapter on another base (default smollm2:360m-instruct-q8_0) on the
+// batch decoder; writes every phase's greedy ids so two ML versions can be compared token for token (LoraChecks.RunAbAsync).
+if (args.Length > 0 && args[0] == "lora-ab")
+{
+    Environment.ExitCode = await LoraChecks.RunAbAsync(args);
+    return;
+}
+
 // Gate: `pass-test [model] [cuda|opencl|cpu]` - AiChatEngine.PassObserver: exact rendered prompt + raw output per pass (PassObserverChecks.cs).
 if (args.Length > 0 && args[0] == "pass-test")
 {
