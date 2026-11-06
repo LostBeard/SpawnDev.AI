@@ -9,15 +9,15 @@ SD-Turbo text-to-image both run in-browser on WebGPU, no server or native instal
 
 | Package | What |
 |---|---|
-| **SpawnDev.AI** | Core contracts: chat messages/options/results, tool-calling types, the `IAiChatService` surface, and the `IAiServerTransport` abstraction. |
-| **SpawnDev.AI.Server** | An **Ollama-compatible model server as a library**: OpenAI (`/v1/chat/completions` SSE), Ollama native (`/api/chat`, `/api/generate`, `/api/tags`, `/api/show`), Anthropic Messages (`/v1/messages` SSE - works with Claude CLI), OpenAI image generation (`/v1/images/generations`, SD-Turbo), and an MCP surface (`/mcp`). One protocol router, transport-free: host it over HTTP on desktop (drop-in on `:11434`) or over a MessagePort in a browser shared worker - the same code path serves both. Includes a server-side **agentic tool loop** with two built-in tools (image generation + GitHub library/crew lookup) and small-model reliability aids. Reads desktop models from Ollama's on-disk cache; streams browser models from the SpawnDev hub onto WebGPU. |
+| **SpawnDev.AI** | Core contracts: chat messages/options/results (with timings), tool-calling types, the `IAiChatService` surface, the `IAiServerTransport` abstraction, the long-term memory store (`AiMemoryStore`) and the voice/face registry (`SpeakerRegistry`). |
+| **SpawnDev.AI.Server** | An **Ollama-compatible model server as a library**: OpenAI (`/v1/chat/completions` SSE), Ollama native (`/api/chat`, `/api/generate`, `/api/tags`, `/api/show`), Anthropic Messages (`/v1/messages` SSE - works with Claude CLI), OpenAI image generation (`/v1/images/generations`, SD-Turbo), and an MCP surface (`/mcp`). One protocol router, transport-free: host it over HTTP on desktop (drop-in on `:11434`) or over a MessagePort in a browser shared worker - the same code path serves both. Includes a server-side **agentic tool loop** with two built-in tools (image generation + GitHub library/crew lookup) and small-model reliability aids. Beyond chat, on the same GPU: speech to text (Whisper / Parakeet, and streaming Nemotron), voice activity and end-of-turn detection, text to speech (Kokoro voices, ZipVoice cloning), speaker and face recognition, long-term memory search, and LoRA adapters on chat models. Reads desktop models from Ollama's on-disk cache (and can install them without Ollama); streams browser models from the SpawnDev hub onto WebGPU. |
 
 ## Why
 
 Local LLM serving shouldn't require a native install. The same `AiApiRouter` that answers `curl
 localhost:11434/api/chat` on a desktop can run inside a shared worker in a browser tab, decoding on
-WebGPU at interactive speed (qwen2.5-0.5b: ~34 tok/s greedy on an RTX 4070 via dispatch-plan
-capture/replay). Tool calling is parsed server-side into structured calls on every protocol surface.
+WebGPU at interactive speed (qwen3:4b decodes at ~65 tok/s in the browser on an RTX 4070). On the desktop the batch
+decoder serves llama3.1:8b at 45.5 tok/s, with the first token 204 ms after 200 new tokens over a cached 3.7k-token prompt. Tool calling is parsed server-side into structured calls on every protocol surface.
 
 ## Tools & in-browser reliability
 
@@ -32,6 +32,7 @@ own tool-calling: it pre-emptively **forces** the image tool on a clear "draw X"
 ## Documentation
 
 [Docs/](Docs/) - [protocols](Docs/protocols.md) (every endpoint + client compatibility),
+[engines](Docs/engines.md) (chat, memory, faces, speech, voice, LoRA adapters, model install),
 [hosting](Docs/hosting.md) (desktop + browser + the demo), [tools](Docs/tools.md), and
 [reliability](Docs/reliability.md).
 
@@ -41,7 +42,7 @@ own tool-calling: it pre-emptively **forces** the image tool on a clear "draw X"
 using SpawnDev.AI.Server;
 
 var store = new OllamaModelStore();                    // ~/.ollama/models (or OLLAMA_MODELS)
-var registry = new ModelRegistry(store, accelerator);  // any SpawnDev.ILGPU accelerator
+var registry = new ModelRegistry(new OllamaCacheModelProvider(store), accelerator);  // any SpawnDev.ILGPU accelerator
 var engine = new AiChatEngine(registry);
 var router = new AiApiRouter(engine);
 // host it: map every request to router.TryHandleAsync(method, path, bodyJson, yourTransport)

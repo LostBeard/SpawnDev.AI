@@ -24,14 +24,17 @@ var router = new AiApiRouter(engine) { Images = images, Tools = tools };
 
 Point any Ollama / OpenAI / Anthropic client at `http://localhost:11434`.
 
+To fetch a model on first run without Ollama installed, `OllamaModelInstaller` writes it into the same
+cache (see [engines.md](engines.md#installing-models-ollamamodelinstaller)).
+
 ## Browser (shared worker, WebGPU)
 
 `AiWorkerServer` runs the identical router inside a (shared) web worker, owning the WebGPU accelerator
 and the model registry; window-side code talks to it through `AiWorkerClient`, which speaks the same
 protocol surface over marshalled callback frames instead of sockets. Models stream from the SpawnDev
-hub (HTTP + HuggingFace CDN) straight onto the GPU and cache in OPFS via `HubModelProvider`. One
-large GPU model is resident per device: the LLM and SD-Turbo evict each other before loading, so they
-never co-reside (co-residence exceeded the WebGPU device budget).
+hub (HTTP + HuggingFace CDN) straight onto the GPU and cache in OPFS via `HubModelProvider`. Models of
+different kinds (LLM, SD-Turbo, speech, voice) share the device under `GpuResidency`, which evicts only when a
+new model does not fit (see [engines.md](engines.md#gpu-residency)).
 
 Register in DI in **all** scopes (the same `Program.cs` runs in window and worker; only the worker
 instance touches the GPU):
@@ -51,6 +54,7 @@ one click: LLM chat + image generation, 100% on the visitor's GPU. It exposes a 
 agent-settings panel (editable system prompt, temperature, max-tokens), and lets the chat model both
 paint images and answer questions about the SpawnDev libraries (see [reliability.md](reliability.md)).
 
-**Publishes must not trim or AOT.** ILGPU resolves methods (e.g. `Math.Clamp`) via reflection at
-runtime; a trimmed publish kills the worker with `MissingMethodException`. Keep `PublishTrimmed=false`
-and `RunAOTCompilation=false`.
+**The demo publishes untrimmed and without AOT** (`PublishTrimmed=false`, `RunAOTCompilation=false`).
+SpawnDev.ILGPU itself now supports trimming, and Blazor AOT with the IL kept (see its README), but this
+app's full stack (SpawnDev.ILGPU.ML, the speech and voice engines, Reachy) has not been verified trimmed or
+AOT-compiled, so keep those settings until it has.

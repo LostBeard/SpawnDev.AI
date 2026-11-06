@@ -1,8 +1,10 @@
 # Protocol surfaces
 
 `AiApiRouter` answers one method+path per route and writes through `IAiServerTransport`, so the same
-routing code serves HTTP (desktop) and MessagePort frames (browser worker). Routes marked *(tools)* /
-*(images)* are only present when the router is given an `AiToolRegistry` / `AiImageEngine`.
+routing code serves HTTP (desktop) and MessagePort frames (browser worker). A route marked in italics is only present
+when the router has that engine: *(tools)* `Tools` (`AiToolRegistry`), *(images)* `Images` (`AiImageEngine`),
+*(speech)* `Speech` (`AiSpeechEngine`), *(VAD)* `Vad` (`AiVadEngine`), *(voice)* `Voice` (`AiVoiceEngine`),
+*(hub models)* `HubModels` (`HubModelProvider`), *(progress)* `Progress` (`AiProgressTracker`).
 
 ## Endpoints
 
@@ -22,6 +24,17 @@ routing code serves HTTP (desktop) and MessagePort frames (browser worker). Rout
 | `POST /mcp` *(tools)* | MCP (JSON-RPC 2.0) | `initialize` / `ping` / `tools/list` / `tools/call`. |
 | `GET /ai/artifacts/{id}` *(tools)* | SpawnDev | Base64 fetch of a tool's binary output (generated image). |
 | `GET /ai/image-models` *(images)* | SpawnDev | Default + available image models. |
+| `GET /ai/models` *(hub models)* | SpawnDev | The hub catalogue: name, size, description, and how much of each is already cached. |
+| `GET /ai/progress` *(progress)* | SpawnDev | A snapshot of model downloads and loads in progress. |
+| `POST /api/transcribe` *(speech)* | SpawnDev | Speech to text. `{ samples, sample_rate }` (mono PCM in [-1, 1]) -> `{ text, model, inference_ms }`. |
+| `POST /api/vad` *(VAD)* | SpawnDev | Where an utterance starts and stops. `{ samples, reset?, flush? }` (16 kHz, continuing the stream) -> `{ speech_active, probability, spans: [{ start, length }], ... }`. Spans are offsets into the caller's own stream, counted from the last `reset`. |
+| `POST /api/speak` *(voice)* | SpawnDev | Text to speech. `{ text, voice_id }` for a built-in or prepared voice, or `{ text, reference_samples, reference_text, sample_rate }` to clone -> `{ samples, sample_rate, model, inference_ms, duration_seconds }`. |
+| `POST /api/voices` *(voice)* | SpawnDev | Prepare a cloned voice once: `{ voice_id, display_name, reference_text, reference_samples, sample_rate }`. `reference_text` must be the clip's exact transcript. |
+| `GET /api/voices` *(voice)* | SpawnDev | The voice ids available to `/api/speak`. |
+| `POST /api/warm` | SpawnDev | Load models ahead of use: `{ kinds: ["vad", "speech", "voice"] }` (the default). A kind that fails to warm is reported, not thrown, and loads lazily later. |
+
+The audio routes carry PCM as JSON number arrays for now, which works over both transports; a binary frame is the
+planned follow-up and will not change the routes.
 
 ## Client compatibility
 
@@ -35,6 +48,13 @@ Each protocol's sampling fields map onto the neutral `AiGenerationOptions` (`Max
 `Strategy` greedy/top_p/top_k, `Temperature`, `TopP`, `TopK`, `RepetitionPenalty`, `Seed`, `Stops`).
 Requested output tokens are clamped to the engine's `MaxOutputTokens` cap (agentic clients routinely
 ask for far more than a small local model should produce).
+
+## Timings
+
+The final `/api/chat` and `/api/generate` frame carries Ollama's timing fields: `prompt_eval_count`, `eval_count`,
+`total_duration`, `load_duration`, `prompt_eval_duration` and `eval_duration` (nanoseconds). A duration the engine did not
+measure is omitted rather than sent as 0. Library callers get the same split as `AiChatResult.Timings` /
+`AiChatUsage` (see [engines.md](engines.md#chat-aichatengine-modelregistry)).
 
 ## Tool calling on every surface
 
