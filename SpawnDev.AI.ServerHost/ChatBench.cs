@@ -109,6 +109,13 @@ internal static class ChatBench
         // near-tie: smollm2:360m diverged at token 81 where the top-2 logit margin was 0.0024-0.015 while the engines' logits differ by up to
         // ~0.04 (Tuvok, 2026-11-02, ML Bench_OllamaGreedyDivergence_Margin). Whether a divergence is a tie or a fault needs the logits, which
         // this host does not see: that gate lives in SpawnDev.ILGPU.ML. Here: report whether and where the texts first differ.
+        // CHATBENCH_GREEDY_OUT=<file>: write each engine's greedy text, so two runs (say two SpawnDev.ILGPU.ML versions) can be
+        // compared byte for byte; the NOTE below only compares the engines within one run.
+        if (Environment.GetEnvironmentVariable("CHATBENCH_GREEDY_OUT") is { Length: > 0 } greedyOut)
+        {
+            File.WriteAllText(greedyOut, System.Text.Json.JsonSerializer.Serialize(greedyText.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)));
+            Console.WriteLine($"NOTE: greedy texts written to {greedyOut}");
+        }
         bool same = greedyText.Count == 2 && greedyText[GgufEngine.Generator] == greedyText[GgufEngine.Auto];
         Console.WriteLine($"NOTE: greedy output on both engines: {(same ? "identical" : "DIFFERS (check the top-2 margin at that step with ML's Bench_OllamaGreedyDivergence_Margin)")}");
         if (!same && greedyText.Count == 2)
