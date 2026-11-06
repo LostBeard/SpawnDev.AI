@@ -1,0 +1,2 @@
+# Raw pixel fixtures are bytes, not text: never convert line endings (a 0x0A in a picture would gain a 0x0D on a Windows clone).
+*.bgra binary
