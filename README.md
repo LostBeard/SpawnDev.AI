@@ -16,7 +16,7 @@ SD-Turbo text-to-image both run in-browser on WebGPU, no server or native instal
 
 Local LLM serving shouldn't require a native install. The same `AiApiRouter` that answers `curl
 localhost:11434/api/chat` on a desktop can run inside a shared worker in a browser tab, decoding on
-WebGPU at interactive speed (qwen3:4b decodes at ~65 tok/s in the browser on an RTX 4070). On the desktop the batch
+WebGPU at interactive speed (on an RTX 4070: qwen3:1.7b Q8_0 at ~166 tok/s and qwen3:4b at ~65 tok/s in the browser). On the desktop the batch
 decoder serves llama3.1:8b at 45.5 tok/s, with the first token 204 ms after 200 new tokens over a cached 3.7k-token prompt. Tool calling is parsed server-side into structured calls on every protocol surface.
 
 ## Tools & in-browser reliability

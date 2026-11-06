@@ -85,3 +85,26 @@ Other live gates: desktop HTTP (all 3 protocol surfaces + /v1/images/generations
 generate_image loop), and `tools/drive-ai-demo.cs` - a single-shot UI-level Playwright gate that
 types into the composer and checks the answer. Keep it: it covers the Razor UI, which the suite
 does not.
+
+**Release gate for SpawnDev.AI.Server** (what every 1.4.x shipped on, RTX 4070, card quiet - ask Tuvok first):
+
+```
+(delete bin/obj of SpawnDev.AI, .Server, .ServerHost, .Demo, .TestRunner after any SpawnDev.ILGPU.ML version change)
+dotnet run --project SpawnDev.AI.TestRunner -c Release -- --heavy --verbose      89 tests incl. browser DecodeRate
+dotnet run --project SpawnDev.AI.ServerHost -c Release -- pass-test               PassObserver, 15 checks
+dotnet run --project SpawnDev.AI.ServerHost -c Release -- lora-test cuda          LoRA adapters, 10 checks
+CHATBENCH_GREEDY_OUT=out.json dotnet run --project SpawnDev.AI.ServerHost -c Release -- chat-bench qwen3:1.7b-q8_0 cuda 0
+                                                                                   (and contextWords 1300) decode rate + greedy text
+dotnet run --project SpawnDev.AI.ServerHost -c Release -- lora-ab cuda smollm2:360m-instruct-q8_0 out.json
+                                                                                   adapter over a Q8_0 base, ids for cross-version diff
+```
+
+- Compare the `CHATBENCH_GREEDY_OUT` / `lora-ab` JSON against the previous ML version's: identical is the expectation; an
+  ML change that alters float order (Q8 vector GEMV, Q8_0G regrouping) can flip a near-tie, and ML exposes `GGUF_*`
+  switches to turn those paths off for an exact comparison - ask Tuvok which ones the release touched.
+- `lora-test opencl`: the session engine's base phase is 23/24 since ML 5.8.4 (syn-30 step 3, a near-tie: logits
+  11.40754 vs 11.39705, flipped by a tree-summed RMSNorm). CUDA is 10/10. Not a gate failure.
+- Then a COLD nuget.org-only restore of Server, ServerHost, Demo and TestRunner (empty `NUGET_PACKAGES`, a config with only
+  nuget.org). Pass `--no-cache` if an earlier restore ran before the new ML version was indexed: NuGet's HTTP cache keeps
+  the old version list (~30 min) and the restore says "Nearest version" is the previous one.
+- ⭐ `lora-test` is what caught ML 5.8.4's stale CUDA-graph replay after an in-place adapter clear (2/24) - keep it in.

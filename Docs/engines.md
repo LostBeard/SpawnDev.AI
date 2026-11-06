@@ -18,7 +18,11 @@ cloner.
 - **Two decoders.** `GgufEngine.Auto` (the default on `OllamaCacheModelProvider` and `HubModelProvider`) uses the batch
   decoder for qwen2 / qwen3 / llama on CUDA / OpenCL / WebGPU, and the session generator otherwise. llama3.1:8b on an
   RTX 4070 with a 3.7k-token prompt: 200 new tokens over a cached prefix reach the first token in 204 ms, a full prompt
-  reads at 1,660 tok/s, decode runs at 45.5 tok/s. Tensor-core prefill on CUDA sm_75+.
+  reads at 1,660 tok/s, decode runs at 45.5 tok/s. Tensor-core prefill on CUDA sm_75+. Q8_0 models (SpawnDev.ILGPU.ML 5.8.6):
+  qwen3:1.7b-q8_0 on an RTX 4070 decodes at 166.9 tok/s on CUDA at a short prompt and 141.3 at 1,602 prompt tokens
+  (ServerHost `chat-bench`); in Chrome on WebGPU at about 166 tok/s (measured by SpawnDev.ILGPU.ML). The batch decoder
+  regroups Q8_0 weights in place at load (`GGMLType.Q8_0G`: same bytes, no extra memory), so code that inspects the
+  decoder's weight types sees `Q8_0G`, not `Q8_0`.
 - **Timings.** `AiChatResult.Timings` (`AiChatTimings`: load, prompt eval, eval, total ms) and `AiChatUsage`
   (`DecodeTokensPerSecond`). The Ollama routes report the same split; see [protocols.md](protocols.md#timings).
 - **`PassObserver`** (`Action<AiChatPass>?`): every generation pass, each tool round included, with the exact

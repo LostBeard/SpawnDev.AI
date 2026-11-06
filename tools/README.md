@@ -64,8 +64,15 @@ The deploy copies them in over the published output. They are not decoration:
   `OAUTH_CLIENT_ID` into the page. That id is the ONLY thing "Connect my Reachy" can sign in with -
   passing an invented client id fails with *"Not authenticated - call login() or pass a token"*, which
   reads like a token problem and is not. The deploy REFUSES to push a README without it (red-checked).
-- `.gitattributes` is what puts `.wasm`/`.dat`/`.wav`/`.onnx` into LFS. Hugging Face rejects a push whose
-  binaries are not in LFS; deleting that file once cost two rejected pushes.
+- `.gitattributes` is what puts `.wasm`/`.dll`/`.dat`/`.wav`/`.onnx`/`.bgra` into LFS. Hugging Face rejects a push whose
+  binaries are not in LFS; deleting that file once cost two rejected pushes. ⚠️ **A NEW binary file type needs a line here
+  too**: the face-test fixtures (`test-data/faces/*.bgra`, added with AiFaceEngine) matched no pattern and the 2026-11-06
+  deploy was refused ("Your push was rejected because it contains binary files", naming them). The rejection lists the
+  offending files; add their extension and rerun - the deploy resets its clone, so the refused commit is discarded.
+- **GitHub Pages** (`deploy-to-github-pages.yml`, manual dispatch) pushes `gh-pages`, and then GitHub's own Pages build
+  publishes it. That build has failed instantly once and stalled once (2026-11-06) with nothing wrong in the content; the
+  workflow still reports success. Check `gh api repos/LostBeard/SpawnDev.AI/pages/builds/latest`, and re-request with
+  `gh api -X POST repos/LostBeard/SpawnDev.AI/pages/builds`. Verify a deploy by the live wasm, not the workflow status.
 
 ⚠️ **The tool finds the repo from `[CallerFilePath]`, not from the working directory or
 `AppContext.BaseDirectory`** - a single-file `dotnet run` builds into `%TEMP%\dotnet\...`, so anything
