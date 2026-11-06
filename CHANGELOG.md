@@ -2,6 +2,24 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.4.3 - 2026-11-06 - SpawnDev.ILGPU.ML 5.8.5 (faster Q8_0 decode)
+
+On SpawnDev.ILGPU.ML 5.8.5 (SpawnDev.ILGPU 5.4.16, SpawnDev.AI stays 1.3.0). No API change. Skips 5.8.4: its CUDA-graph decode
+replay was not invalidated by an in-place LoRA swap, which ServerHost `lora-test` caught (batch decoder base after clearing
+the adapter 2/24; 5.8.5: 24/24).
+
+- Q8_0 GGUF models decode about 1.8x faster on CUDA (a vector Q8_0 GEMV, decode attention that skips chunks past the
+  position, CUDA-graph replay of decode steps, Q8_0 prefill on tensor cores). ServerHost chat-bench, qwen3:1.7b-q8_0,
+  RTX 4070, batch decoder greedy, median of 5: 82.5 -> 164.0 tok/s at a 26-token prompt, 71.9 -> 140.8 at 1,602 tokens;
+  greedy text byte-identical to 5.8.3 on both engines at both lengths.
+- An in-place adapter swap (`ModelRegistry.SetAdapterAsync` on a resident batch-decoder model) takes effect on the next
+  decode on CUDA and WebGPU: the decoder now drops its recorded decode steps when its LoRA set changes.
+- ML also fixes a per-run output leak in 23 pipelines and adds a Q6_K vector decode GEMV.
+- Release gate (RTX 4070 quiet, ML 5.8.5): heavy suite 89/89, `pass-test` 15/15, `lora-test` cuda 10/10, browser qwen3:4b
+  decode 67.1 tok/s.
+- Known: `lora-test opencl` session engine, base phase, is 23/24 against the fixture (5.8.3: 24/24): a near-tie on one
+  line (syn-30 step 3, logits 11.40754 vs 11.39705) flipped by 5.8.4's tree-summed RMSNorm. CUDA is 24/24.
+
 ## SpawnDev.AI.Server 1.4.2 - 2026-11-05 - SpawnDev.ILGPU.ML 5.8.3
 
 On SpawnDev.ILGPU.ML 5.8.3 and SpawnDev.ILGPU 5.4.16 (SpawnDev.SpawnJS 3.0.8; SpawnDev.AI stays 1.3.0). No API change.
