@@ -13,6 +13,7 @@ dotnet run tools/<name>.cs -- [url]
 | tool | answers |
 |---|---|
 | `drive-ai-demo.cs` | Types into the composer and checks the answer - the single-shot UI gate. |
+| `check-composer-focus.cs` | **Does the message box keep the keyboard across a turn?** Keyboard only: types, sends with Enter, types during and after the reply WITHOUT clicking, and requires the keystrokes in the box, no stray newline from the sending Enter, and Shift+Enter to stay a line break. Drivers wait for `.composer[data-busy="false"]`, not a re-enabled box. |
 | `drive-ai-room.cs` | Group chat: makes two characters, sets the scene, adds both to the room, sends one message, asserts BOTH answered under their own names. Deletes what it created. |
 | `drive-ai-reachy.cs` | HARDWARE gate: a character whose body is the real Reachy Mini. Reads the daemon's actual head pose out of band (baseline taken AWAKE, since wake_up alone lifts it ~0.5 rad) and requires a real classified gesture. Always parks in a finally: home, sleep, motors off. |
 | `drive-chat-voice.cs` | The 🎤 button: records, transcribes in the worker, and lands an editable transcript in the composer. Asserts content words plus a 70% word-overlap floor. |

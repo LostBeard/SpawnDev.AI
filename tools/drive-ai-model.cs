@@ -47,7 +47,7 @@ foreach (var prompt in prompts)
     await page.FillAsync("textarea", prompt);
     await page.PressAsync("textarea", "Enter");
     // First message downloads + loads the model on the GPU, then streams.
-    await page.WaitForSelectorAsync("textarea:not([disabled])", new() { Timeout = 600000 });
+    await page.WaitForSelectorAsync(".composer[data-busy=\"false\"]", new() { Timeout = 600000 });
     Console.WriteLine($"[gate] answered in {(DateTime.UtcNow - t0).TotalSeconds:F1}s");
 }
 

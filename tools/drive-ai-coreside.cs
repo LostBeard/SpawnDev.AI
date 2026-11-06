@@ -45,7 +45,7 @@ async Task<bool> Chat(string label, string q)
     {
         await page.FillAsync("textarea", q);
         await page.PressAsync("textarea", "Enter");
-        await page.WaitForSelectorAsync("textarea:not([disabled])", new() { Timeout = 600000 });
+        await page.WaitForSelectorAsync(".composer[data-busy=\"false\"]", new() { Timeout = 600000 });
         if (await ErrorUi()) { Console.WriteLine($"[coreside] {label} -> ERROR UI"); steps.Add($"{label}=ERRUI"); return false; }
         Console.WriteLine($"[coreside] {label} returned (no crash)");
         steps.Add($"{label}=ok");

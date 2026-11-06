@@ -116,7 +116,7 @@ Require(prepCaptions.Count > 0,
 await page.FillAsync("textarea", "Say hello in one short sentence.");
 var turnStarted = DateTime.UtcNow;
 await page.PressAsync("textarea", "Enter");
-await page.WaitForSelectorAsync("textarea:not([disabled])", new() { Timeout = 420000 });
+await page.WaitForSelectorAsync(".composer[data-busy=\"false\"]", new() { Timeout = 420000 });
 Console.WriteLine($"[voice] turn done in {(DateTime.UtcNow - turnStarted).TotalSeconds:F1}s");
 
 var gaps = new List<double>();

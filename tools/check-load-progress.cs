@@ -119,7 +119,7 @@ async Task<(List<(double At, string Text, string Width)> Captions, double Total,
     // caption is removed on purpose - the text is its own indicator - so measuring the final caption's
     // life to the end of the turn would score every healthy turn as a multi-second stall.
     double captionsEndedAt = 0;
-    var done = page.WaitForSelectorAsync("textarea:not([disabled])", new() { Timeout = 300000 });
+    var done = page.WaitForSelectorAsync(".composer[data-busy=\"false\"]", new() { Timeout = 300000 });
     while (!done.IsCompleted)
     {
         await Task.Delay(300);

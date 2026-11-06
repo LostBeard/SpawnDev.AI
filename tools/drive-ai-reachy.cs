@@ -177,7 +177,7 @@ await page.FillAsync(".settings.room input[type=range] >> nth=0", "1");
         }
     });
 
-    await page.WaitForSelectorAsync("textarea:not(.sysbox):not([disabled])", new() { Timeout = 420000 });
+    await page.WaitForSelectorAsync(".composer[data-busy=\"false\"]", new() { Timeout = 420000 });
     await Task.Delay(1500);   // let the last gesture finish
 
     var transcript = await page.InnerTextAsync(".transcript");

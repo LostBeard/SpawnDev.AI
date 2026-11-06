@@ -486,8 +486,8 @@ try
             // the first turn after a failed preload loads the whole model - minutes. Filling a disabled
             // textarea fails with "element is not enabled" after 30s, which reads as a broken selector
             // rather than as the app legitimately being busy.
-            Console.WriteLine("[cdp] waiting for the composer to be enabled (the model may be loading)...");
-            for (var w = 0; w < 360 && !await app.Locator(Composer).IsEnabledAsync(); w++)
+            Console.WriteLine("[cdp] waiting for the composer to be idle (the model may be loading)...");
+            for (var w = 0; w < 360 && await app.Locator(".composer[data-busy=\"true\"]").CountAsync() > 0; w++)
                 await Task.Delay(1000);
 
             await app.FillAsync(Composer, askText ?? "Say hello, and tilt your head while you do.");

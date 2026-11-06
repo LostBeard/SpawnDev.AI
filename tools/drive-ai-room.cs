@@ -97,7 +97,7 @@ await page.PressAsync("textarea:not(.sysbox)", "Enter");
 
 // The round is over when the composer re-enables (_busy = false in RunRoomRoundAsync's finally).
 // Two generations plus a cold model load on the first.
-await page.WaitForSelectorAsync("textarea:not(.sysbox):not([disabled])", new() { Timeout = 420000 });
+await page.WaitForSelectorAsync(".composer[data-busy=\"false\"]", new() { Timeout = 420000 });
 var total = (DateTime.UtcNow - t0).TotalSeconds;
 
 // ── The model catalogue, AFTER a model has actually loaded ──────────────────────────────────────────

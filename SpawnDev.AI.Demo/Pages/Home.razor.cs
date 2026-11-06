@@ -277,6 +277,35 @@ public partial class Home : IDisposable
     async Task OnKeyDown(KeyboardEventArgs e)
     { if (e.Key == "Enter" && !e.ShiftKey) await SendAsync(); }
 
+    /// <summary>The document, held for the composer's Enter listener (unsubscribed in Dispose).</summary>
+    Document? _document;
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        _document = JS.Get<Document>("document");
+        _document.OnKeyDown += SuppressComposerEnterNewline;
+    }
+
+    /// <summary>
+    /// Cancels the newline that a plain Enter would type into the message box after it has sent the message.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ HIDDEN UNTIL THE BOX STOPPED BEING DISABLED. Enter sends (OnKeyDown) and the send clears the box, and THEN
+    /// the key's default action types a newline into it - so the next message started on a blank line
+    /// (MEASURED by tools/check-composer-focus.cs: the box held "\ntyped while busy..."). While the box was
+    /// disabled during a turn, the disabled box swallowed that newline. Blazor's <c>@onkeydown:preventDefault</c> is
+    /// decided at render time, not per key, so it cannot cancel Enter while letting Shift+Enter (a line break) and
+    /// every other key through - a native listener can. On the DOCUMENT so it survives the composer being
+    /// re-rendered; the default action runs after dispatch, so cancelling in the bubble phase still stops it.
+    /// <c>isComposing</c>: Enter that commits an IME composition is not a send and must keep its default.
+    /// </remarks>
+    void SuppressComposerEnterNewline(KeyboardEvent e)
+    {
+        if (e.Key != "Enter" || e.ShiftKey || e.IsComposing) return;
+        if (e.JSRef!.Get<string?>("target.id") == "composer-input") e.PreventDefault();
+    }
+
     /// <summary>
     /// Stops the in-flight generation. Safe to press at any time - a no-op when nothing is generating.
     /// </summary>
@@ -2686,6 +2715,12 @@ public partial class Home : IDisposable
 
     public void Dispose()
     {
+        if (_document != null)
+        {
+            _document.OnKeyDown -= SuppressComposerEnterNewline;
+            _document.Dispose();
+            _document = null;
+        }
         _mic?.Dispose();
         _mic = null;
     }

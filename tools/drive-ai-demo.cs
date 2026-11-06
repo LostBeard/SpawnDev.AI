@@ -65,8 +65,8 @@ var t0 = DateTime.UtcNow;
 await page.PressAsync("textarea", "Enter");
 
 // First request: hub download (~11s on the LAN) + GPU load + capture warmup, then streaming.
-// Generation is finished when the composer re-enables (_busy = false re-renders the input enabled).
-await page.WaitForSelectorAsync("textarea:not([disabled])", new() { Timeout = 300000 });
+// Generation is finished when the composer reports data-busy="false" (_busy cleared).
+await page.WaitForSelectorAsync(".composer[data-busy=\"false\"]", new() { Timeout = 300000 });
 var total = (DateTime.UtcNow - t0).TotalSeconds;
 
 var transcript = await page.InnerTextAsync(".transcript");

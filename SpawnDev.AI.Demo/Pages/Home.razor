@@ -676,10 +676,18 @@
            become the smallest target on the screen. Every control that is not "type" or "send" now sits
            on a second row that WRAPS, so nothing can squeeze the message box again as features are
            added - which is exactly how it got to nine. *@
-        <div class="composer">
+        @* data-busy is the "a turn is in flight" signal for tools/ drivers: they used to wait for the message box
+           to be re-enabled, which stopped meaning anything when the box stopped being disabled. *@
+        <div class="composer" data-busy="@(_busy ? "true" : "false")">
             <div class="composer-main">
-                <textarea @bind="_input" @bind:event="oninput" @onkeydown="OnKeyDown" rows="1"
-                          placeholder="Message — or /model, /image-model, or ask for a picture…" disabled="@_busy"></textarea>
+                @* ⚠️ NOT disabled while busy. Captain: "i send a message with the enter key... the ai replies... i
+                   have to click the message box to give it focus again before i can type again." Disabling a
+                   focused element takes the focus away and nothing gives it back, so every turn ended with a
+                   click. Left enabled, the caret stays where it was and the next message can be typed while
+                   the reply streams. Nothing is sent early: SendAsync returns before touching the text while
+                   _busy, and the Send button below is still disabled. *@
+                <textarea id="composer-input" @bind="_input" @bind:event="oninput" @onkeydown="OnKeyDown" rows="1"
+                          placeholder="Message — or /model, /image-model, or ask for a picture…"></textarea>
                 @* Stop REPLACES Send while a generation is in flight, and is bound to _generationCts rather
                    than _busy: _busy is also true while transcribing or generating an image, where there is
                    no chat generation to cancel and the button would be dead. *@
