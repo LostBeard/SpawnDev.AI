@@ -2,6 +2,14 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.4.2 - 2026-11-05 - SpawnDev.ILGPU.ML 5.8.3
+
+On SpawnDev.ILGPU.ML 5.8.3 and SpawnDev.ILGPU 5.4.16 (SpawnDev.SpawnJS 3.0.8; SpawnDev.AI stays 1.3.0). No API change.
+
+- The batch decoder's prefill gets ML 5.8.3's rebuilt tensor-core GEMMs and the ldmatrix flash prefill (all bit-identical to the kernels
+  they replace).
+- LoRA training for Vertex: the llama3.1:8b step (1,600 tokens, rank 16, RTX 4070) 4.5 s -> 1.78 s since 5.8.2.
+
 ## SpawnDev.AI.Server 1.4.1 - 2026-11-05 - training data that matches inference, LoRA adapters
 
 On SpawnDev.ILGPU.ML 5.8.2 (SpawnDev.AI stays 1.3.0). For Vertex's LoRA training with SpawnDev.ILGPU.ML.
@@ -17,7 +25,7 @@ On SpawnDev.ILGPU.ML 5.8.2 (SpawnDev.AI stays 1.3.0). For Vertex's LoRA training
   remembered per model and applied at every load; on a resident batch-decoder model swapped in place (no reload); null = base model.
   `IAiModelProvider.LoadAsync` gained a LoRA overload (default implementation: base model only).
 - Release gate (RTX 4070 quiet, stable packages after a cold nuget.org-only restore): heavy suite 89/89, browser decode qwen3:4b 65.6 tok/s.
-- Tests: ServerHost `pass-test` (15 checks) and `lora-test` (13 checks: SpawnDev.ILGPU.ML's smollm2:360m synthetic adapter fixture, both
+- Tests: ServerHost `pass-test` (15 checks) and `lora-test` (10 checks: SpawnDev.ILGPU.ML's smollm2:360m synthetic adapter fixture, both
   engines 24/24 equal to ML's own adapter ids, cleared 24/24 base, in-place swap 24/24).
 
 ## SpawnDev.AI 1.3.0 + SpawnDev.AI.Server 1.4.0 - 2026-11-03 - long-term memory, faces, model install, the batch decoder by default
