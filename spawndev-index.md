@@ -304,7 +304,7 @@ Repo: https://github.com/LostBeard/SpawnDev.Blazor.UnitTesting - full README + C
 ## SpawnDev.BlazorJS
 Full Blazor WebAssembly and Javascript interop. Supports all Javascript data types and web browser APIs.
 
-> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.BlazorJS saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  Full Blazor WebAssembly and JavaScript interop. 1,021 strongly typed C# wrappers for browser APIs - create JavaScript objects, access properties, call methods, and handle events the .NET way without writing JavaScript.  **[Full API Documentation](Docs/README.md)** - Complete MDN-style API reference with guides, 1,021 type...
+> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.BlazorJS saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  Full Blazor WebAssembly and JavaScript interop. 1,056 strongly typed C# wrappers for browser APIs - create JavaScript objects, access properties, call methods, and handle events the .NET way without writing JavaScript.  **[Full API Documentation](Docs/README.md)** - Complete MDN-style API reference with guides, 1,056 type...
 
 Repo: https://github.com/LostBeard/SpawnDev.BlazorJS - full README + CHANGELOG available via github_lookup.
 
