@@ -2,6 +2,24 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.4.5 - 2026-11-10 - SpawnDev.ILGPU.ML 5.8.11 (faster CUDA decode)
+
+On SpawnDev.ILGPU.ML 5.8.11 (SpawnDev.ILGPU 5.4.24, SpawnDev.AI stays 1.3.0). No API change.
+
+- Faster decode on the batch decoder (ML 5.8.7 - 5.8.11: GEMV warp reductions, vector decode attention, fused Add+RMSNorm,
+  top-K on the GPU, and on CUDA the v projection overlapped with q/k through CUDA graph fork/join). ServerHost chat-bench,
+  qwen3:1.7b-q8_0, RTX 4070, batch decoder greedy, median of 5: 166.9 -> 182.3 tok/s at a 26-token prompt, 141.3 -> 174.1
+  at 1,602 tokens. Greedy text identical to 5.8.6 on both engines at a 26-token prompt.
+- ML 5.8.7+ builds with FP contraction and explicit FMAs, and 5.8.11 fixes the rotary of joined projections (CUDA logits move
+  by up to ~3e-4). LoRA over Q8_0 (`lora-ab`, smollm2:360m-instruct-q8_0): greedy ids identical to 5.8.6 on all 24 lines in
+  every phase.
+- `lora-test cuda`: the session engine's base phase is now 23/24 on CUDA too (syn-30 step 3, the same near-tie OpenCL has
+  had since 5.8.4): '.' 11.4022 vs '0' 11.4019 at that step on CUDA, a margin of 3e-4 against a 5e-3 logit gap between the
+  engines (measured with ML's Bench_OllamaGreedyDivergence_Margin). The batch decoder is 24/24. `lora-test` now names each mismatching line, its first differing step and both
+  id sequences.
+- Release gate (RTX 4070 quiet, ML 5.8.11): heavy suite 89/89, `pass-test` 15/15, `lora-test` cuda 9/10 (the near-tie above),
+  `lora-ab` 24/24 vs 5.8.6, chat-bench as above.
+
 ## SpawnDev.AI.Server 1.4.4 - 2026-11-06 - SpawnDev.ILGPU.ML 5.8.6 (faster Q8_0 decode in the browser)
 
 On SpawnDev.ILGPU.ML 5.8.6 (SpawnDev.ILGPU 5.4.16, SpawnDev.AI stays 1.3.0). No API change.

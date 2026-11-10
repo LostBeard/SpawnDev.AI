@@ -73,6 +73,14 @@ internal static class LoraChecks
             int b = Same(baseOut, refs, r => r.base_ids);
             int differ = baseOut.Select((g, i) => g.SequenceEqual(adapterOut[i]) ? 0 : 1).Sum();
             Console.WriteLine($"  [{engine}] base: {b}/{refs.Count} equal ML's base ids, {differ}/{refs.Count} differ from the adapter output");
+            // name each miss (line id, the first differing position, got vs want) so a near-tie can be measured at that step
+            for (int i = 0; i < refs.Count; i++)
+            {
+                if (baseOut[i].SequenceEqual(refs[i].base_ids)) continue;
+                int at = 0;
+                while (at < baseOut[i].Length && at < refs[i].base_ids.Length && baseOut[i][at] == refs[i].base_ids[at]) at++;
+                Console.WriteLine($"    miss {refs[i].id}: first difference at generated token {at}; got [{string.Join(",", baseOut[i])}], want [{string.Join(",", refs[i].base_ids)}], prompt {refs[i].prompt_ids.Length} ids");
+            }
             Check(b == refs.Count, $"{engine}: cleared, the model generates ML's base ids on every line ({b}/{refs.Count})");
             Check(differ == refs.Count, $"{engine}: base and adapter outputs differ on every line ({differ}/{refs.Count})");
 

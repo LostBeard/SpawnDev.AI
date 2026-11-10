@@ -1,4 +1,4 @@
-# CLAUDE.md - SpawnDev.AI
+﻿# CLAUDE.md - SpawnDev.AI
 
 Local LLM + image-generation serving for .NET - desktop and browser - on SpawnDev.ILGPU.ML.
 Read `D:\users\tj\Projects\CLAUDE.md` first (global rules).
@@ -92,7 +92,7 @@ does not.
 (delete bin/obj of SpawnDev.AI, .Server, .ServerHost, .Demo, .TestRunner after any SpawnDev.ILGPU.ML version change)
 dotnet run --project SpawnDev.AI.TestRunner -c Release -- --heavy --verbose      89 tests incl. browser DecodeRate
 dotnet run --project SpawnDev.AI.ServerHost -c Release -- pass-test               PassObserver, 15 checks
-dotnet run --project SpawnDev.AI.ServerHost -c Release -- lora-test cuda          LoRA adapters, 10 checks
+dotnet run --project SpawnDev.AI.ServerHost -c Release -- lora-test cuda          LoRA adapters, 10 checks (9/10 since ML 5.8.7: syn-30 near-tie, below)
 CHATBENCH_GREEDY_OUT=out.json dotnet run --project SpawnDev.AI.ServerHost -c Release -- chat-bench qwen3:1.7b-q8_0 cuda 0
                                                                                    (and contextWords 1300) decode rate + greedy text
 dotnet run --project SpawnDev.AI.ServerHost -c Release -- lora-ab cuda smollm2:360m-instruct-q8_0 out.json
@@ -103,7 +103,12 @@ dotnet run --project SpawnDev.AI.ServerHost -c Release -- lora-ab cuda smollm2:3
   ML change that alters float order (Q8 vector GEMV, Q8_0G regrouping) can flip a near-tie, and ML exposes `GGUF_*`
   switches to turn those paths off for an exact comparison - ask Tuvok which ones the release touched.
 - `lora-test opencl`: the session engine's base phase is 23/24 since ML 5.8.4 (syn-30 step 3, a near-tie: logits
-  11.40754 vs 11.39705, flipped by a tree-summed RMSNorm). CUDA is 10/10. Not a gate failure.
+  11.40754 vs 11.39705, flipped by a tree-summed RMSNorm). Not a gate failure.
+- `lora-test cuda`: the session engine also flips syn-30 at step 3 since ML 5.8.7+ (FP contraction, explicit FMAs): '.' 11.4022
+  vs '0' 11.4019, a margin of 3e-4, against an engine-to-engine logit gap of 5e-3 at that step (the batch decoder: '0' 11.4069
+  vs '.' 11.3970). A near-tie, so CUDA is 9/10 with that one line; 24/24 on the batch decoder. Measured by Tuvok with ML's
+  `Bench_OllamaGreedyDivergence_Margin` (GREEDY_DIV_MODEL=smollm2:360m, GREEDY_DIV_PROMPT_IDS=<syn-30 prompt_ids>,
+  GREEDY_DIV_STEPS=9). Any OTHER miss is a real failure: `lora-test` prints each miss's line id and first differing step.
 - Then a COLD nuget.org-only restore of Server, ServerHost, Demo and TestRunner (empty `NUGET_PACKAGES`, a config with only
   nuget.org). Pass `--no-cache` if an earlier restore ran before the new ML version was indexed: NuGet's HTTP cache keeps
   the old version list (~30 min) and the restore says "Nearest version" is the previous one.
