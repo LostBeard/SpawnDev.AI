@@ -56,7 +56,12 @@ internal static class ChatBench
         var greedyText = new Dictionary<GgufEngine, string>();
         foreach (var engine in new[] { GgufEngine.Generator, GgufEngine.Auto })
         {
-            var provider = new OllamaCacheModelProvider(new OllamaModelStore()) { Engine = engine };
+            var provider = new OllamaCacheModelProvider(new OllamaModelStore())
+            {
+                Engine = engine,
+                // SPAWNDEV_AI_INT8_DECODE=1 benches the opt-in fast int8 decode (the same switch the host reads)
+                FastInt8Decode = Environment.GetEnvironmentVariable("SPAWNDEV_AI_INT8_DECODE") == "1" ? true : null,
+            };
             await using var registry = new ModelRegistry(provider, acc);
             var chat = new AiChatEngine(registry);
             string engineUsed = "?"; int reused = 0;

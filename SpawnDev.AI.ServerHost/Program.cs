@@ -156,7 +156,11 @@ if (args.Length > 0 && args[0] == "probe-native")
 
 var store = new OllamaModelStore();
 Console.WriteLine($"[SpawnDev.AI] Ollama cache: {OllamaModelStore.DefaultRoot()} (exists: {store.CacheExists}, models: {store.List().Count})");
-await using var registry = new ModelRegistry(new OllamaCacheModelProvider(store), accelerator);
+// SPAWNDEV_AI_INT8_DECODE=1: the opt-in faster decode at a small accuracy cost (int8 activations in the Q4_K / Q6_K decode
+// GEMVs, CUDA only; see OllamaCacheModelProvider.FastInt8Decode). Off unless asked for.
+bool fastInt8 = Environment.GetEnvironmentVariable("SPAWNDEV_AI_INT8_DECODE") == "1";
+if (fastInt8) Console.WriteLine("[SpawnDev.AI] fast int8 decode: ON (SPAWNDEV_AI_INT8_DECODE=1; CUDA Q4_K/Q6_K models, small accuracy cost)");
+await using var registry = new ModelRegistry(new OllamaCacheModelProvider(store) { FastInt8Decode = fastInt8 ? true : null }, accelerator);
 var engine = new AiChatEngine(registry)
 {
     PerfLog = line => Console.WriteLine($"[perf] {line}"),

@@ -2,6 +2,20 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## Unreleased (SpawnDev.AI.Server)
+
+On SpawnDev.ILGPU.ML 5.8.12 (SpawnDev.ILGPU 5.4.25).
+
+- **Opt-in fast int8 decode (off by default).** `OllamaCacheModelProvider.FastInt8Decode` (desktop host:
+  `SPAWNDEV_AI_INT8_DECODE=1`) turns on SpawnDev.ILGPU.ML's int8-activation decode GEMVs (llama.cpp / Ollama's MMVQ
+  scheme) for Q4_K / Q6_K models on CUDA: faster decode at a small, measured accuracy cost (KL 5.5e-3 against fp32, top-1
+  96.4%, perplexity +1.1%, measured by SpawnDev.ILGPU.ML). ServerHost chat-bench, qwen3:1.7b (Q4_K_M), RTX 4070, 26-token
+  prompt, interleaved off / on / on / off: batch decoder 233.7 / 234.7 -> 259.2 / 259.8 tok/s (+10.9%); the greedy text
+  is identical for its first 134 characters, then continues as a coherent alternative. CUDA only (no effect on WebGPU /
+  OpenCL, so the browser demo has no toggle); not Q8_0 / F16 / MXFP4, not the Q6_K LM head, not batched multi-sequence
+  steps. Applied when a model loads (the switch is process-wide in SpawnDev.ILGPU.ML): set it before loading.
+- ML 5.8.12 also brings CUDA prefill ~+23% (F16 split-MMA).
+
 ## SpawnDev.AI.Server 1.4.5 - 2026-11-10 - SpawnDev.ILGPU.ML 5.8.11 (faster CUDA decode)
 
 On SpawnDev.ILGPU.ML 5.8.11 (SpawnDev.ILGPU 5.4.24, SpawnDev.AI stays 1.3.0). No API change.

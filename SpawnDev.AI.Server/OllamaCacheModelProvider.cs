@@ -51,6 +51,23 @@ public sealed class OllamaCacheModelProvider : IAiModelProvider
     /// </summary>
     public GgufEngine Engine { get; set; } = GgufEngine.Auto;
 
+    /// <summary>
+    /// OPT-IN faster decode at a small accuracy cost (off by default): the one-row Q4_K / Q6_K decode GEMVs read int8 activations
+    /// (llama.cpp / Ollama's MMVQ scheme: each 32-value block of the activations quantized to int8, dotted with dp4a) instead of
+    /// fp32. MEASURED by SpawnDev.ILGPU.ML 5.8.12 (RTX 4070, qwen3:1.7b Q4_K_M): decode 237 / 222 -> 261 / 242 tok/s (short /
+    /// long prompt), at KL 5.5e-3 against fp32, top-1 agreement 96.4%, perplexity +1.1%. Greedy text follows fp32 for a while
+    /// and then continues as a coherent alternative (ServerHost chat-bench, same model, 26-token prompt: identical for the first
+    /// 134 characters; batch decoder 233.7 / 234.7 -> 259.2 / 259.8 tok/s, interleaved, 2026-11-10). CUDA only (dp4a + 32-lane shuffles); no effect on WebGPU / OpenCL /
+    /// CPU. Covers the Q4_K GEMVs and the Q6_K ones of the split route (ffn_down, v); NOT the Q6_K LM head (kept on fp32
+    /// activations on purpose), Q8_0, F16 or MXFP4 weights; and only single-sequence decode steps (a batched step of 2+
+    /// sequences keeps fp32 activations, so the gain shrinks under concurrent load). SpawnDev.ILGPU.ML plans an int8 prefill
+    /// GEMM under the same switch, which will then change prefill numerics too. null (the default) leaves SpawnDev.ILGPU.ML's
+    /// own setting alone (off, or env GGUF_INT8_ACT=1); true / false set it. The switch is process-wide in SpawnDev.ILGPU.ML
+    /// and is applied when a model loads, so set it before loading: a model already resident keeps the path its captured
+    /// decode steps were recorded with until it is reloaded.
+    /// </summary>
+    public bool? FastInt8Decode { get; set; }
+
     public Task<LoadedModel> LoadAsync(string name, Accelerator accelerator, int maxSeqLen,
         bool enableWebGPUDecodeCapture, CancellationToken ct = default)
         => LoadAsync(name, accelerator, maxSeqLen, enableWebGPUDecodeCapture, null, ct);
@@ -70,6 +87,8 @@ public sealed class OllamaCacheModelProvider : IAiModelProvider
             tok = SentencePieceTokenizer.FromGGUF(gguf)
                 ?? throw new InvalidOperationException($"'{meta.Name}' has no SentencePiece tokenizer metadata.");
             int ctxCap = gguf.ContextLength > 0 ? Math.Min((int)gguf.ContextLength, maxSeqLen) : maxSeqLen;
+            if (FastInt8Decode is bool int8)
+                SpawnDev.ILGPU.ML.Kernels.FusedDequantMatMul.Int8ActGemv = int8;
             gen = await GgufGenerator.CreateAsync(accelerator, fs, ctxCap, model: gguf, engine: Engine, ownsStream: true, ct: ct, lora: lora).ConfigureAwait(false);
         }
         catch { fs.Dispose(); throw; }
