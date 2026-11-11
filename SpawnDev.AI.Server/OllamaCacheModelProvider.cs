@@ -93,13 +93,6 @@ public sealed class OllamaCacheModelProvider : IAiModelProvider
         }
         catch { fs.Dispose(); throw; }
         gen.EnableWebGPUDecodeCapture = enableWebGPUDecodeCapture;
-        // SpawnDev.ILGPU.ML 5.8.11 / 5.8.12 BUG (Tuvok, 2026-11-10; fixed in ML 66de8873, release 5.8.13): on CUDA the overlapped
-        // v projection (GgufBatchDecoder.OverlapV, a second stream) shared q|k's FusedDequantMatMul, whose prefill of 512+ rows
-        // stages dequantized weights in scratch - v's weights could overwrite q|k's mid-GEMM. Prompts over 512 tokens on models
-        // whose v block type differs from q|k (common in Q4_K_M: llama3, qwen2.5) got logits off by up to 27. Off until the ML
-        // version with the fix: costs the overlap's ~4% decode. REMOVE this when moving to ML 5.8.13+.
-        if (gen.BatchDecoder is { } batchDecoder)
-            batchDecoder.OverlapV = false;
         Console.WriteLine($"[SpawnDev.AI] {meta.Name}: decoding with {gen.Engine}{(gen.EngineReason.Length > 0 ? " (" + gen.EngineReason + ")" : "")}");
         return new LoadedModel
         {

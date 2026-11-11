@@ -2,9 +2,16 @@
 
 Notable changes per release. Stable from 1.1.0.
 
-## Unreleased (SpawnDev.AI.Server)
+## SpawnDev.AI.Server 1.4.6 - 2026-11-11 - SpawnDev.ILGPU.ML 5.8.13 (CUDA long-prompt fix), opt-in fast int8 decode
 
-On SpawnDev.ILGPU.ML 5.8.12 (SpawnDev.ILGPU 5.4.25).
+On SpawnDev.ILGPU.ML 5.8.13 (SpawnDev.ILGPU 5.4.25, SpawnDev.AI stays 1.3.0).
+
+- **FIXED (CUDA, in SpawnDev.ILGPU.ML): wrong logits on prompts over 512 tokens in 1.4.5.** ML 5.8.11 / 5.8.12 ran the
+  v projection on a second CUDA stream sharing q|k's matmul scratch; from 512 prefill rows v's dequantized weights could
+  overwrite q|k's mid-GEMM on models whose v block type differs from q|k (most Q4_K_M builds: llama3, qwen2.5; qwen3 has
+  F16 v and was not affected). Measured by SpawnDev.ILGPU.ML on qwen2.5 1.5B Q4_K_M, 854-token prompt: logits off by up
+  to 27. ML 5.8.13 gives v its own matmul (overlap on / off bit-identical). WebGPU / OpenCL were never affected. 1.4.5
+  users on CUDA: update.
 
 - **Opt-in fast int8 decode (off by default).** `OllamaCacheModelProvider.FastInt8Decode` (desktop host:
   `SPAWNDEV_AI_INT8_DECODE=1`) turns on SpawnDev.ILGPU.ML's int8-activation decode GEMVs (llama.cpp / Ollama's MMVQ
