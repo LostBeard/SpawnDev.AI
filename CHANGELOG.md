@@ -21,6 +21,11 @@ On SpawnDev.ILGPU.ML 5.8.13 (SpawnDev.ILGPU 5.4.25, SpawnDev.AI stays 1.3.0).
   is identical for its first 134 characters, then continues as a coherent alternative. CUDA only (no effect on WebGPU /
   OpenCL, so the browser demo has no toggle); not Q8_0 / F16 / MXFP4, not the Q6_K LM head, not batched multi-sequence
   steps. Applied when a model loads (the switch is process-wide in SpawnDev.ILGPU.ML): set it before loading.
+  **Correction (2026-11-11, after release):** on ML 5.8.13 the same switch ALSO runs prefill (prompts of 2+ tokens) of
+  Q4_K / Q6_K weights as int8 tensor-core GEMMs (GPUs with int8 tensor cores; env GGUF_INT8_ACT_GEMM=0 keeps prefill on
+  the f16 path), so it changes prefill numerics too: measured by SpawnDev.ILGPU.ML (RTX 4070, qwen3:1.7b Q4_K_M) at KL
+  4.3e-3 against fp32 on 32..320-token prefills, the same top-1 token 10 of 10. The bench numbers above were taken on ML
+  5.8.12, before the int8 prefill existed.
 - ML 5.8.12 also brings CUDA prefill ~+23% (F16 split-MMA).
 
 ## SpawnDev.AI.Server 1.4.5 - 2026-11-10 - SpawnDev.ILGPU.ML 5.8.11 (faster CUDA decode)

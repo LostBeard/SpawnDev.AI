@@ -1,4 +1,4 @@
-using ILGPU.Runtime;
+﻿using ILGPU.Runtime;
 using SpawnDev.ILGPU.ML;
 using SpawnDev.ILGPU.ML.GGUF;
 using SpawnDev.ILGPU.ML.Pipelines;
@@ -60,8 +60,11 @@ public sealed class OllamaCacheModelProvider : IAiModelProvider
     /// 134 characters; batch decoder 233.7 / 234.7 -> 259.2 / 259.8 tok/s, interleaved, 2026-11-10). CUDA only (dp4a + 32-lane shuffles); no effect on WebGPU / OpenCL /
     /// CPU. Covers the Q4_K GEMVs and the Q6_K ones of the split route (ffn_down, v); NOT the Q6_K LM head (kept on fp32
     /// activations on purpose), Q8_0, F16 or MXFP4 weights; and only single-sequence decode steps (a batched step of 2+
-    /// sequences keeps fp32 activations, so the gain shrinks under concurrent load). SpawnDev.ILGPU.ML plans an int8 prefill
-    /// GEMM under the same switch, which will then change prefill numerics too. null (the default) leaves SpawnDev.ILGPU.ML's
+    /// sequences keeps fp32 activations, so the gain shrinks under concurrent load). Since SpawnDev.ILGPU.ML 5.8.13 the same
+    /// switch also runs PREFILL (prompts of 2+ tokens) of Q4_K / Q6_K weights as int8 tensor-core GEMMs (Ollama's MMQ scheme,
+    /// GPUs with int8 tensor cores; env GGUF_INT8_ACT_GEMM=0 keeps prefill on the f16 path), so prefill numerics change too:
+    /// MEASURED by SpawnDev.ILGPU.ML (RTX 4070, qwen3:1.7b Q4_K_M), prefills of 32..320 tokens at KL 4.3e-3 against fp32, the
+    /// same top-1 token 10 of 10. null (the default) leaves SpawnDev.ILGPU.ML's
     /// own setting alone (off, or env GGUF_INT8_ACT=1); true / false set it. The switch is process-wide in SpawnDev.ILGPU.ML
     /// and is applied when a model loads, so set it before loading: a model already resident keeps the path its captured
     /// decode steps were recorded with until it is reloaded.
