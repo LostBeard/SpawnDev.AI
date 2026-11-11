@@ -113,3 +113,8 @@ dotnet run --project SpawnDev.AI.ServerHost -c Release -- lora-ab cuda smollm2:3
   nuget.org). Pass `--no-cache` if an earlier restore ran before the new ML version was indexed: NuGet's HTTP cache keeps
   the old version list (~30 min) and the restore says "Nearest version" is the previous one.
 - ⭐ `lora-test` is what caught ML 5.8.4's stale CUDA-graph replay after an in-place adapter clear (2/24) - keep it in.
+- 🔴 Add a LONG-prompt bench on a model whose attention v block type differs from q|k (most Q4_K_M builds, e.g.
+  `chat-bench llama3.1:8b cuda 1300`), engines compared and against the previous ML version. qwen3 Q4_K_M has F16 v, which hid
+  ML 5.8.11/5.8.12's OverlapV race (CUDA prefill over 512 tokens, v's weights overwriting q|k's scratch, logits off by up to
+  27) from every gate this repo ran; SpawnDev.AI.Server 1.4.5 shipped with it (2026-11-10). Gate models must cover the
+  weight layouts users run, not only the fastest one.
