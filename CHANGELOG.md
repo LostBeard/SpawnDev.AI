@@ -2,6 +2,26 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.4.7 - 2026-11-12 - SpawnDev.ILGPU.ML 5.8.15 (short prompts' first token sooner on CUDA), SpawnDev.ILGPU 5.4.28
+
+On SpawnDev.ILGPU.ML 5.8.15 (SpawnDev.ILGPU 5.4.28, SpawnDev.AI stays 1.3.0). No API change.
+
+- **Short prompts answer sooner on CUDA** (SpawnDev.ILGPU.ML 5.8.15, measured by it on qwen3:1.7b Q4_K_M, RTX 4070): the
+  first token of a short prompt about 2.7x sooner by default and about 2.2x with the opt-in `FastInt8Decode`. The batch
+  decoder now hands out a completed token before queuing the next step, and prefill of prompts of 64 tokens or fewer uses
+  split-K and 32-row-tile GEMMs; long prompts and decode speed are unchanged. (GGUF_HANDOUT_FIRST=0 restores the old order
+  for an A/B.)
+- **SpawnDev.ILGPU 5.4.28 fixes** that reach this server through ML: on WebGPU, a view's length read inside a kernel was
+  wrong for a slice not starting on a 256-byte boundary and doubled for 64-bit elements, and kernels with by-value struct
+  parameters read some parameters from the wrong slots; a DelegateSpecialization kernel could launch through a disposed
+  accelerator's launcher (seen in ML's suite on WebGPU); Wasm builds `IntLength` correctly in vectorized kernels.
+- `FastInt8Decode` docs: the switch also speeds prefill (ML runs Q4_K / Q6_K prefill as int8 tensor-core GEMMs under it).
+- Release gate (RTX 4070 quiet, ML 5.8.15 / ILGPU 5.4.28): heavy suite 89/89, `pass-test` passes, `lora-test` cuda 9/10 (the
+  documented syn-30 near-tie on the session engine; the batch decoder 24/24), `lora-ab` 24/24, chat-bench qwen3:1.7b-q8_0 at 0
+  and 1,300 words and llama3.1:8b at 1,300 words (decode median 176.7 and 72.6 tok/s at 1,600 tokens): every greedy output
+  and lora-ab id list byte-identical to the 1.4.6 gate's (ML 5.8.13). Cold nuget.org-only restore of Server, ServerHost, Demo
+  and TestRunner resolves ML 5.8.15 and ILGPU 5.4.28.
+
 ## SpawnDev.AI.Server 1.4.6 - 2026-11-11 - SpawnDev.ILGPU.ML 5.8.13 (CUDA long-prompt fix), opt-in fast int8 decode
 
 On SpawnDev.ILGPU.ML 5.8.13 (SpawnDev.ILGPU 5.4.25, SpawnDev.AI stays 1.3.0).
