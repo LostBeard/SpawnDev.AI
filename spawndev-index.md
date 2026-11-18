@@ -45,7 +45,6 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.GameUI** (LostBeard/SpawnDev.GameUI) - GPU-rendered game UI library for Blazor WebAssembly. PC, VR, AR, mobile. Mouse, keyboard, gamepad, VR controllers, hand tracking.
 - **SpawnDev.GenericInvocation** (LostBeard/SpawnDev.GenericInvocation) - A high-performance reflection utility for **.NET 8, 9, and 10** that bridges the gap between runtime `Type` variables and compile-time generic (`<T>`) method signatures.
 - **SpawnDev.Identification** (LostBeard/SpawnDev.Identification) - Identity verification using ECDSA signatures for browser and non-browser platforms.
-- **SpawnDev.ILGPU** (LostBeard/SpawnDev.ILGPU) - .Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -545,11 +544,4 @@ Identity verification using ECDSA signatures for browser and non-browser platfor
 Identity verification using ECDSA signatures for browser and non-browser platforms.   ```bash dotnet add package SpawnDev.Identification ```   SpawnDev.Identification provides ECDSA-based identity verification that works in both Blazor WebAssembly (browser) and standard .NET (desktop/server). Sign and verify data to prove identity across platforms.   .NET 8.0, 9.0, 10.0   - [SpawnDev.BlazorJS.Cryptography](https://github.com/LostBeard/SpawnDev.BlazorJS.Cryptography) - Cross-platform cryptography (AES, ECDH, ECDSA, Ed25519, SHA) - [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.Blazor...
 
 Repo: https://github.com/LostBeard/SpawnDev.Identification - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.ILGPU
-.Net GPU compute for the browser and desktop. Write once, run on WebGPU, WebGL, Wasm, CUDA, OpenCL, and CPU
-
-**GPU compute in C#, in the browser or on the desktop.**  Write [ILGPU](https://github.com/m4rs-mt/ILGPU) kernels once. They run as WGSL, GLSL ES, WebAssembly, PTX, OpenCL C or SIMD CPU code. No JavaScript to write, no shaders to write, no native binaries to ship.   [**Live demo**](https://lostbeard.github.io/SpawnDev.ILGPU/) | [Docs](Docs/) | [Examples](Examples/README.md) | [Changelog](CHANGELOG.md)       SpawnDev.ILGPU extends [ILGPU](https://github.com/m4rs-mt/ILGPU), the .NET compiler that turns C# methods into GPU code, with three backends for the browser (**WebGPU**, **WebGL** and **Web...
-
-Repo: https://github.com/LostBeard/SpawnDev.ILGPU - full README + CHANGELOG available via github_lookup.
 
