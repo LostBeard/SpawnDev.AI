@@ -43,8 +43,6 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.Cronos** (LostBeard/SpawnDev.Cronos) - A cron based timer for .Net
 - **SpawnDev.EBML** (LostBeard/SpawnDev.EBML) - An extendable .Net library for reading and writing Extensible Binary Meta Language (aka EBML) documents. Includes schema for Matroska and WebM.
 - **SpawnDev.GameUI** (LostBeard/SpawnDev.GameUI) - GPU-rendered game UI library for Blazor WebAssembly. PC, VR, AR, mobile. Mouse, keyboard, gamepad, VR controllers, hand tracking.
-- **SpawnDev.GenericInvocation** (LostBeard/SpawnDev.GenericInvocation) - A high-performance reflection utility for **.NET 8, 9, and 10** that bridges the gap between runtime `Type` variables and compile-time generic (`<T>`) method signatures.
-- **SpawnDev.Identification** (LostBeard/SpawnDev.Identification) - Identity verification using ECDSA signatures for browser and non-browser platforms.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -71,6 +69,7 @@ Real applications that use the SpawnDev libraries (and show off what they can do
 - **lostbeard.github.io** (LostBeard/lostbeard.github.io)
 - **LostSpawns** (LostBeard/LostSpawns) - Lost Spawns is a post-apocalyptic survival voxel game inspired by DayZ. It runs entirely client-side in your web browser using WebGPU for hardware-accelerated 3D rendering and GPU compute — no plugins, no native code, just C# and Blazor.
 - **MiniRover** (LostBeard/MiniRover) - Open-source C# software for the Freenove FNK0053 4WD car: nanoFramework firmware + .NET WebAssembly client (WebRTC video, gamepad/touch/VR driving, browser ML)
+- **mono-wasm-aot-gsharedvt-recursion** (LostBeard/mono-wasm-aot-gsharedvt-recursion) - Repro: polymorphic recursion over struct type args makes Mono browser-wasm AOT (aot-instances / gsharedvt wrappers) take hours
 - **NanoFrameTest1** (LostBeard/NanoFrameTest1) - Blazor WebAssembly and nanoFramework fun with Freenove ESP32-S3-WROOM Camera Dev Board
 - **NugetWatch** (LostBeard/NugetWatch) - Tracks Nuget package stats over time using Nuget Web APIs.
 - **rendusa** (LostBeard/rendusa) - A WebGL based 3D image and video media player supporting 2D+Z input with on the fly conversion to anaglyph, stereo, 9 view lenticular, and more.
@@ -231,6 +230,13 @@ Open-source C# software for the Freenove FNK0053 4WD car: nanoFramework firmware
 **Open-source software for the [Freenove 4WD Car Kit (FNK0053)](https://github.com/Freenove/Freenove_4WD_Car_Kit_for_ESP32)** - C# firmware on the car's ESP32 with [.NET nanoFramework](https://www.nanoframework.net/), and a browser app written in C# that runs on .NET WebAssembly.  Drive the car from any modern browser with a gamepad, a touchscreen, a keyboard or (later) a VR headset. Watch live video, read every sensor, control the lights and buzzer, keep an eye on the battery, and switch on machine-learning modes like face tracking and follow-me that run on your own GPU in the browser.  > **S...
 
 Repo: https://github.com/LostBeard/MiniRover - full README + CHANGELOG available via github_lookup.
+
+## mono-wasm-aot-gsharedvt-recursion
+Repro: polymorphic recursion over struct type args makes Mono browser-wasm AOT (aot-instances / gsharedvt wrappers) take hours
+
+Reported upstream: [dotnet/runtime#137919](https://github.com/dotnet/runtime/issues/137919).  A browser-wasm AOT publish (`RunAOTCompilation=true`, default `WasmDedup=true`) of a tiny console app spends most of its time in one single-threaded `mono-aot-cross` pass, `aot-instances.dll`. It happens when a generic method recurses into itself with its struct type arguments wrapped one level deeper:  ```csharp void MapInstance<TSource, TTarget>(in TSource s, in TTarget t)        // TSource, TTarget : struct => MapInstance(new StructureSource<TSource>(s, f), new StructureTarget<TTarget>(t, f)); ```
+
+Repo: https://github.com/LostBeard/mono-wasm-aot-gsharedvt-recursion - full README + CHANGELOG available via github_lookup.
 
 ## NanoFrameTest1
 Blazor WebAssembly and nanoFramework fun with Freenove ESP32-S3-WROOM Camera Dev Board
@@ -530,18 +536,4 @@ GPU-rendered game UI library for Blazor WebAssembly. PC, VR, AR, mobile. Mouse, 
 GPU-rendered game UI library for Blazor WebAssembly. All UI rendered by WebGPU - no HTML overlays on the canvas. Supports PC, VR, AR, and mobile with unified input handling.   > **Status:** `1.0.0` - stable. Used in production by SpawnScene and Lost Spawns.   - **40+ UI elements** - Panels, labels, buttons, sliders, toggles, text input, scroll views, lists, dropdowns, radial menus, tooltips, color pickers, key-bind displays, debug overlays - plus game-specific HUD widgets (hotbar, status bars, minimap, compass, crosshair, interaction prompts, equipment, crafting, status effects) - **Click rout...
 
 Repo: https://github.com/LostBeard/SpawnDev.GameUI - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.GenericInvocation
-A high-performance reflection utility for **.NET 8, 9, and 10** that bridges the gap between runtime `Type` variables and compile-time generic (`<T>`) method signatures.
-
-A high-performance reflection utility for **.NET 8, 9, and 10** that bridges the gap between runtime `Type` variables and compile-time generic (`<T>`) method signatures.  By utilizing **one-time compiled Expression Trees** and **cached non-boxing generic bridges**, `SpawnDev.GenericInvocation` completely avoids the heavy runtime performance penalties of `MethodInfo.Invoke` and the memory churn of the C# `dynamic` keyword call-site binder.   In advanced architecture patterns (like high-throughput Marshallers, Serializers, or JS-Interop pipelines), you often encounter situations where you know a...
-
-Repo: https://github.com/LostBeard/SpawnDev.GenericInvocation - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.Identification
-Identity verification using ECDSA signatures for browser and non-browser platforms.
-
-Identity verification using ECDSA signatures for browser and non-browser platforms.   ```bash dotnet add package SpawnDev.Identification ```   SpawnDev.Identification provides ECDSA-based identity verification that works in both Blazor WebAssembly (browser) and standard .NET (desktop/server). Sign and verify data to prove identity across platforms.   .NET 8.0, 9.0, 10.0   - [SpawnDev.BlazorJS.Cryptography](https://github.com/LostBeard/SpawnDev.BlazorJS.Cryptography) - Cross-platform cryptography (AES, ECDH, ECDSA, Ed25519, SHA) - [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.Blazor...
-
-Repo: https://github.com/LostBeard/SpawnDev.Identification - full README + CHANGELOG available via github_lookup.
 
