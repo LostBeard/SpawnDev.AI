@@ -9,6 +9,7 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.AsyncFileSystem** (LostBeard/SpawnDev.AsyncFileSystem) - Cross-platform async file system for .NET. Same API on desktop (native filesystem) and browser (OPFS — Origin Private File System).
 - **SpawnDev.BackgroundServices** (LostBeard/SpawnDev.BackgroundServices) - Add support for autostarting services based on the running scope.
 - **SpawnDev.Bink** (LostBeard/SpawnDev.Bink) - Portable crypto library
+- **SpawnDev.Blazor.BootRecovery** (LostBeard/SpawnDev.Blazor.BootRecovery) - Temporary fix for dotnet/runtime#135090: Blazor WebAssembly apps stuck on a cached boot-file error (503/404) recover on the next load. Add the package, no code changes.
 - **SpawnDev.Blazor.QRCodeRenderer** (LostBeard/SpawnDev.Blazor.QRCodeRenderer) - Blazor QRCode renderer based on QRCoder
 - **SpawnDev.Blazor.UnitTesting** (LostBeard/SpawnDev.Blazor.UnitTesting) - Unit testing for Blazor
 - **SpawnDev.BlazorJS** (LostBeard/SpawnDev.BlazorJS) - Full Blazor WebAssembly and Javascript interop. Supports all Javascript data types and web browser APIs.
@@ -42,7 +43,6 @@ file, call github_lookup with its repo name (and optional path).
 - **SpawnDev.com** (LostBeard/SpawnDev.com) - Issues repo for SpawnDev.com
 - **SpawnDev.Cronos** (LostBeard/SpawnDev.Cronos) - A cron based timer for .Net
 - **SpawnDev.EBML** (LostBeard/SpawnDev.EBML) - An extendable .Net library for reading and writing Extensible Binary Meta Language (aka EBML) documents. Includes schema for Matroska and WebM.
-- **SpawnDev.GameUI** (LostBeard/SpawnDev.GameUI) - GPU-rendered game UI library for Blazor WebAssembly. PC, VR, AR, mobile. Mouse, keyboard, gamepad, VR controllers, hand tracking.
 
 ## Apps and projects built with SpawnDev
 Real applications that use the SpawnDev libraries (and show off what they can do).
@@ -299,6 +299,13 @@ Portable crypto library
 
 Repo: https://github.com/LostBeard/SpawnDev.Bink - full README + CHANGELOG available via github_lookup.
 
+## SpawnDev.Blazor.BootRecovery
+Temporary fix for dotnet/runtime#135090: Blazor WebAssembly apps stuck on a cached boot-file error (503/404) recover on the next load. Add the package, no code changes.
+
+**A temporary fix for [dotnet/runtime#135090](https://github.com/dotnet/runtime/issues/135090): a Blazor WebAssembly app whose browser cached an error for one of its boot files never starts again, not even after a hard reload.** Add the package and the app recovers on the next load. No code changes.  ``` dotnet add package SpawnDev.Blazor.BootRecovery ```  [Demo](https://lostbeard.github.io/SpawnDev.Blazor.BootRecovery/)   The .NET WebAssembly loader fetches every fingerprinted boot file (the assemblies, `dotnet.native.wasm`, ICU data) with `fetch(url, { cache: "force-cache", integrity })`. `f...
+
+Repo: https://github.com/LostBeard/SpawnDev.Blazor.BootRecovery - full README + CHANGELOG available via github_lookup.
+
 ## SpawnDev.Blazor.QRCodeRenderer
 Blazor QRCode renderer based on QRCoder
 
@@ -529,11 +536,4 @@ An extendable .Net library for reading and writing Extensible Binary Meta Langua
 An extensible .NET library for reading, editing, and writing Extensible Binary Meta Language (EBML) documents — the container format family that underlies Matroska (`.mkv`) and WebM. Schemas for `ebml`, `matroska`, and `webm` ship in the box; custom schemas can be loaded via `ParseSchemas(xml)`.  Targets: `net10.0`, `net9.0`, `net8.0`.   [Blazor EBML Editor](https://lostbeard.github.io/SpawnDev.EBML/)   The original motivation: when Chrome's MediaRecorder produces a WebM stream from JavaScript, the resulting container is missing the `Duration` element. Players can still read it, but every seek...
 
 Repo: https://github.com/LostBeard/SpawnDev.EBML - full README + CHANGELOG available via github_lookup.
-
-## SpawnDev.GameUI
-GPU-rendered game UI library for Blazor WebAssembly. PC, VR, AR, mobile. Mouse, keyboard, gamepad, VR controllers, hand tracking.
-
-GPU-rendered game UI library for Blazor WebAssembly. All UI rendered by WebGPU - no HTML overlays on the canvas. Supports PC, VR, AR, and mobile with unified input handling.   > **Status:** `1.0.0` - stable. Used in production by SpawnScene and Lost Spawns.   - **40+ UI elements** - Panels, labels, buttons, sliders, toggles, text input, scroll views, lists, dropdowns, radial menus, tooltips, color pickers, key-bind displays, debug overlays - plus game-specific HUD widgets (hotbar, status bars, minimap, compass, crosshair, interaction prompts, equipment, crafting, status effects) - **Click rout...
-
-Repo: https://github.com/LostBeard/SpawnDev.GameUI - full README + CHANGELOG available via github_lookup.
 
