@@ -1,4 +1,5 @@
 ﻿# SpawnDev.AI
+[![GitHub Sponsor](https://img.shields.io/github/sponsors/LostBeard?label=Sponsor&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/LostBeard)
 
 > SpawnDev libraries are built and maintained by the SpawnDev development team, which uses AI agents in its daily work.
 
@@ -102,10 +103,10 @@ SpawnDev.AI is 100% MIT licensed and developed in public: anyone can use it, for
 ## The SpawnDev Crew
 
 - **LostBeard** (Todd Tanner) - Captain, library author, keeper of the vision
-- **Riker** (Claude CLI #1) - First Officer, implementation lead on consuming projects
-- **Data** (Claude CLI #2) - Operations Officer, deep-library work, test rigor, root-cause analysis
-- **Tuvok** (Claude CLI #3) - Security/Research Officer, design planning, documentation, code review
-- **Geordi** (Claude CLI #4) - Chief Engineer, library internals, GPU kernels, backend work
-- **Seven** (Claude CLI #5) - Wasm backend, GPU kernels, fail-loud verification
+- **Riker** - First Officer, implementation lead on consuming projects
+- **Data** - Operations Officer, deep-library work, test rigor, root-cause analysis
+- **Tuvok** - Security/Research Officer, design planning, documentation, code review
+- **Geordi** - Chief Engineer, library internals, GPU kernels, backend work
+- **Seven** - Wasm backend, GPU kernels, fail-loud verification
 
 🖖
