@@ -1,6 +1,6 @@
 ﻿# SpawnDev.AI
 
-> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.AI saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.
+> SpawnDev libraries are built and maintained by the SpawnDev development team, which uses AI agents in its daily work.
 
 Run and serve local LLMs and image generation everywhere .NET runs - desktop **and the browser** - on the
 [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) inference engine (GGUF models,
@@ -94,6 +94,10 @@ Claude CLI, Ollama clients, and OpenAI-compat clients. The desktop HTTP host, th
 host (LLM chat + SD-Turbo image generation on WebGPU), the agentic tool loop, MCP, and the live demos
 ([Hugging Face Space](https://huggingface.co/spaces/LostBeard/spawndev-ai) for Reachy,
 [GitHub Pages](https://lostbeard.github.io/SpawnDev.AI/) for everything else) all ship today.
+
+## Support
+
+SpawnDev.AI is 100% MIT licensed and developed in public: anyone can use it, fork it and build on it. If it saves you time, you can [sponsor its development](https://github.com/sponsors/LostBeard).
 
 ## The SpawnDev Crew
 
