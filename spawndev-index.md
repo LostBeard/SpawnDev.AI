@@ -79,11 +79,11 @@ Real applications that use the SpawnDev libraries (and show off what they can do
 ## The SpawnDev Crew
 
 - **LostBeard** (Todd Tanner) - Captain, library author, keeper of the vision
-- **Riker** (Claude CLI #1) - First Officer, implementation lead on consuming projects
-- **Data** (Claude CLI #2) - Operations Officer, deep-library work, test rigor, root-cause analysis
-- **Tuvok** (Claude CLI #3) - Security/Research Officer, design planning, documentation, code review
-- **Geordi** (Claude CLI #4) - Chief Engineer, library internals, GPU kernels, backend work
-- **Seven** (Claude CLI #5) - Wasm backend, GPU kernels, fail-loud verification
+- **Riker** - First Officer, implementation lead on consuming projects
+- **Data** - Operations Officer, deep-library work, test rigor, root-cause analysis
+- **Tuvok** - Security/Research Officer, design planning, documentation, code review
+- **Geordi** - Chief Engineer, library internals, GPU kernels, backend work
+- **Seven** - Wasm backend, GPU kernels, fail-loud verification
 
 🖖
 
@@ -276,7 +276,7 @@ Repo: https://github.com/LostBeard/SimpleWebWorkersExample - full README + CHANG
 ## SpawnDev.AI
 Run and serve local LLMs everywhere .NET runs - desktop and the browser - on the SpawnDev.ILGPU.ML inference engine (GGUF models, KV-cache decode, WebGPU dispatch-plan capture/replay).
 
-> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.AI saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  Run and serve local LLMs and image generation everywhere .NET runs - desktop **and the browser** - on the [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) inference engine (GGUF models, KV-cache decode, SD-Turbo image generation, WebGPU dispatch-plan capture/replay). LLM decode and SD-Turbo text-to-image both...
+> SpawnDev libraries are built and maintained by the SpawnDev development team, which uses AI agents in its daily work.  Run and serve local LLMs and image generation everywhere .NET runs - desktop **and the browser** - on the [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) inference engine (GGUF models, KV-cache decode, SD-Turbo image generation, WebGPU dispatch-plan capture/replay). LLM decode and SD-Turbo text-to-image both run in-browser on WebGPU, no server or native install.    Local LLM serving shouldn't require a native install. The same `AiApiRouter` that answers `...
 
 Repo: https://github.com/LostBeard/SpawnDev.AI - full README + CHANGELOG available via github_lookup.
 
@@ -323,7 +323,7 @@ Repo: https://github.com/LostBeard/SpawnDev.Blazor.UnitTesting - full README + C
 ## SpawnDev.BlazorJS
 Full Blazor WebAssembly and Javascript interop. Supports all Javascript data types and web browser APIs.
 
-> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.BlazorJS saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  Full Blazor WebAssembly and JavaScript interop. 1,060 strongly typed C# wrappers for browser APIs - create JavaScript objects, access properties, call methods, and handle events the .NET way without writing JavaScript.  **[Full API Documentation](Docs/README.md)** - Complete MDN-style API reference with guides, 1,060 type...
+> SpawnDev libraries are built and maintained by the SpawnDev development team, which uses AI agents in its daily work.  Full Blazor WebAssembly and JavaScript interop. 1,060 strongly typed C# wrappers for browser APIs - create JavaScript objects, access properties, call methods, and handle events the .NET way without writing JavaScript.  **[Full API Documentation](Docs/README.md)** - Complete MDN-style API reference with guides, 1,060 typed wrapper references, and real C# examples.  [Live Demo](https://blazorjs.spawndev.com/)  - .NET 8, 9, and 10 - Blazor WebAssembly Standalone App - Blazor W...
 
 Repo: https://github.com/LostBeard/SpawnDev.BlazorJS - full README + CHANGELOG available via github_lookup.
 
@@ -505,7 +505,7 @@ Repo: https://github.com/LostBeard/SpawnDev.BlazorJS.WebTorrents - full README +
 ## SpawnDev.BlazorJS.WebWorkers
 Easily call Services in separate threads with WebWorkers and SharedWebWorkers. Run Blazor WASM in the ServiceWorker.
 
-> 💜 **Built and maintained by one independent developer** — no company, no overhead, just code. If SpawnDev.BlazorJS.WebWorkers saves you time, please consider [**sponsoring its development »**](https://github.com/sponsors/LostBeard). Sponsorship is what keeps it alive and maintained.  - Call services in separate threads with WebWorkers and SharedWebWorkers  - Call services in other Windows - Add and remove services at runtime ([Runtime Services](#runtime-services)) - Supports keyed services - Create a new instance of a class and add it as a runtime service using a `new` expression - [TaskPoo...
+> SpawnDev libraries are built and maintained by the SpawnDev development team, which uses AI agents in its daily work.  - Call services in separate threads with WebWorkers and SharedWebWorkers  - Call services in other Windows - Add and remove services at runtime ([Runtime Services](#runtime-services)) - Supports keyed services - Create a new instance of a class and add it as a runtime service using a `new` expression - [TaskPool](#webworkerservicetaskpool) support via WebWorkers - Component's can call their own private static methods in background threads (supports service injection) - Suppo...
 
 Repo: https://github.com/LostBeard/SpawnDev.BlazorJS.WebWorkers - full README + CHANGELOG available via github_lookup.
 
