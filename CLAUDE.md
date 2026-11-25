@@ -17,10 +17,11 @@ SpawnDev.BlazorJS → SpawnDev.ILGPU → SpawnDev.ILGPU.ML → SpawnDev.AI → D
 
 ## Hard rules
 
-- **NEVER trim, NEVER AOT the demo/host publishes.** ILGPU resolves methods (Math.Clamp etc.) via
-  reflection at runtime; a trimmed publish kills the worker with `MissingMethodException` in
-  `RemappedIntrinsics` (hit on the very first Pages deploy, 2026-07-04). `PublishTrimmed=false`,
-  `RunAOTCompilation=false` - same standing rule as the ML demo.
+- **The demo/host publishes are neither trimmed nor AOT-compiled today.** A trimmed publish killed the worker with
+  `MissingMethodException` in `RemappedIntrinsics` on the first Pages deploy (2026-07-04). ILGPU has been trim safe since
+  2026-08-17 and supports Blazor AOT with the IL kept (`WasmStripILAfterAOT=false`) since 2026-10-01, so this is no longer an
+  ILGPU limit, but THIS demo has never been run trimmed or AOT: keep `PublishTrimmed=false` and `RunAOTCompilation=false` until
+  it has been tested, and do not call it impossible.
 - **One transport-free router.** Protocol logic lives in `AiApiRouter` against `IAiServerTransport`;
   hosts only implement transports (HTTP, worker MessagePort). Never fork protocol code per host.
 - **Tools register once, serve three surfaces** (internal agentic loop, MCP, protocol clients) via

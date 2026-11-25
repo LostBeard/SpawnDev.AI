@@ -19,10 +19,12 @@
 		<PackageReference Include="SpawnDev.Reachy" Version="0.1.0-preview.5" />
 		<PackageReference Include="SpawnDev.Reachy.Browser" Version="0.1.0-preview.6" />
 		
-		<PackageReference Include="SpawnDev.SpawnJS.RazorRenderer" Version="2.2.3" />
+		<PackageReference Include="SpawnDev.SpawnJS.RazorRenderer" Version="2.2.4" />
 
+		<!-- Direct: WebWorkers only floors SpawnJS at 3.0.10; 3.0.11 stops CA1416 for calling SpawnJS from this app -->
+		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.11" />
 		<!-- Required in the exe project (this one) -->
-		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.2.5" />
+		<PackageReference Include="SpawnDev.SpawnJS.WebWorkers" Version="2.2.7" />
 
 		<!-- DIRECT: demo libs (voices, characters, prefs, consent) use IAsyncFS / OPFS. Previously
 		     arrived only transitively via SpawnDev.WebTorrent, which this app no longer references. -->

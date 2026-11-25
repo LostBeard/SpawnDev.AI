@@ -2,6 +2,30 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.4.8 - 2026-11-25 - SpawnDev.ILGPU.ML 5.8.30, SpawnDev.ILGPU 5.4.49
+
+On SpawnDev.ILGPU.ML 5.8.30 (was 5.8.15), SpawnDev.ILGPU 5.4.49 (was 5.4.28), SpawnDev.SpawnJS.WebWorkers 2.2.7. No API
+change.
+
+- **Models with a SentencePiece vocabulary (Llama 2, Mistral, Gemma) get the right token ids** (SpawnDev.ILGPU.ML): the
+  tokenizer took a greedy longest match. Byte-level BPE models (qwen, llama 3, smollm) are unchanged.
+- **The browser model cache recovers when the browser clears the site's storage mid-session** and can be capped
+  (`HubModelSource.Cache`; default no cap).
+- **Compiler memory is freed after a model's first run in the browser** (SpawnDev.ILGPU.ML `CompilerCachePolicy`).
+- **Float16 matrices load as Q8_0 as they stream in** when the weights would pass 75% of the device's memory, so more models
+  fit an 8 GB card.
+- SpawnDev.ILGPU 5.4.29 to 5.4.49: silent wrong-result fixes (unsigned division by a power of two, signed overflow on OpenCL,
+  fp32 division and sqrt on OpenCL / WebGPU / WebGL, low-precision conversions), device-loss and lost-kernel fixes in the
+  browser, and a failed kernel compile no longer breaks later kernels.
+- Release gate (RTX 4070, against 1.4.7 rebuilt on the same card, ML 5.8.15 / ILGPU 5.4.28): heavy browser suite 89 / 0 / 0
+  (10.6 min), `pass-test` 0 failed, `lora-test` cuda fails only the documented syn-30 near-tie of the session engine (the same
+  line on 1.4.7), the batch decoder 24/24; chat-bench qwen3:1.7b-q8_0 at 0 and 1,300 words and llama3.1:8b at 1,300 words and
+  `lora-ab` smollm2 Q8_0: all four JSON outputs byte-identical to 1.4.7's. Decode, batch decoder at 1,300 words, tok/s over
+  two interleaved passes: llama3.1:8b 71.9 and 72.3 (1.4.7), 71.5 and 72.1 (1.4.8); qwen3 177.0 and 174.5, 177.4 and 177.8
+  (no measurable difference). Cold nuget.org-only restore of Server, ServerHost, Demo and TestRunner resolves ML 5.8.30,
+  ILGPU 5.4.49, SpawnJS 3.0.11 (demo, for the CA1416 fix). Not covered: the SentencePiece fix has no model in this gate
+  (qwen, llama 3, smollm are byte-level BPE).
+
 ## SpawnDev.AI.Server 1.4.7 - 2026-11-12 - SpawnDev.ILGPU.ML 5.8.15 (short prompts' first token sooner on CUDA), SpawnDev.ILGPU 5.4.28
 
 On SpawnDev.ILGPU.ML 5.8.15 (SpawnDev.ILGPU 5.4.28, SpawnDev.AI stays 1.3.0). No API change.
