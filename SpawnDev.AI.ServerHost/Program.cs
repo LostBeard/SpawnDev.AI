@@ -203,7 +203,6 @@ using var voice = new AiVoiceEngine(modelSource, imageHttp, accelerator)
 // processes; a third of what was free at start is kept in reserve beyond each model (the old budget was two thirds of
 // free). Elsewhere there is no free-memory number, so the host sets a 4 GiB budget, as before.
 var residency = new SpawnDev.ILGPU.ML.ModelResidency(accelerator) { Log = Console.WriteLine };
-residency.Evicted += e => Console.WriteLine($"[ModelResidency] dropped '{e.Key}' ({e.Bytes >> 20} MB, {e.Reason}{(e.ForKey != null ? $", for '{e.ForKey}'" : "")})");
 if (accelerator.TryGetFreeMemory(out long freeVram))
 {
     residency.ReserveBytes = freeVram / 3;

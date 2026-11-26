@@ -502,10 +502,8 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             _residency = new SpawnDev.ILGPU.ML.ModelResidency(_accelerator)
             {
                 BudgetBytes = BrowserVramBudgetBytes,
-                Log = msg => Console.WriteLine(msg),
+                Log = msg => Console.WriteLine(msg),   // its own lines, evictions included ("dropped ...")
             };
-            // the manager logs only warnings; an eviction is otherwise silent, and a reload it causes reads as a slow turn
-            _residency.Evicted += e => Console.WriteLine($"[ModelResidency] dropped '{e.Key}' ({e.Bytes >> 20} MB, {e.Reason}{(e.ForKey != null ? $", for '{e.ForKey}'" : "")})");
             _residency.Register("image", () => _images!.IsLoaded, () => 2_600L * 1024 * 1024,
                 async () => { await _images!.EvictAsync().ConfigureAwait(false); return true; });
             _residency.Register("chat", () => _registry!.IsLoaded, () => 1_400L * 1024 * 1024,

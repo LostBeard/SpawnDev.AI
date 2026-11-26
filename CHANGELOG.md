@@ -2,6 +2,31 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.4.9 - 2026-11-26 - model residency on SpawnDev.ILGPU.ML 5.8.32, SpawnDev.ILGPU 5.4.51
+
+On SpawnDev.ILGPU.ML 5.8.32 (was 5.8.30), SpawnDev.ILGPU 5.4.51 (was 5.4.49). No breaking change: `GpuResidency` is kept,
+marked `[Obsolete]`.
+
+- **Which models stay on the GPU is decided by SpawnDev.ILGPU.ML's `ModelResidency`** (replaces this package's
+  `GpuResidency`). The budget is now the accelerator's own, so it counts everything ILGPU allocated (KV caches and scratch
+  pools included, not only the registered models), and idle pooled scratch is given back before any model is dropped.
+  - Browser: a 4 GiB budget, as before.
+  - Desktop CUDA (ServerHost): the driver's real free memory at every decision, so the desktop's and other processes' GPU
+    use is seen; a third of the memory free at start is kept in reserve beyond each model (the old budget was two thirds of
+    free at start). Other desktop backends: a 4 GiB budget.
+  - Each eviction is logged: `[ModelResidency] dropped '<kind>' (<MB>, <reason> for '<kind>')`.
+  - The speech endpointer (VAD) is no longer in the table: it is small and never evicted; its memory is still counted.
+- `GpuResidency` is `[Obsolete]`, unchanged and no longer used by the server; it will be removed in a later minor version.
+- SpawnDev.ILGPU.ML 5.8.31 / 5.8.32 for the image, speech and voice models: Conv -> BatchNorm folded, Conv -> Relu applied in
+  the convolution's stores, a 1x1 convolution kernel, kernels compiled on first use, and on WebGPU a run ends with a submit
+  instead of a completion wait (outputs are read back in queue order, so results are unchanged). Models load whole from hosts
+  that gzip their responses.
+- Release gate (RTX 4070, against 1.4.8 on the same card): heavy browser suite 89 / 0 / 0; `pass-test` 0 failed; `lora-test`
+  cuda: every line as on 1.4.8, including the documented syn-30 near-tie of the session engine (23/24; the batch decoder
+  24/24); chat-bench qwen3:1.7b-q8_0 at 0 and 1,300 words, llama3.1:8b at 1,300 words, and `lora-ab` smollm2 Q8_0: all four
+  JSON outputs byte-identical to 1.4.8's. Batch-decoder decode, tok/s, 1.4.8 -> 1.4.9: qwen3 at 0 words 185.1 -> 187.2, at
+  1,300 words 172.4 -> 177.9; llama3.1:8b at 1,300 words 70.0 -> 72.5 (one run each; no change claimed).
+
 ## SpawnDev.AI.Server 1.4.8 - 2026-11-25 - SpawnDev.ILGPU.ML 5.8.30, SpawnDev.ILGPU 5.4.49
 
 On SpawnDev.ILGPU.ML 5.8.30 (was 5.8.15), SpawnDev.ILGPU 5.4.49 (was 5.4.28), SpawnDev.SpawnJS.WebWorkers 2.2.7. No API
