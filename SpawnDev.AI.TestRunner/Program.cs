@@ -433,6 +433,15 @@ static async Task<IBrowserContext> LaunchAsync(IPlaywright playwright, bool head
         { Console.WriteLine($"  [warn] could not wipe the profile: {ex.Message}"); }
     }
     Directory.CreateDirectory(profileDir);
+    // The HTTP cache goes before every run (OPFS, where the models live, stays). A corrupt cache entry failed requests
+    // with net::ERR_CACHE_READ_FAILURE (2026-11-10 here: 17 "Failed to fetch"; the same in SpawnDev.ILGPU's PMT four times,
+    // where a boot file read from it stopped the page from starting). The runner serves a fresh publish anyway.
+    foreach (var cacheDir in new[] { "Cache", "Code Cache" })
+    {
+        var path = Path.Combine(profileDir, "Default", cacheDir);
+        try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
+        catch (Exception ex) { Console.WriteLine($"  [warn] could not clear the profile's {cacheDir}: {ex.Message}"); }
+    }
     Console.WriteLine($"  profile: {profileDir}");
 
     // ⚠️ Prefer INSTALLED Chrome. Playwright's bundled chromium exposes a SOFTWARE WebGPU adapter, so a
