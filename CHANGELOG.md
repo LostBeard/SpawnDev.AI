@@ -2,6 +2,29 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.5.0 + SpawnDev.AI 1.4.0 - 2026-11-26 - min_p and the presence penalty
+
+- **`min_p`, `presence_penalty` and `repeat_last_n` reach the sampler.** Ollama `options.min_p` / `presence_penalty` /
+  `repeat_last_n`; OpenAI `presence_penalty` and `min_p` (non-standard, accepted as vLLM and llama.cpp do). New
+  `AiGenerationOptions.MinP`, `PresencePenalty`, `RepeatLastN` (SpawnDev.AI 1.4.0), forwarded by `AiWorkerClient` too. They
+  were read nowhere: a client's min_p was silently dropped. SpawnDev.ILGPU.ML runs them on the batch-decoder engine
+  (qwen2, qwen3, llama).
+- **A model that cannot honour an option refuses it as the client's error.** A session-engine model (e.g. gemma3) with
+  `min_p` or a presence penalty: a 400 with SpawnDev.ILGPU.ML's explanation, or an `error` line once a stream has started
+  (was an unhandled 500 with a stack trace). `min_p` on a greedy request is not refused (min-p only filters sampling).
+- **Out-of-range values are a 400**, never corrected silently: `min_p` outside [0, 1], a non-finite `presence_penalty`, a
+  negative `repeat_last_n`.
+- OpenAI and Anthropic error bodies carry the code / type of their status (`code: null`, `invalid_request_error` for a 400);
+  every error said "model not found" before.
+- Test `MinPOneSamplesExactlyTheGreedyReply` (heavy, through the worker): at min_p = 1 a T = 1.5 sample is the greedy reply
+  token for token, while the control (T = 1.5, no min_p) differs.
+- Release gate (RTX 4070, against 1.4.9 on the same card): heavy browser suite 90 / 0 / 0; `pass-test` 0 failed; `lora-test` every
+  line as on 1.4.9 (the documented syn-30 near-tie); chat-bench qwen3:1.7b-q8_0 at 0 and 1,300 words, llama3.1:8b at 1,300 and
+  `lora-ab`: all four JSON outputs byte-identical to 1.4.9's (decode the same within noise). Desktop host checked by hand:
+  the 400s, min_p + presence on the batch decoder (Ollama and OpenAI routes), gemma3:270m (session engine) refusing a sampled
+  min_p with a 400 and an error line when streaming, and running a greedy request that carries min_p. Cold nuget.org-only
+  restore of Server, ServerHost, Demo and TestRunner.
+
 ## SpawnDev.AI.Server 1.4.9 - 2026-11-26 - model residency on SpawnDev.ILGPU.ML 5.8.32, SpawnDev.ILGPU 5.4.51
 
 On SpawnDev.ILGPU.ML 5.8.32 (was 5.8.30), SpawnDev.ILGPU 5.4.51 (was 5.4.49). No breaking change: `GpuResidency` is kept,

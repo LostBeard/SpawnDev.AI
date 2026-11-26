@@ -873,7 +873,14 @@ public sealed class AiChatEngine : IAiChatService
     }
 
     // ── Mapping helpers ──
-    private GenerationConfig ToConfig(AiGenerationOptions o) => new()
+    private GenerationConfig ToConfig(AiGenerationOptions o)
+    {
+        var config = NewConfig(o);
+        if (o.RepeatLastN is int window) config.RepeatLastN = window;   // otherwise ML's own default window
+        return config;
+    }
+
+    private GenerationConfig NewConfig(AiGenerationOptions o) => new()
     {
         MaxNewTokens = Math.Min(Math.Max(1, o.MaxOutputTokens), MaxOutputTokens),
         Strategy = o.Temperature > 0 ? o.Strategy : "greedy",
@@ -882,6 +889,10 @@ public sealed class AiChatEngine : IAiChatService
         TopK = o.TopK,
         Seed = o.Seed,
         RepetitionPenalty = o.RepetitionPenalty,
+        // min-p is a sampling filter: off when greedy, so a greedy request that carries a client's default min_p still runs on
+        // the session engine (which rejects min-p) instead of failing for a filter that would not apply
+        MinP = o.Temperature > 0 && o.Strategy != "greedy" ? o.MinP : 0f,   // greedy is the STRATEGY (a temperature of 0 leaves Temperature at its default)
+        PresencePenalty = o.PresencePenalty,
     };
 
     private static AiStopKind ToStopKind(StopReason r) => r switch

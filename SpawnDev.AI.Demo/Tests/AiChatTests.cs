@@ -135,6 +135,34 @@ public sealed class AiChatTests
     }
 
     /// <summary>
+    /// <c>min_p</c> reaches the sampler through the worker (1.5.0): at min_p = 1 only the best token and its ties survive, so a
+    /// hot sampled reply must be the greedy reply token for token. The control (the same hot sampling without min_p) must
+    /// differ from greedy, or the test could not tell min_p working from min_p being dropped.
+    /// </summary>
+    [AiTest(Heavy = true, Timeout = 900_000)]
+    public async Task MinPOneSamplesExactlyTheGreedyReply()
+    {
+        await _client.InitAsync();
+        var messages = new List<AiChatMessage> { new("user", "Write two sentences about a mountain village in winter.") };
+        async Task<string> Run(AiGenerationOptions o)
+        {
+            var sb = new System.Text.StringBuilder();
+            await _client.ChatStreamAsync(Model, messages, o, d => sb.Append(d));
+            return sb.ToString();
+        }
+        var greedy = await Run(new() { MaxOutputTokens = 48, Temperature = 0f, Seed = 1234 });
+        var minP = await Run(new() { MaxOutputTokens = 48, Temperature = 1.5f, TopP = 1f, MinP = 1f, Seed = 7 });
+        var control = await Run(new() { MaxOutputTokens = 48, Temperature = 1.5f, TopP = 1f, Seed = 7 });
+        Console.WriteLine($"[AiChatTests] greedy: {Clip(greedy)} | min_p=1 at T=1.5: {Clip(minP)} | control: {Clip(control)}");
+        if (string.IsNullOrWhiteSpace(greedy))
+            throw new Exception("greedy reply was empty");
+        if (control == greedy)
+            throw new Exception("the control (T=1.5, no min_p) gave the greedy reply too, so this test cannot see min_p; change the prompt or seed");
+        if (minP != greedy)
+            throw new Exception($"min_p = 1 should sample exactly the greedy reply. greedy: '{Clip(greedy)}' min_p: '{Clip(minP)}' (min_p not applied?)");
+    }
+
+    /// <summary>
     /// EIGHT turns, each feeding the previous reply back in - the shape a real conversation has, and the
     /// shape a single-turn gate cannot exercise.
     /// </summary>

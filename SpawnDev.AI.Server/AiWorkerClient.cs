@@ -527,6 +527,9 @@ public sealed class AiWorkerClient
                 top_p = options.TopP,
                 top_k = options.Strategy == "top_k" ? options.TopK : (int?)null,
                 repeat_penalty = options.RepetitionPenalty != 1.0f ? options.RepetitionPenalty : (float?)null,
+                min_p = options.MinP != 0f ? options.MinP : (float?)null,
+                presence_penalty = options.PresencePenalty != 0f ? options.PresencePenalty : (float?)null,
+                repeat_last_n = options.RepeatLastN,
                 seed = options.Seed,
             },
         }, J);

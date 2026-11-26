@@ -87,10 +87,10 @@ public sealed class AiApiRouter
             case ("GET", "/api/tags"): await ApiTags(t); return true;
             case ("GET", "/v1/models"): await V1Models(t); return true;
             case ("POST", "/api/show"): await ApiShow(Body(body), t); return true;
-            case ("POST", "/v1/chat/completions"): await V1ChatCompletions(Body(body), t); return true;
-            case ("POST", "/api/chat"): await ApiChat(Body(body), t); return true;
-            case ("POST", "/api/generate"): await ApiGenerate(Body(body), t); return true;
-            case ("POST", "/v1/messages"): await V1Messages(Body(body), t); return true;
+            case ("POST", "/v1/chat/completions"): await RefusalsAsBadRequest(t, Protocol.OpenAi, tt => V1ChatCompletions(Body(body), tt)); return true;
+            case ("POST", "/api/chat"): await RefusalsAsBadRequest(t, Protocol.Ollama, tt => ApiChat(Body(body), tt)); return true;
+            case ("POST", "/api/generate"): await RefusalsAsBadRequest(t, Protocol.Ollama, tt => ApiGenerate(Body(body), tt)); return true;
+            case ("POST", "/v1/messages"): await RefusalsAsBadRequest(t, Protocol.Anthropic, tt => V1Messages(Body(body), tt)); return true;
             case ("POST", "/v1/messages/count_tokens"): await V1CountTokens(Body(body), t); return true;
             case ("POST", "/v1/images/generations") when Images != null: await V1ImagesGenerations(Body(body), t); return true;
             case ("POST", "/mcp") when Tools != null: await Mcp(Body(body), t); return true;
@@ -266,11 +266,57 @@ public sealed class AiApiRouter
 
     // ── Protocol-shaped errors ──
     private Task OpenAiError(IAiServerTransport t, string msg, int code) =>
-        t.WriteJsonAsync(code, new { error = new { message = msg, type = "invalid_request_error", code = "model_not_found" } });
+        t.WriteJsonAsync(code, new { error = new { message = msg, type = "invalid_request_error", code = code == 404 ? "model_not_found" : null } });
     private Task OllamaError(IAiServerTransport t, string msg, int code) =>
         t.WriteJsonAsync(code, new { error = msg });
     private Task AnthropicError(IAiServerTransport t, string msg, int code) =>
-        t.WriteJsonAsync(code, new { type = "error", error = new { type = "not_found_error", message = msg } });
+        t.WriteJsonAsync(code, new { type = "error", error = new { type = code == 404 ? "not_found_error" : "invalid_request_error", message = msg } });
+
+    private enum Protocol { OpenAi, Ollama, Anthropic }
+
+    /// <summary>
+    /// A model that cannot honour a requested option refuses it with <see cref="NotSupportedException"/> (SpawnDev.ILGPU.ML: min_p
+    /// or the presence penalty on a model that runs on the session engine). That is the client's request, not a server fault: a
+    /// 400 in the protocol's error shape before anything was sent, or an error event in the stream once it has started. Was an
+    /// unhandled 500 with a stack trace.
+    /// </summary>
+    private async Task RefusalsAsBadRequest(IAiServerTransport t, Protocol protocol, Func<IAiServerTransport, Task> handler)
+    {
+        var tracked = new StartTrackingTransport(t);
+        try { await handler(tracked); }
+        catch (NotSupportedException ex)
+        {
+            if (!tracked.Started)
+            {
+                await (protocol switch
+                {
+                    Protocol.OpenAi => OpenAiError(t, ex.Message, 400),
+                    Protocol.Anthropic => AnthropicError(t, ex.Message, 400),
+                    _ => OllamaError(t, ex.Message, 400),
+                });
+                return;
+            }
+            // already streaming: the status is sent, so the refusal goes in the stream (each protocol's error event)
+            switch (protocol)
+            {
+                case Protocol.Anthropic: await t.WriteEventAsync("error", new { type = "error", error = new { type = "invalid_request_error", message = ex.Message } }); break;
+                case Protocol.OpenAi: await t.WriteEventAsync(null, new { error = new { message = ex.Message, type = "invalid_request_error" } }); break;
+                default: await t.WriteEventAsync(null, new { error = ex.Message }); break;
+            }
+        }
+    }
+
+    /// <summary>A transport that records whether a response has started (a status or a stream was written).</summary>
+    private sealed class StartTrackingTransport(IAiServerTransport inner) : IAiServerTransport
+    {
+        public bool Started { get; private set; }
+        public CancellationToken Aborted => inner.Aborted;
+        public Task WriteJsonAsync(int statusCode, object payload) { Started = true; return inner.WriteJsonAsync(statusCode, payload); }
+        public Task WriteTextAsync(int statusCode, string text) { Started = true; return inner.WriteTextAsync(statusCode, text); }
+        public Task StartEventStreamAsync(AiEventStreamKind kind) { Started = true; return inner.StartEventStreamAsync(kind); }
+        public Task WriteEventAsync(string? eventName, object payload) { Started = true; return inner.WriteEventAsync(eventName, payload); }
+        public Task WriteRawAsync(string text) { Started = true; return inner.WriteRawAsync(text); }
+    }
 
     // ── Listing / metadata ──
     private async Task ApiTags(IAiServerTransport t)
@@ -330,6 +376,7 @@ public sealed class AiApiRouter
         var messages = ParseMessages(req, "messages");
         bool stream = GetBool(req, "stream") ?? false;
         var options = ReadOpenAiOptions(req);
+        if (SamplingError(options) is string samplingError) { await OpenAiError(t, samplingError, 400); return; }
         options.Stops = GetStringArray(req, "stop");
         var tools = GetTools(req);
         string id = "chatcmpl-" + Guid.NewGuid().ToString("N")[..24];
@@ -383,6 +430,7 @@ public sealed class AiApiRouter
         var messages = ParseMessages(req, "messages");
         bool stream = GetBool(req, "stream") ?? true; // Ollama defaults to streaming
         var options = ReadOllamaOptions(req);
+        if (SamplingError(options) is string samplingError) { await OllamaError(t, samplingError, 400); return; }
         string created = DateTimeOffset.UtcNow.ToString("o");
         var tools = GetTools(req);
         var request = new AiChatRequest { Model = model, Messages = messages, Options = options, ToolsJson = tools };
@@ -424,6 +472,7 @@ public sealed class AiApiRouter
         string prompt = GetString(req, "prompt") ?? "";
         bool stream = GetBool(req, "stream") ?? true;
         var options = ReadOllamaOptions(req);
+        if (SamplingError(options) is string samplingError) { await OllamaError(t, samplingError, 400); return; }
         string created = DateTimeOffset.UtcNow.ToString("o");
         var request = new AiChatRequest
         { Model = model, Messages = new[] { new AiChatMessage("user", prompt) }, Options = options };
@@ -607,6 +656,9 @@ public sealed class AiApiRouter
     {
         var o = new AiGenerationOptions { MaxOutputTokens = GetInt(req, "max_tokens") ?? GetInt(req, "max_completion_tokens") ?? 512 };
         ApplySampling(o, GetFloat(req, "temperature"), GetFloat(req, "top_p"), null, GetInt(req, "seed"));
+        // presence_penalty is OpenAI's own field; min_p is not, but vLLM and llama.cpp accept it in OpenAI requests too
+        if (GetFloat(req, "presence_penalty") is float pp) o.PresencePenalty = pp;
+        if (GetFloat(req, "min_p") is float mp) o.MinP = mp;
         return o;
     }
     private AiGenerationOptions ReadAnthropicOptions(JsonElement req)
@@ -623,8 +675,20 @@ public sealed class AiApiRouter
             o.MaxOutputTokens = GetInt(opt, "num_predict") ?? 512;
             ApplySampling(o, GetFloat(opt, "temperature"), GetFloat(opt, "top_p"), GetInt(opt, "top_k"), GetInt(opt, "seed"));
             if (GetFloat(opt, "repeat_penalty") is float rp && rp > 0) o.RepetitionPenalty = rp;
+            if (GetFloat(opt, "min_p") is float mp) o.MinP = mp;
+            if (GetFloat(opt, "presence_penalty") is float pp) o.PresencePenalty = pp;
+            if (GetInt(opt, "repeat_last_n") is int n) o.RepeatLastN = n;
         }
         return o;
+    }
+
+    /// <summary>Null when the sampling options are usable, else what is wrong (sent back as a 400, never silently corrected).</summary>
+    private static string? SamplingError(AiGenerationOptions o)
+    {
+        if (!(o.MinP >= 0f && o.MinP <= 1f)) return $"min_p must be in [0, 1], got {o.MinP}";
+        if (!float.IsFinite(o.PresencePenalty)) return "presence_penalty must be a finite number";
+        if (o.RepeatLastN is int n && n < 0) return $"repeat_last_n must be >= 0, got {n}";
+        return null;
     }
     private static void ApplySampling(AiGenerationOptions o, float? temp, float? topP, int? topK, int? seed)
     {

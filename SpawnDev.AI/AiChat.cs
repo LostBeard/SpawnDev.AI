@@ -30,6 +30,17 @@ public sealed class AiGenerationOptions
     /// that they loop verbatim; far above it, common grammatical tokens get punished into broken
     /// sentences (both measured on qwen2.5-0.5b).</summary>
     public float RepetitionPenalty { get; set; } = 1.0f;
+    /// <summary>Min-p in [0, 1] (0 = off): after top-k / top-p, keep only tokens whose probability is at least this times the
+    /// best token's (Ollama / llama.cpp <c>min_p</c>). Sampling only (ignored when greedy). The batch-decoder engine runs it;
+    /// a model on the session engine rejects a request that sets it rather than ignoring it.</summary>
+    public float MinP { get; set; } = 0f;
+    /// <summary>Presence penalty (0 = off): subtracted from the logit of every distinct token already in the window (Ollama
+    /// <c>presence_penalty</c>, OpenAI <c>presence_penalty</c>), after the repetition penalty. Batch-decoder engine; a session-engine
+    /// model rejects a request that sets it.</summary>
+    public float PresencePenalty { get; set; } = 0f;
+    /// <summary>How many of the latest tokens the repetition and presence penalties look at (Ollama <c>repeat_last_n</c>), or null
+    /// for the engine's default (64).</summary>
+    public int? RepeatLastN { get; set; }
     /// <summary>Seed for deterministic sampling, or null.</summary>
     public int? Seed { get; set; }
     /// <summary>Extra stop strings (protocol "stop" / "stop_sequences").</summary>

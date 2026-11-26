@@ -45,9 +45,21 @@ engine holds back tool-call markup so raw JSON never leaks as visible text.
 ## Sampling / options mapping
 
 Each protocol's sampling fields map onto the neutral `AiGenerationOptions` (`MaxOutputTokens`,
-`Strategy` greedy/top_p/top_k, `Temperature`, `TopP`, `TopK`, `RepetitionPenalty`, `Seed`, `Stops`).
+`Strategy` greedy/top_p/top_k, `Temperature`, `TopP`, `TopK`, `RepetitionPenalty`, `MinP`, `PresencePenalty`,
+`RepeatLastN`, `Seed`, `Stops`).
 Requested output tokens are clamped to the engine's `MaxOutputTokens` cap (agentic clients routinely
 ask for far more than a small local model should produce).
+
+| Field | Ollama `options` | OpenAI | Anthropic |
+|---|---|---|---|
+| `MinP` (0..1, 0 = off; sampling only) | `min_p` | `min_p` (as vLLM and llama.cpp accept it) | - |
+| `PresencePenalty` (0 = off) | `presence_penalty` | `presence_penalty` | - |
+| `RepeatLastN` (penalty window, default 64) | `repeat_last_n` | - | - |
+
+`MinP` and `PresencePenalty` run on the batch-decoder engine (qwen2, qwen3, llama). A model on the session engine refuses a
+request that sets them (a 400, or an error line once a stream has started) instead of ignoring them; `min_p` on a greedy
+request is not a refusal, since min-p only filters sampling. A value out of range is a 400 (`min_p` outside [0, 1], a
+negative `repeat_last_n`), never corrected silently. OpenAI's `frequency_penalty` is not supported.
 
 ## Timings
 
