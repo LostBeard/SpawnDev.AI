@@ -163,6 +163,32 @@ public sealed class AiChatTests
     }
 
     /// <summary>
+    /// top_k and top_p together apply BOTH, as Ollama does (batch-decoder models): with k = 1000 and a nucleus of 0.01 only the best
+    /// token survives, so a T = 1.5 sample is the greedy reply. Applying top_k alone (the old mapping) keeps 1000 candidates and
+    /// wanders, which is what the control (top_p = 1) shows.
+    /// </summary>
+    [AiTest(Heavy = true, Timeout = 900_000)]
+    public async Task TopKWithTinyTopPSamplesTheGreedyReply()
+    {
+        await _client.InitAsync();
+        var messages = new List<AiChatMessage> { new("user", "Write two sentences about a mountain village in winter.") };
+        async Task<string> Run(AiGenerationOptions o)
+        {
+            var sb = new System.Text.StringBuilder();
+            await _client.ChatStreamAsync(Model, messages, o, d => sb.Append(d));
+            return sb.ToString();
+        }
+        var greedy = await Run(new() { MaxOutputTokens = 48, Temperature = 0f, Seed = 1234 });
+        var both = await Run(new() { MaxOutputTokens = 48, Strategy = "top_k", TopK = 1000, TopP = 0.01f, Temperature = 1.5f, Seed = 7 });
+        var control = await Run(new() { MaxOutputTokens = 48, Strategy = "top_k", TopK = 1000, TopP = 1f, Temperature = 1.5f, Seed = 7 });
+        Console.WriteLine($"[AiChatTests] greedy: {Clip(greedy)} | top_k 1000 + top_p 0.01 at T=1.5: {Clip(both)} | control: {Clip(control)}");
+        if (control == greedy)
+            throw new Exception("the control (top_k 1000, top_p 1, T=1.5) gave the greedy reply too, so this test cannot see top_p; change the prompt or seed");
+        if (both != greedy)
+            throw new Exception($"top_k with top_p = 0.01 should sample exactly the greedy reply (top_p not applied with top_k?). greedy: '{Clip(greedy)}' got: '{Clip(both)}'");
+    }
+
+    /// <summary>
     /// EIGHT turns, each feeding the previous reply back in - the shape a real conversation has, and the
     /// shape a single-turn gate cannot exercise.
     /// </summary>

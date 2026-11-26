@@ -2,6 +2,19 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.5.1 - 2026-11-26 - top_k and top_p together
+
+- **`top_k` and `top_p` sent together now both apply**, as in Ollama and llama.cpp: the k best tokens, then the nucleus of
+  those (SpawnDev.ILGPU.ML's "sample" strategy, then min-p). Only `top_k` was applied before and `top_p` was dropped. **Sampled
+  replies change** for clients that send both, which most Ollama clients do by default (top_k 40, top_p 0.9). Greedy
+  requests are unchanged. On the batch-decoder engine (qwen2, qwen3, llama); a session-engine model keeps `top_k` alone,
+  as before, because that engine has no combined mode. Applies to the Ollama, OpenAI-compatible and Anthropic routes.
+- Test `TopKWithTinyTopPSamplesTheGreedyReply` (heavy, through the worker): top_k 1000 with top_p 0.01 at T = 1.5 is the
+  greedy reply token for token; the control (top_p 1) differs.
+- Release gate (RTX 4070, against 1.5.0): heavy browser suite 91 / 0 / 0; `pass-test` 0 failed; `lora-test` every line as
+  before; the four greedy JSON outputs (qwen3 0 / 1,300 words, llama3.1:8b 1,300, lora-ab) byte-identical. Desktop host:
+  gemma3:270m (session engine) gives the same reply with top_k + top_p as with top_k alone.
+
 ## SpawnDev.AI.Server 1.5.0 + SpawnDev.AI 1.4.0 - 2026-11-26 - min_p and the presence penalty
 
 - **`min_p`, `presence_penalty` and `repeat_last_n` reach the sampler.** Ollama `options.min_p` / `presence_penalty` /

@@ -696,8 +696,10 @@ public sealed class AiApiRouter
         if (temp is float tv && tv > 0)
         {
             o.Temperature = tv;
+            // top_p is kept with top_k too: Ollama applies both, and the engine does where the model's engine can (ToConfig)
+            o.TopP = topP ?? 1.0f;
             if (topK is int k && k > 0) { o.Strategy = "top_k"; o.TopK = k; }
-            else { o.Strategy = "top_p"; o.TopP = topP ?? 1.0f; }
+            else o.Strategy = "top_p";
         }
         else o.Strategy = "greedy";
     }

@@ -334,7 +334,7 @@ public sealed class AiChatEngine : IAiChatService
         }
         long buildMs = sw.ElapsedMilliseconds;
 
-        var cfg = ToConfig(request.Options);
+        var cfg = ToConfig(request.Options, lm.Generator.Engine);
         long firstMs = -1;
         double decodeStartMs = 0, firstTokenMs = -1;   // sub-millisecond, for AiChatTimings
 
@@ -873,9 +873,14 @@ public sealed class AiChatEngine : IAiChatService
     }
 
     // ── Mapping helpers ──
-    private GenerationConfig ToConfig(AiGenerationOptions o)
+    private GenerationConfig ToConfig(AiGenerationOptions o, GgufEngine engine)
     {
         var config = NewConfig(o);
+        // Ollama (and llama.cpp) apply top_k AND top_p together: k best, then the nucleus of those. ML's "sample" strategy is that
+        // (top-k, then the nucleus, then min-p), on the batch decoder only; the session engine refuses it, so a session-engine
+        // model keeps top-k alone as before rather than failing a request that worked.
+        if (config.Strategy == "top_k" && o.TopP > 0f && o.TopP < 1f && engine == GgufEngine.BatchDecoder)
+            config.Strategy = "sample";
         if (o.RepeatLastN is int window) config.RepeatLastN = window;   // otherwise ML's own default window
         return config;
     }
