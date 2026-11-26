@@ -45,7 +45,7 @@ public sealed class AiImageEngine : IDisposable
 
     /// <summary>Whether an image model currently holds GPU memory.</summary>
     /// <remarks>
-    /// Exposed so <see cref="GpuResidency"/> can decide whether anything actually needs evicting. Without
+    /// Exposed so the model residency (SpawnDev.ILGPU.ML ModelResidency) can decide whether anything actually needs evicting. Without
     /// it the budget has to assume the worst and evicts models that were never loaded.
     /// </remarks>
     public bool IsLoaded => _resident != null;

@@ -23,7 +23,7 @@ namespace SpawnDev.AI.Server;
 /// <para>
 /// ⚠️ They COEXIST rather than evicting each other: dropping one to load the other makes a user who
 /// switches voices pay a full model load per switch, and ZipVoice only loads at all if a cloned voice is
-/// picked, which most sessions never do. The pair is registered with GpuResidency as one "voice" kind
+/// picked, which most sessions never do. The pair is registered with the model residency as one "voice" kind
 /// sized for BOTH (see ServerHost/Program.cs) - so the budget still sees what is actually held.
 /// </para>
 /// </remarks>

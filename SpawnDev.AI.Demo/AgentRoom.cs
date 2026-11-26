@@ -53,7 +53,7 @@ public sealed record RoomLine(string SpeakerId, string SpeakerName, string Text)
 /// (<c>AiChatTests.ModelSwapMidConversationKeepsWorking</c> passes) but a round table of distinct models
 /// pays a load per turn. Agents sharing one model swap nothing, so a mixed room is best arranged so that
 /// consecutive speakers share a model where possible - and eventually by letting the chat kind hold several
-/// models inside <c>GpuResidency</c>'s budget rather than exactly one.
+/// models inside the model residency's budget rather than exactly one.
 /// </para>
 /// </remarks>
 public sealed class AgentRoom

@@ -170,7 +170,7 @@ public sealed class ModelRegistry : IAsyncDisposable
 
     /// <summary>Whether an LLM currently holds GPU memory.</summary>
     /// <remarks>
-    /// Exposed so <see cref="GpuResidency"/> can decide whether anything actually needs evicting - a budget
+    /// Exposed so the model residency (SpawnDev.ILGPU.ML ModelResidency) can decide whether anything actually needs evicting - a budget
     /// that cannot see what is resident has to assume the worst, which is the eviction thrash it exists to
     /// stop.
     /// </remarks>

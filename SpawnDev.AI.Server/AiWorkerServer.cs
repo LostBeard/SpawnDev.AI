@@ -168,7 +168,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
     private AiSpeechEngine? _speech;
     private AiVoiceEngine? _voice;
     private AiVadEngine? _vad;
-    private GpuResidency? _residency;
+    private SpawnDev.ILGPU.ML.ModelResidency? _residency;
     private AiToolRegistry? _tools;
     private AiProgressTracker? _progress;
 
@@ -302,7 +302,7 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
 
             // Keep vad at the front of the LRU so a later EnsureRoomForAsync("speech") cannot treat it as
             // never-used (LastUsedUtc default) and dispose Silero under an open microphone.
-            _residency?.Touch("vad");
+            // the endpointer is not in the residency table (see where the table is built): nothing to touch
 
             if (flush)
             {
@@ -496,29 +496,32 @@ public sealed class AiWorkerServer : IAiWorkerApi, IAsyncDisposable
             // ⚠️ In the browser there is no free-VRAM number to read - WebGPU exposes buffer limits,
             // not memory availability - so this budget is deliberately conservative and counts only OUR
             // models. It cannot see the page's other GPU use, let alone another tab's.
-            _residency = new GpuResidency(BrowserVramBudgetBytes)
+            // SpawnDev.ILGPU.ML's ModelResidency (replaced this repo's GpuResidency, 2026-11-25): the budget is now the
+            // accelerator's own (ILGPU DeviceMemoryBudgetBytes), so it counts everything ILGPU allocated, KV caches and
+            // scratch pools included, and idle pooled scratch is reclaimed before any model is dropped.
+            _residency = new SpawnDev.ILGPU.ML.ModelResidency(_accelerator)
             {
-                OnLog = msg => Console.WriteLine(msg),
+                BudgetBytes = BrowserVramBudgetBytes,
+                Log = msg => Console.WriteLine(msg),
             };
-            _residency.Register("image", () => _images!.IsLoaded, 2_600L * 1024 * 1024,
-                () => _images!.EvictAsync());
-            _residency.Register("chat", () => _registry!.IsLoaded, 1_400L * 1024 * 1024,
-                () => _registry!.EvictAsync());
-            _residency.Register("speech", () => _speech!.IsLoaded, 200L * 1024 * 1024,
-                () => _speech!.EvictAsync());
-            _residency.Register("voice", () => _voice!.IsLoaded, 450L * 1024 * 1024,
-                () => _voice!.EvictAsync());
-            // ⚠️ The endpointer is deliberately tiny in this table and that is the POINT, not an estimate
-            // fudge: it runs ~31 times a second for as long as the microphone is open, so it must never be
-            // the model something else evicts. A reload mid-utterance loses the turn being spoken.
-            _residency.Register("vad", () => _vad!.IsLoaded, 32L * 1024 * 1024,
-                () => _vad!.EvictAsync());
+            // the manager logs only warnings; an eviction is otherwise silent, and a reload it causes reads as a slow turn
+            _residency.Evicted += e => Console.WriteLine($"[ModelResidency] dropped '{e.Key}' ({e.Bytes >> 20} MB, {e.Reason}{(e.ForKey != null ? $", for '{e.ForKey}'" : "")})");
+            _residency.Register("image", () => _images!.IsLoaded, () => 2_600L * 1024 * 1024,
+                async () => { await _images!.EvictAsync().ConfigureAwait(false); return true; });
+            _residency.Register("chat", () => _registry!.IsLoaded, () => 1_400L * 1024 * 1024,
+                async () => { await _registry!.EvictAsync().ConfigureAwait(false); return true; });
+            _residency.Register("speech", () => _speech!.IsLoaded, () => 200L * 1024 * 1024,
+                async () => { await _speech!.EvictAsync().ConfigureAwait(false); return true; });
+            _residency.Register("voice", () => _voice!.IsLoaded, () => 450L * 1024 * 1024,
+                async () => { await _voice!.EvictAsync().ConfigureAwait(false); return true; });
+            // ⚠️ The endpointer (32 MB) is NOT in the table: it runs ~31 times a second while the microphone is open, so
+            // it must never be the model something else evicts (a reload mid-utterance loses the turn being spoken).
+            // Its memory is still counted: the budget is the accelerator's, which counts every buffer it allocated.
 
             _images.EvictOtherKind = () => _residency.EnsureRoomForAsync("image");
             _registry.EvictOtherKind = () => _residency.EnsureRoomForAsync("chat");
             _speech.EvictOtherKind = () => _residency.EnsureRoomForAsync("speech");
             _voice.EvictOtherKind = () => _residency.EnsureRoomForAsync("voice");
-            _vad.EvictOtherKind = () => _residency.EnsureRoomForAsync("vad");
 
             // ⚠️ These were declared and never subscribed, so a cold model load was SILENT. ZipVoice pulls
             // two int8 graphs, a token table and a 54 MB vocoder out of a remote archive; with nothing

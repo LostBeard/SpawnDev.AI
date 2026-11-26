@@ -196,24 +196,34 @@ using var voice = new AiVoiceEngine(modelSource, imageHttp, accelerator)
 {
     OnLoadProgress = (stage, pct) => Console.WriteLine($"[voice-load] {stage} {pct}%"),
 };
-// Residency is a BUDGET, not a ring - see GpuResidency for the two measurements that shaped it (130s of
-// needless re-uploads on one side, a 96%-VRAM freeze on the other).
+// Residency is a BUDGET, not a ring (SpawnDev.ILGPU.ML ModelResidency; two measurements shaped it: 130 s of needless
+// re-uploads with an eviction ring, a 96%-VRAM freeze with no eviction at all).
 //
-// On the desktop the budget comes from REAL free VRAM, which is the number the browser cannot give us.
-// Two thirds of what is free, so the desktop and anything else sharing the card keep headroom: this can
-// only account for our own models, and the freeze it guards against came from exactly what it cannot see.
-long freeVram = accelerator is ILGPU.Runtime.Cuda.CudaAccelerator cuda
-    ? cuda.GetFreeMemory()
-    : 4L * 1024 * 1024 * 1024;
-var residency = new GpuResidency((long)(freeVram * 0.66)) { OnLog = Console.WriteLine };
-Console.WriteLine($"[SpawnDev.AI] GPU residency budget: {residency.BudgetBytes / 1048576} MB "
-                + $"(free {freeVram / 1048576} MB)");
-residency.Register("image", () => images.IsLoaded, 2_600L * 1024 * 1024, () => images.EvictAsync());
-residency.Register("speech", () => speech.IsLoaded, 200L * 1024 * 1024, () => speech.EvictAsync());
+// On CUDA the manager reads the driver's REAL free memory at every decision, which also sees the desktop and other
+// processes; a third of what was free at start is kept in reserve beyond each model (the old budget was two thirds of
+// free). Elsewhere there is no free-memory number, so the host sets a 4 GiB budget, as before.
+var residency = new SpawnDev.ILGPU.ML.ModelResidency(accelerator) { Log = Console.WriteLine };
+residency.Evicted += e => Console.WriteLine($"[ModelResidency] dropped '{e.Key}' ({e.Bytes >> 20} MB, {e.Reason}{(e.ForKey != null ? $", for '{e.ForKey}'" : "")})");
+if (accelerator.TryGetFreeMemory(out long freeVram))
+{
+    residency.ReserveBytes = freeVram / 3;
+    Console.WriteLine($"[SpawnDev.AI] GPU residency: driver free memory, {residency.ReserveBytes / 1048576} MB kept in reserve "
+                    + $"(free {freeVram / 1048576} MB)");
+}
+else
+{
+    residency.BudgetBytes = 4L * 1024 * 1024 * 1024;
+    Console.WriteLine($"[SpawnDev.AI] GPU residency budget: {residency.BudgetBytes / 1048576} MB (no free-memory number on this backend)");
+}
+residency.Register("image", () => images.IsLoaded, () => 2_600L * 1024 * 1024,
+    async () => { await images.EvictAsync(); return true; });
+residency.Register("speech", () => speech.IsLoaded, () => 200L * 1024 * 1024,
+    async () => { await speech.EvictAsync(); return true; });
 // ⚠️ 800 MB, not 450: the voice kind can hold BOTH models at once - Kokoro (~326 MB, the default,
 // loaded for any ordinary reply) and ZipVoice (~450 MB, loaded only if a cloned voice is picked).
 // They coexist deliberately, so a user switching voices does not pay a model load per switch.
-residency.Register("voice", () => voice.IsLoaded, 800L * 1024 * 1024, () => voice.EvictAsync());
+residency.Register("voice", () => voice.IsLoaded, () => 800L * 1024 * 1024,
+    async () => { await voice.EvictAsync(); return true; });
 images.EvictOtherKind = () => residency.EnsureRoomForAsync("image");
 speech.EvictOtherKind = () => residency.EnsureRoomForAsync("speech");
 voice.EvictOtherKind = () => residency.EnsureRoomForAsync("voice");

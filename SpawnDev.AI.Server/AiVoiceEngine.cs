@@ -170,7 +170,7 @@ public sealed partial class AiVoiceEngine : IDisposable
 
     /// <summary>Whether a voice model is currently resident.</summary>
     /// <remarks>
-    /// ⚠️ EITHER model. GpuResidency asks this to decide whether the voice kind is holding VRAM, and with
+    /// ⚠️ EITHER model. The model residency asks this to decide whether the voice kind is holding VRAM, and with
     /// only the built-in model resident the old answer was false - so the kind was invisible to the
     /// budget: never counted against it, never evicted to make room for anything else.
     /// </remarks>

@@ -33,7 +33,7 @@ cache (see [engines.md](engines.md#installing-models-ollamamodelinstaller)).
 and the model registry; window-side code talks to it through `AiWorkerClient`, which speaks the same
 protocol surface over marshalled callback frames instead of sockets. Models stream from the SpawnDev
 hub (HTTP + HuggingFace CDN) straight onto the GPU and cache in OPFS via `HubModelProvider`. Models of
-different kinds (LLM, SD-Turbo, speech, voice) share the device under `GpuResidency`, which evicts only when a
+different kinds (LLM, SD-Turbo, speech, voice) share the device under SpawnDev.ILGPU.ML's `ModelResidency`, which evicts only when a
 new model does not fit (see [engines.md](engines.md#gpu-residency)).
 
 Register in DI in **all** scopes (the same `Program.cs` runs in window and worker; only the worker

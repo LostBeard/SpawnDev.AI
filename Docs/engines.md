@@ -7,8 +7,12 @@ desktop, WebGPU in the browser). Each engine follows the same shape: one residen
 
 ## GPU residency
 
-`GpuResidency` decides which models may stay on the GPU together and evicts only when a new model genuinely does not
-fit. It replaced an eviction ring in which every model kind evicted every other kind before loading (measured: three
+SpawnDev.ILGPU.ML's `ModelResidency` decides which models may stay on the GPU together and evicts only when a new model
+genuinely does not fit, least recently used first, after idle pooled scratch was reclaimed. Its budget is the accelerator's
+(`Accelerator.DeviceMemoryBudgetBytes`, everything ILGPU allocated: KV caches and scratch included): 4 GiB in the browser,
+where WebGPU reports no memory figure; on a CUDA desktop the driver's free memory with a third kept in reserve. The
+endpointer is not in its table (it must never be evicted). This repo's own `GpuResidency` did the same over declared model
+sizes until 2026-11-25. The approach replaced an eviction ring in which every model kind evicted every other kind before loading (measured: three
 interleaved image + chat turns spent ~130 s re-uploading an SD-Turbo UNet on a GPU with 10.6 GB free). It also keeps
 headroom, because letting everything co-reside wedged a 12 GB card at 96% when Whisper joined an 8B LLM and the voice
 cloner.
