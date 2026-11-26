@@ -2,6 +2,20 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.5.2 - 2026-11-26 - SpawnDev.ILGPU.ML 5.8.33, SpawnDev.ILGPU 5.4.53
+
+On SpawnDev.ILGPU.ML 5.8.33 (was 5.8.32), SpawnDev.ILGPU 5.4.53 (was 5.4.51). No API change.
+
+- Convolutions on small grids run a 32x32-tile kernel on the desktop (the image, speech and voice models' late layers);
+  results bit-identical.
+- A captured WebGPU replay returns after its submit; the readback is the one GPU wait (Chrome charges about 2.9 ms per
+  waited submit). Nothing in this server awaits a replay without reading its result.
+- Model stores tell an unreadable sidecar (a scanner holding it) from a missing one and retry instead of re-downloading.
+- SpawnDev.ILGPU 5.4.52 / 5.4.53: the WebGPU dispatch helper loads outside a page (Node), timed replays report each dispatch.
+- Release gate (RTX 4070, against 1.5.1): heavy browser suite 91 / 0 / 0; `pass-test` 0 failed; `lora-test` every line as
+  before; the four greedy JSON outputs byte-identical; decode the same (batch decoder, tok/s: qwen3 185.3 / 176.2, llama3.1:8b
+  71.7). Cold nuget.org-only restore of Server, ServerHost, Demo and TestRunner.
+
 ## SpawnDev.AI.Server 1.5.1 - 2026-11-26 - top_k and top_p together
 
 - **`top_k` and `top_p` sent together now both apply**, as in Ollama and llama.cpp: the k best tokens, then the nucleus of
