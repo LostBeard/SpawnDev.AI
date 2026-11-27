@@ -2,6 +2,27 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.5.3 + SpawnDev.AI 1.5.0 - 2026-11-26 - Ollama's defaults and each model's own
+
+- **The Ollama routes (`/api/chat`, `/api/generate`) resolve options as Ollama does**: Ollama's defaults (its
+  `DefaultOptions`: temperature 0.8, top_k 40, top_p 0.9, repeat_penalty 1.0, repeat_last_n 64, min_p and presence_penalty 0,
+  a random seed), then the model's own PARAMETERs (the params layer of its Ollama manifest: qwen3 temperature 0.6, top_k 20,
+  top_p 0.95; gemma3 top_k 64, top_p 0.95; ministral-3 temperature 0.15), then the request's `options`. **A client that sends
+  no options now samples, as on Ollama; it got greedy decoding before.** `temperature: 0` is still greedy. `num_predict`
+  absent or <= 0 keeps the server's own cap (512, clamped to `MaxOutputTokens`) where Ollama would run to the end of the
+  context. The OpenAI-compatible and Anthropic routes are unchanged (greedy unless the request sets a temperature), and so is
+  the browser worker client, which always sends its options.
+- `AiModelInfo.DefaultOptionsJson` (SpawnDev.AI 1.5.0): the model's params layer as JSON, filled by
+  `OllamaCacheModelProvider`.
+- Known edge: a model whose PARAMETERs set `min_p` or `presence_penalty` and that runs on the session engine refuses a request
+  without options (400), as it would refuse those options sent explicitly. None of the library models do (checked: gemma3,
+  llama3.1, ministral-3, qwen3, smollm2).
+- Checked on the desktop host (CUDA): with only `seed` set, qwen3:1.7b-q8_0, llama3.1:8b and gemma3:270m each give exactly the
+  reply of their resolved options spelled out (qwen3: 0.6 / 20 / 0.95; llama3.1: 0.8 / 40 / 0.9; gemma3: 0.8 / 64 / 0.95),
+  which differs from greedy.
+- Release gate (RTX 4070, against 1.5.2): heavy browser suite 91 / 0 / 0; `pass-test` 0 failed; `lora-test` every line as
+  before; the four greedy JSON outputs byte-identical (they pass explicit options). Cold nuget.org-only restore.
+
 ## SpawnDev.AI.Server 1.5.2 - 2026-11-26 - SpawnDev.ILGPU.ML 5.8.33, SpawnDev.ILGPU 5.4.53
 
 On SpawnDev.ILGPU.ML 5.8.33 (was 5.8.32), SpawnDev.ILGPU 5.4.53 (was 5.4.51). No API change.

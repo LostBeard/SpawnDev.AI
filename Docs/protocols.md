@@ -61,6 +61,11 @@ request that sets them (a 400, or an error line once a stream has started) inste
 request is not a refusal, since min-p only filters sampling. A value out of range is a 400 (`min_p` outside [0, 1], a
 negative `repeat_last_n`), never corrected silently. OpenAI's `frequency_penalty` is not supported.
 
+**Defaults on the Ollama routes (1.5.3+).** Options the request does not set come from the model's own PARAMETERs (the params
+layer of its Ollama manifest, `AiModelInfo.DefaultOptionsJson`), and what those do not set from Ollama's defaults: temperature
+0.8, top_k 40, top_p 0.9, repeat_penalty 1.0, repeat_last_n 64, min_p and presence_penalty 0, a random seed. So a request with
+no options samples, as on Ollama. The OpenAI-compatible and Anthropic routes are greedy unless the request sets a temperature.
+
 ## Timings
 
 The final `/api/chat` and `/api/generate` frame carries Ollama's timing fields: `prompt_eval_count`, `eval_count`,

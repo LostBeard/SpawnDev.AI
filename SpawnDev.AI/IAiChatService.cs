@@ -7,7 +7,15 @@ public sealed record AiModelInfo(
     string Family,
     string QuantizationLevel,
     long ContextLength,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities)
+{
+    /// <summary>
+    /// The model's own sampling defaults as Ollama stores them (its "params" layer, the Modelfile PARAMETERs: e.g. qwen3's
+    /// <c>{"temperature":0.6,"top_k":20,"top_p":0.95,...}</c>), or null when it has none. The Ollama routes start from these,
+    /// then apply the request's options.
+    /// </summary>
+    public string? DefaultOptionsJson { get; init; }
+}
 
 /// <summary>
 /// The transport-neutral chat service surface. <see cref="SpawnDev.AI"/>'s server implements it over

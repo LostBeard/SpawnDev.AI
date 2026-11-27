@@ -425,11 +425,12 @@ public sealed class AiApiRouter
     private async Task ApiChat(JsonElement req, IAiServerTransport t)
     {
         string model = GetString(req, "model") ?? "";
-        if (await _engine.ShowModelAsync(model, t.Aborted) == null)
+        var modelInfo = await _engine.ShowModelAsync(model, t.Aborted);
+        if (modelInfo == null)
         { await OllamaError(t, $"model '{model}' not found", 404); return; }
         var messages = ParseMessages(req, "messages");
         bool stream = GetBool(req, "stream") ?? true; // Ollama defaults to streaming
-        var options = ReadOllamaOptions(req);
+        var options = ReadOllamaOptions(req, modelInfo.DefaultOptionsJson);
         if (SamplingError(options) is string samplingError) { await OllamaError(t, samplingError, 400); return; }
         string created = DateTimeOffset.UtcNow.ToString("o");
         var tools = GetTools(req);
@@ -467,11 +468,12 @@ public sealed class AiApiRouter
     private async Task ApiGenerate(JsonElement req, IAiServerTransport t)
     {
         string model = GetString(req, "model") ?? "";
-        if (await _engine.ShowModelAsync(model, t.Aborted) == null)
+        var modelInfo = await _engine.ShowModelAsync(model, t.Aborted);
+        if (modelInfo == null)
         { await OllamaError(t, $"model '{model}' not found", 404); return; }
         string prompt = GetString(req, "prompt") ?? "";
         bool stream = GetBool(req, "stream") ?? true;
-        var options = ReadOllamaOptions(req);
+        var options = ReadOllamaOptions(req, modelInfo.DefaultOptionsJson);
         if (SamplingError(options) is string samplingError) { await OllamaError(t, samplingError, 400); return; }
         string created = DateTimeOffset.UtcNow.ToString("o");
         var request = new AiChatRequest
@@ -667,18 +669,47 @@ public sealed class AiApiRouter
         ApplySampling(o, GetFloat(req, "temperature"), GetFloat(req, "top_p"), GetInt(req, "top_k"), null);
         return o;
     }
-    private AiGenerationOptions ReadOllamaOptions(JsonElement req)
+    /// <summary>
+    /// Ollama's options as Ollama resolves them: its defaults (api/types.go DefaultOptions: temperature 0.8, top_k 40, top_p 0.9,
+    /// repeat_penalty 1.0, repeat_last_n 64, min_p and presence_penalty 0, a random seed), then the model's own PARAMETERs
+    /// (<paramref name="modelDefaultsJson"/>, its params layer: qwen3 sets temperature 0.6, top_k 20, top_p 0.95), then the
+    /// request's <c>options</c>. A client that sends no options samples as it would on Ollama; it was greedy before (1.5.3).
+    /// </summary>
+    private AiGenerationOptions ReadOllamaOptions(JsonElement req, string? modelDefaultsJson)
     {
-        var o = new AiGenerationOptions { MaxOutputTokens = 512 };
-        if (req.TryGetProperty("options", out var opt) && opt.ValueKind == JsonValueKind.Object)
+        float temperature = 0.8f, topP = 0.9f, repeatPenalty = 1.0f, minP = 0f, presence = 0f;
+        int topK = 40, repeatLastN = 64;
+        int? seed = null, numPredict = null;
+        void Apply(JsonElement opt)
         {
-            o.MaxOutputTokens = GetInt(opt, "num_predict") ?? 512;
-            ApplySampling(o, GetFloat(opt, "temperature"), GetFloat(opt, "top_p"), GetInt(opt, "top_k"), GetInt(opt, "seed"));
-            if (GetFloat(opt, "repeat_penalty") is float rp && rp > 0) o.RepetitionPenalty = rp;
-            if (GetFloat(opt, "min_p") is float mp) o.MinP = mp;
-            if (GetFloat(opt, "presence_penalty") is float pp) o.PresencePenalty = pp;
-            if (GetInt(opt, "repeat_last_n") is int n) o.RepeatLastN = n;
+            if (GetFloat(opt, "temperature") is float tv) temperature = tv;
+            if (GetFloat(opt, "top_p") is float tp) topP = tp;
+            if (GetInt(opt, "top_k") is int tk) topK = tk;
+            if (GetFloat(opt, "repeat_penalty") is float rp && rp > 0) repeatPenalty = rp;
+            if (GetFloat(opt, "min_p") is float mp) minP = mp;
+            if (GetFloat(opt, "presence_penalty") is float pp) presence = pp;
+            if (GetInt(opt, "repeat_last_n") is int n) repeatLastN = n;
+            if (GetInt(opt, "seed") is int sd) seed = sd >= 0 ? sd : null;   // Ollama: a negative seed = a random one
+            if (GetInt(opt, "num_predict") is int np) numPredict = np;
         }
+        if (!string.IsNullOrEmpty(modelDefaultsJson))
+        {
+            try
+            {
+                using var defaults = JsonDocument.Parse(modelDefaultsJson);
+                if (defaults.RootElement.ValueKind == JsonValueKind.Object) Apply(defaults.RootElement);
+            }
+            catch (JsonException) { /* an unreadable params layer: Ollama's defaults stand */ }
+        }
+        if (req.TryGetProperty("options", out var opt) && opt.ValueKind == JsonValueKind.Object) Apply(opt);
+
+        // num_predict <= 0 is Ollama's "until the model stops" (-1) or "fill the context" (-2): the server's own cap applies
+        var o = new AiGenerationOptions { MaxOutputTokens = numPredict is int cap && cap > 0 ? cap : 512 };
+        ApplySampling(o, temperature, topP, topK, seed);
+        o.RepetitionPenalty = repeatPenalty;
+        o.MinP = minP;
+        o.PresencePenalty = presence;
+        o.RepeatLastN = repeatLastN;
         return o;
     }
 

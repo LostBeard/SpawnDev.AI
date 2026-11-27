@@ -38,7 +38,7 @@ public sealed class OllamaCacheModelProvider : IAiModelProvider
             ctxLen = gm.ContextLength;
         }
         catch { /* header unreadable - fall back to shallow metadata */ }
-        return new AiModelInfo(m.Name, m.GgufSize, arch, QuantOf(m.Name), ctxLen, Capabilities(m));
+        return new AiModelInfo(m.Name, m.GgufSize, arch, QuantOf(m.Name), ctxLen, Capabilities(m)) { DefaultOptionsJson = m.ParamsJson };
     }
 
     public Task<string?> ResolveAsync(string name, CancellationToken ct = default)
