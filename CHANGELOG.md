@@ -2,6 +2,18 @@
 
 Notable changes per release. Stable from 1.1.0.
 
+## SpawnDev.AI.Server 1.5.4 - 2026-11-26 - SpawnDev.ILGPU.ML 5.8.34, SpawnDev.ILGPU 5.4.54
+
+On SpawnDev.ILGPU.ML 5.8.34 (was 5.8.33), SpawnDev.ILGPU 5.4.54 (was 5.4.53). No API change.
+
+- **Browser: a returning visitor's models start without generating their shaders again.** SpawnDev.ILGPU.ML's shader cache
+  (`ShaderCacheStore`, on by default on WebGPU in the browser) keeps the generated WGSL in OPFS (`ilgpu-ml-shaders`, about
+  200 KB per model) and imports it on the next visit; MobileNetV2's first run went from about 300 ms to about 50 ms in
+  SpawnDev.ILGPU.ML's measurement. Each entry records the builds of the code it was generated from (SpawnDev.ILGPU 5.4.54), so
+  an update never loads a stale shader. `ShaderCacheStore.Enabled = false` opts out.
+- Release gate (RTX 4070, against 1.5.3): heavy browser suite 91 / 0 / 0; `pass-test` 0 failed; `lora-test` every line as
+  before; the four greedy JSON outputs byte-identical; decode the same (qwen3 184.5 / 175.2, llama3.1:8b 71.8 tok/s).
+
 ## SpawnDev.AI.Server 1.5.3 + SpawnDev.AI 1.5.0 - 2026-11-26 - Ollama's defaults and each model's own
 
 - **The Ollama routes (`/api/chat`, `/api/generate`) resolve options as Ollama does**: Ollama's defaults (its
